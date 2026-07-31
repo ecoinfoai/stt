@@ -1,49 +1,86 @@
-# stt — 강연 전사 도구
+# stt — Lecture Transcription CLI
 
-강연·강의 영상(.mp4 .mkv …)이나 녹음(.m4a .mp3 .wav …)을
-한국어 전사문(.txt)으로 바꾸는 CLI 도구. faster-whisper 기반으로
-로컬 GPU에서 동작한다.
+Transcribe lecture videos (`.mp4 .mkv .mov …`) and audio recordings
+(`.m4a .mp3 .wav …`) into readable Korean transcripts (`.txt`),
+running fully locally on your GPU with
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper).
+No audio ever leaves your machine.
 
-## 구성
+## Features
+
+- Automatic GPU detection with VRAM-aware model fallback
+  (`large-v3` → `large-v3-turbo` → `small`); CPU also works
+- Built-in VAD (skips silence/music, prevents Whisper
+  hallucinations), Korean by default (`--language auto` available)
+- Terms file (hotwords) to steer spelling of domain jargon and
+  proper nouns
+- Segments reassembled into sentences/paragraphs with `[MM:SS]`
+  paragraph timestamps; optional plain text and `--srt` output
+- Batch-process whole folders; already-transcribed files are
+  skipped (safe to re-run, cron-friendly)
+
+## Layout
 
 ```
-transcribe.py        전사 CLI (faster-whisper 기반)
-전사.bat             끌어다 놓기 실행기 (Windows)
-requirements.txt     파이썬 의존성
-terms_example.txt    용어 파일 예시 (hotwords)
-tests/               단위·통합 테스트 (pytest, 36개)
-설치_사용_안내.md    Windows 11 설치·사용 안내
+transcribe.py       CLI (single file)
+transcribe.bat      Windows drag & drop helper
+terms_example.txt   example hotwords file
+tests/              pytest suite (36 tests)
+data/               media and transcripts (git-ignored)
+INSTALL.md          setup guide (Windows GPU + Linux)
 ```
 
-## 특징
+## Quick start
 
-- GPU 자동 감지, VRAM 부족 시 모델 자동 폴백
-  (large-v3 → large-v3-turbo → small)
-- VAD 내장(무음·음악 구간 환각 방지), 한국어 기본
-- 용어 파일(hotwords)로 전문용어·인명 표기 유도
-- 세그먼트를 문장·문단으로 복원, `[MM:SS]` 문단 타임스탬프
-- 폴더 일괄 처리, 기존 결과 자동 건너뛰기, `--srt` 자막 출력 옵션
+Requires [uv](https://docs.astral.sh/uv/) and, for GPU use,
+NVIDIA libraries (see [INSTALL.md](INSTALL.md)).
 
-## 빠른 시작
-
-설치는 [설치_사용_안내.md](설치_사용_안내.md) 참조 (가상환경,
-CUDA 12용 cuBLAS/cuDNN 9 배치 포함). 이후:
-
-```powershell
-python transcribe.py "강연.mp4" --terms terms_example.txt
+```sh
+uv sync                      # creates .venv with dependencies
+uv run transcribe.py "data/lecture.mp4" --terms terms_example.txt
 ```
 
-## 테스트
+The first run downloads the model from Hugging Face
+(large-v3 ≈ 3.1 GB) into the local cache; subsequent runs start
+immediately. Output `.txt` is written next to the source file.
 
-```powershell
-python -m pip install pytest
-python -m pytest tests/
+Without uv, a plain venv works too:
+`pip install -r requirements.txt`.
+
+## Usage
+
+```sh
+uv run transcribe.py PATH [PATH ...] [options]
 ```
 
-## 참고
+| Option | Default | Description |
+|---|---|---|
+| `--model` | auto | `auto` = large-v3 → large-v3-turbo → small fallback |
+| `--device` | auto | `cuda` if available, else `cpu` |
+| `--language` | ko | language code, `auto` to detect |
+| `--terms FILE` | — | hotwords file (one term per line, `#` comments) |
+| `--no-timestamps` | off | plain text without `[MM:SS]` markers |
+| `--srt` | off | also write an SRT subtitle file |
+| `--overwrite` | off | regenerate existing outputs |
+| `--output-dir DIR` | beside source | where to write outputs |
+| `--beam` | 5 | beam size (1 = faster, slightly less accurate) |
+| `--gap` | 2.0 | silence length (s) that starts a new paragraph |
+| `--max-chars` | 800 | max paragraph length |
 
-- 미디어 파일·전사 결과물·지식베이스 문서·모델 라이브러리
-  압축본은 커밋하지 않는다(.gitignore 참조). 전사 결과에는 강연
-  저작물이 포함되므로 공개 저장소에 올리지 않는 방침.
-- 요구사항: Python 3.11+, faster-whisper 1.2.1, NVIDIA GPU(선택,
-  CPU도 동작).
+CPU-only servers: `--model small --beam 1` is the practical
+combination for batch automation.
+
+## Tests
+
+```sh
+uv run pytest tests/
+```
+
+## Notes
+
+- Media files, transcripts, and NVIDIA library archives are never
+  committed (`data/` is git-ignored). Transcripts contain
+  third-party lecture content and stay local by policy.
+- Knowledge-base prompts and templates that consume these
+  transcripts live in a separate repository
+  ([ecoinfoai/kb](https://github.com/ecoinfoai/kb)).

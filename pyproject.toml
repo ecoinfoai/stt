@@ -1,0 +1,27 @@
+[project]
+name = "stt"
+version = "1.0.0"
+description = "Local lecture/recording transcription CLI built on faster-whisper"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "faster-whisper==1.2.1",
+]
+
+[project.optional-dependencies]
+# Linux GPU machines: `uv sync --extra cuda` installs NVIDIA runtime libs.
+# On Windows, place cuBLAS/cuDNN DLLs manually instead (see INSTALL.md).
+cuda = [
+    "nvidia-cublas-cu12>=12",
+    "nvidia-cudnn-cu12>=9,<10",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7",
+]
+
+[tool.uv]
+# Script-style project: `uv sync` installs dependencies only,
+# without building/installing the project itself as a package.
+package = false

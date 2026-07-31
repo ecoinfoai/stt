@@ -1,4 +1,5 @@
-# 미디어 원본 (강연 영상·녹음)
+# media and transcription outputs (managed under data/)
+data/
 *.m4a
 *.mp3
 *.mp4
@@ -9,24 +10,21 @@
 *.ogg
 *.aac
 
-# 전사 결과물 (강연 저작물 포함 — 저장소에 올리지 않음)
-이민화교수*.txt
-
-# 지식베이스 문서 (로컬 전용 — 저장소에 올리지 않음)
-지식베이스/
-
-# GPU 라이브러리 압축본
+# NVIDIA library archives
 *.7z
 *.zip
 
-# 파이썬
+# python
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
 venv/
 
-# 편집기·OS
+# local scratch (pending manual deletion)
+_to_delete/
+
+# editors / OS
 .vscode/
 .idea/
 Thumbs.db

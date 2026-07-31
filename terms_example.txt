@@ -1,7 +1,7 @@
-# 용어 파일 예시 — 한 줄에 용어 하나, '#'로 시작하는 줄은 주석.
-# 쓰는 법: python transcribe.py 강연.mp4 --terms terms_example.txt
-# 여기 적은 용어·인명은 전사 중 표기가 유도됩니다(hotwords).
-# 강연 주제에 맞게 자유롭게 고쳐 쓰세요.
+# Example terms file - one term per line, '#' lines are comments.
+# Usage: uv run transcribe.py lecture.mp4 --terms terms_example.txt
+# Listed terms and names are injected as hotwords to steer the
+# transcription spelling. Edit freely per lecture topic.
 4차 산업혁명
 기업가정신
 융합헬스케어
