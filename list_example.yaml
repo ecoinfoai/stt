@@ -1,0 +1,30 @@
+# Example media list with per-item options for batch_stt.py.
+#     uv run batch_stt.py --list list.yaml --dry-run
+#
+# Items sharing the same options are transcribed together, so the
+# model is loaded once per option group - keep overrides to the
+# few files that need them.
+
+defaults:
+  language: ko          # 'auto' to detect
+  terms: terms_example.txt
+  model: auto           # auto | large-v3 | large-v3-turbo | small
+  srt: false
+
+items:
+  # a plain string uses the defaults above
+  - "[기업가정신 1편] 발명가와 기업가의 차이, 기업가정신"
+  - "[기업가정신 2편] 기업가정신이란 무엇일까"
+
+  # a mapping overrides options for that item only
+  - title: "이민화교수 '4차 산업혁명' 15분 강연"
+    srt: true
+    model: large-v3
+
+  # 'path' works the same as 'title'; both accept a bare title
+  - path: "영어 강연 제목"
+    language: auto
+    beam: 1
+
+# Available option keys: model, device, language, terms, srt,
+# no_timestamps, beam, gap, max_chars

@@ -18,6 +18,7 @@ import gc
 import os
 import sys
 import time
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Protocol, Sequence, TypeAlias
 
@@ -482,7 +483,7 @@ def transcribe_file(
     language: str | None,
     terms: str | None,
     beam_size: int,
-) -> tuple[list[SegmentLike], float]:
+) -> tuple[list[SegmentLike], float, str]:
     """미디어 파일 하나를 전사해 세그먼트 목록을 돌려준다.
 
     Args:
@@ -493,7 +494,7 @@ def transcribe_file(
         beam_size: 빔 서치 크기(클수록 정확, 느림).
 
     Returns:
-        (세그먼트 목록, 오디오 길이(초)) 튜플.
+        (세그먼트 목록, 오디오 길이(초), 전사 언어 코드) 튜플.
 
     Raises:
         RuntimeError: 전사 결과가 비어 있을 때.
@@ -516,7 +517,7 @@ def transcribe_file(
             f"빈 전사 결과: '{media.name}'에서 음성을 찾지 못했습니다. "
             f"무음 파일이 아닌지 확인하세요."
         )
-    return segments, info.duration
+    return segments, info.duration, info.language
 
 
 def output_path_for(media: Path, out_dir: Path | None, ext: str) -> Path:
@@ -536,6 +537,53 @@ def output_path_for(media: Path, out_dir: Path | None, ext: str) -> Path:
     """
     base = out_dir if out_dir is not None else media.parent
     return base / (media.stem + ext)
+
+
+def build_run_info(model_name: str, language: str, duration_s: float):
+    """메타데이터 파일에 넣을 전사 실행 정보를 만든다.
+
+    metadata 모듈이 transcribe를 참조하므로 순환 import를 피하려고
+    이 함수 안에서 늦게 불러온다.
+
+    Args:
+        model_name: 사용한 Whisper 모델 이름.
+        language: 전사 언어 코드.
+        duration_s: 원본 길이(초).
+
+    Returns:
+        metadata.RunInfo 인스턴스.
+
+    Examples:
+        >>> build_run_info("small", "ko", 60.0).language
+        'ko'
+    """
+    import metadata
+
+    return metadata.RunInfo(
+        model=model_name,
+        language=language,
+        duration_s=duration_s,
+        transcribed=date.today().isoformat(),
+    )
+
+
+def write_metadata(media: Path, out_dir: Path | None, run) -> Path:
+    """전사한 미디어 옆에 메타데이터 YAML을 저장한다.
+
+    Args:
+        media: 전사한 미디어 파일 경로.
+        out_dir: 출력 폴더(None이면 원본 옆).
+        run: build_run_info()가 만든 실행 정보.
+
+    Returns:
+        저장한 .meta.yaml 경로.
+
+    Examples:
+        >>> write_metadata(Path("a.m4a"), None, r)  # doctest: +SKIP
+    """
+    import metadata
+
+    return metadata.write_for_media(media, out_dir, run)
 
 
 def process_one(
@@ -558,15 +606,14 @@ def process_one(
         >>> process_one(m, "small", Path("a.m4a"), ns, None)  # doctest: +SKIP
     """
     started = time.monotonic()
-    language = None if args.language == "auto" else args.language
-    segments, duration = transcribe_file(
-        model, media, language, terms, args.beam
+    requested = None if args.language == "auto" else args.language
+    segments, duration, language = transcribe_file(
+        model, media, requested, terms, args.beam
     )
     paragraphs = build_paragraphs(
         segments, gap_s=args.gap, max_chars=args.max_chars
     )
-    lang_label = args.language
-    header = build_header(media.name, model_name, lang_label, duration)
+    header = build_header(media.name, model_name, language, duration)
     body = render_txt(paragraphs, timestamps=not args.no_timestamps)
     txt_path = output_path_for(media, args.output_dir, ".txt")
     txt_path.write_text(header + body, encoding="utf-8")
@@ -575,6 +622,10 @@ def process_one(
         srt_path = output_path_for(media, args.output_dir, ".srt")
         srt_path.write_text(render_srt(segments), encoding="utf-8")
         outputs.append(srt_path.name)
+    if not args.no_meta:
+        run = build_run_info(model_name, language, duration)
+        meta_path = write_metadata(media, args.output_dir, run)
+        outputs.append(meta_path.name)
     elapsed = time.monotonic() - started
     print(
         f"  완료({format_timestamp(elapsed)} 소요): "
@@ -689,6 +740,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--srt", action="store_true",
         help="SRT 자막 파일도 함께 저장",
+    )
+    parser.add_argument(
+        "--no-meta", action="store_true",
+        help="노트용 메타데이터(.meta.yaml)를 만들지 않는다",
     )
     parser.add_argument(
         "--overwrite", action="store_true",

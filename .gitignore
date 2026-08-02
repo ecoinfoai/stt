@@ -1,4 +1,4 @@
-# media and transcription outputs (managed under data/)
+# media, metadata and transcription outputs (managed under data/)
 data/
 *.m4a
 *.mp3
@@ -9,6 +9,14 @@ data/
 *.flac
 *.ogg
 *.aac
+*.info.json
+*.meta.yaml
+archive.txt
+
+# personal run lists (the *_example files are tracked instead)
+urls.txt
+list.txt
+list.yaml
 
 # NVIDIA library archives
 *.7z

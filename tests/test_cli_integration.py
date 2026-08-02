@@ -33,7 +33,7 @@ class FakeModel:
             SimpleNamespace(start=3.2, end=6.0, text="이어지는 문장."),
             SimpleNamespace(start=10.0, end=12.0, text="새 문단입니다."),
         ])
-        info = SimpleNamespace(duration=12.0)
+        info = SimpleNamespace(duration=12.0, language="ko")
         return segments, info
 
 
@@ -90,6 +90,60 @@ def test_main_skips_existing_output(tmp_path, media, monkeypatch, capsys):
     code = transcribe.main([str(media), "--device", "cpu"])
     assert code == 0
     assert "건너뜀" in capsys.readouterr().out
+
+
+def test_main_writes_meta_yaml(tmp_path, media, monkeypatch):
+    """전사문 옆에 노트용 메타데이터 파일이 함께 생긴다."""
+    import yaml
+
+    monkeypatch.setattr(
+        transcribe, "load_model", lambda name, device: FakeModel()
+    )
+    transcribe.main([str(media), "--device", "cpu", "--model", "small"])
+    meta_file = tmp_path / "강연.meta.yaml"
+    meta = yaml.safe_load(meta_file.read_text(encoding="utf-8"))
+    assert meta["model"] == "faster-whisper small"
+    assert meta["language"] == "ko"
+    assert meta["duration"] == "00:12"
+    assert meta["speaker"] == ""
+
+
+def test_main_meta_uses_info_json(tmp_path, media, monkeypatch):
+    """미디어 옆 info.json이 있으면 URL과 후보값이 채워진다."""
+    import json
+
+    import yaml
+
+    (tmp_path / "강연.info.json").write_text(
+        json.dumps({
+            "id": "abc",
+            "title": "홍길동 교수 특강",
+            "webpage_url": "https://youtu.be/abc",
+            "channel": "테스트채널",
+            "upload_date": "20200103",
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        transcribe, "load_model", lambda name, device: FakeModel()
+    )
+    transcribe.main([str(media), "--device", "cpu"])
+    meta = yaml.safe_load(
+        (tmp_path / "강연.meta.yaml").read_text(encoding="utf-8")
+    )
+    assert meta["source_url"] == "https://youtu.be/abc"
+    assert meta["recorded"] == ""
+    assert meta["_meta"]["published"] == "2020-01-03"
+    assert "홍길동" in meta["_meta"]["candidates"]["speaker"]
+
+
+def test_main_no_meta_option(tmp_path, media, monkeypatch):
+    """--no-meta를 주면 메타데이터 파일을 만들지 않는다."""
+    monkeypatch.setattr(
+        transcribe, "load_model", lambda name, device: FakeModel()
+    )
+    transcribe.main([str(media), "--device", "cpu", "--no-meta"])
+    assert not (tmp_path / "강연.meta.yaml").exists()
 
 
 def test_fallback_moves_to_smaller_model(tmp_path, media, monkeypatch):

@@ -1,0 +1,13 @@
+# Example URL list for fetch.py / run_all.bat / run_all.sh
+# One YouTube URL per line. Lines starting with '#' are comments.
+# Copy this file to urls.txt and edit it, then run:
+#     uv run fetch.py --urls urls.txt
+# or drop it on run_all.bat (Windows) / ./run_all.sh (Linux).
+#
+# Downloads land in data/ as "title [videoID].m4a" plus a matching
+# "title [videoID].info.json". Already-downloaded videos are listed
+# in data/archive.txt and skipped on the next run, so you can keep
+# appending URLs to this file.
+
+https://www.youtube.com/watch?v=EXAMPLE1234
+https://youtu.be/EXAMPLE5678

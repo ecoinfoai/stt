@@ -1,8 +1,9 @@
 # INSTALL
 
-Setup guide for the stt transcription CLI. GPU execution needs
-NVIDIA cuBLAS for CUDA 12 and cuDNN 9 (faster-whisper/CTranslate2
-requirement). CPU-only use needs none of that.
+Setup guide for the stt pipeline. Downloading needs `ffmpeg`
+(yt-dlp uses it to extract audio). GPU transcription needs NVIDIA
+cuBLAS for CUDA 12 and cuDNN 9 (faster-whisper/CTranslate2
+requirement). CPU-only transcription needs none of that.
 
 ## 1. Windows 11
 
@@ -22,10 +23,21 @@ From the repository folder:
 uv sync
 ```
 
-This creates `.venv/` and installs faster-whisper. uv downloads a
-suitable Python automatically if none is present.
+This creates `.venv/` and installs faster-whisper, yt-dlp and
+PyYAML. uv downloads a suitable Python automatically if none is
+present.
 
-### 1-3. GPU libraries (cuBLAS + cuDNN 9)
+### 1-3. Install ffmpeg
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
+Open a new terminal afterwards so `ffmpeg` is on `PATH`, then check
+with `ffmpeg -version`. Only `fetch.py` needs it; transcription of
+files you already have works without it.
+
+### 1-4. GPU libraries (cuBLAS + cuDNN 9)
 
 1. Open https://github.com/Purfview/whisper-standalone-win/releases/tag/libs
 2. Under **Assets**, download the newest
@@ -37,7 +49,7 @@ suitable Python automatically if none is present.
 Alternative: install cuDNN 9 for CUDA 12 from NVIDIA's official
 site and ensure the DLLs are on PATH.
 
-### 1-4. Verify
+### 1-5. Verify
 
 ```powershell
 nvidia-smi
@@ -48,7 +60,15 @@ uv run python -c "import ctranslate2; print('GPU:', ctranslate2.get_cuda_device_
 on the first real run (a clear error message points here if the
 DLLs are missing).
 
-### 1-5. Run
+### 1-6. Run
+
+```powershell
+copy urls_example.txt urls.txt
+notepad urls.txt
+run_all.bat urls.txt
+```
+
+For files you already have, transcribe directly:
 
 ```powershell
 uv run transcribe.py "data\lecture.m4a" --terms terms_example.txt
@@ -66,9 +86,14 @@ export LD_LIBRARY_PATH=$(uv run python -c 'import os, nvidia.cublas.lib, nvidia.
 uv run transcribe.py data/lecture.mp4
 ```
 
-Put the `LD_LIBRARY_PATH` export into the shell profile or the
-service unit that runs the job. On NixOS, the equivalent goes into
-your shell.nix/flake devShell.
+`run_all.sh` and `run_list.sh` do this export for you (see
+`_venv.sh`), so nothing extra is needed when you go through them.
+For direct `uv run` calls, put the export into your shell profile
+or the service unit that runs the job. On NixOS, the equivalent
+goes into your shell.nix/flake devShell.
+
+`ffmpeg` for downloads: `sudo apt install ffmpeg` (Debian/Ubuntu)
+or the equivalent for your distribution.
 
 ### CPU-only servers
 
@@ -80,7 +105,8 @@ uv run transcribe.py data/ --model small --beam 1
 ```
 
 Re-running is safe: existing transcripts are skipped, which makes
-folder-watching cron jobs trivial.
+folder-watching cron jobs trivial. The same holds for downloads —
+`data/archive.txt` records what has already been fetched.
 
 ## 3. Model cache
 
@@ -99,6 +125,10 @@ small 0.5 GB. Interrupted downloads resume on retry.
 | too slow | `--beam 1` or `--model large-v3-turbo`; on CPU use `--model small` |
 | "empty transcription" error | file may be silent; retry with `--language auto` |
 | model download fails | check network and re-run (resumes) |
+| `yt-dlp을(를) 찾지 못했습니다` | `uv sync`, or `uv run pip install -U yt-dlp` |
+| `ffmpeg을(를) 찾지 못했습니다` | install ffmpeg (section 1-3 / Linux notes) and open a new terminal |
+| YouTube asks to "confirm you're not a bot" | wait a few hours; add `--cookies-from-browser chrome`; avoid VPN/datacenter IPs |
+| download stops partway | re-run — `data/archive.txt` makes it resume with the rest |
 
 ## 5. Legacy setup (plain venv)
 
