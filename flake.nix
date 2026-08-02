@@ -19,6 +19,9 @@
             pkgs.uv
             # yt-dlp shells out to ffmpeg to extract audio (stt fetch).
             pkgs.ffmpeg
+            # YouTube extraction without a JavaScript runtime is deprecated
+            # and drops formats; deno is the one yt-dlp enables by default.
+            pkgs.deno
           ];
 
           env = {
