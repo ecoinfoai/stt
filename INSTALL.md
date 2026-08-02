@@ -95,11 +95,30 @@ uv run transcribe.py data/lecture.mp4
 `run_all.sh` and `run_list.sh` do this export for you (see
 `_venv.sh`), so nothing extra is needed when you go through them.
 For direct `uv run` calls, put the export into your shell profile
-or the service unit that runs the job. On NixOS, the equivalent
-goes into your shell.nix/flake devShell.
+or the service unit that runs the job.
 
 `ffmpeg` for downloads: `sudo apt install ffmpeg` (Debian/Ubuntu)
 or the equivalent for your distribution.
+
+### NixOS (flake devShell + direnv)
+
+The repository ships a `flake.nix` devShell with uv, Python 3.12
+and ffmpeg, plus the `LD_LIBRARY_PATH` entries the PyPI wheels
+(CTranslate2, onnxruntime, PyAV) need on NixOS:
+
+```sh
+direnv allow      # or: nix develop
+uv sync           # GPU machines: uv sync --extra cuda
+```
+
+`.envrc` adds the cuBLAS/cuDNN directories of the `cuda` extra to
+`LD_LIBRARY_PATH`, so `uv run transcribe.py …` works directly. The
+lookup happens when direnv loads the environment — run `direnv
+reload` once after the first `uv sync --extra cuda`.
+
+The devShell keeps `UV_PYTHON_PREFERENCE=only-system`: uv's own
+downloadable interpreters are linked against `/lib64/ld-linux`,
+which NixOS does not provide.
 
 ### CPU-only servers
 

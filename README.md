@@ -59,6 +59,7 @@ terms_example.txt   example hotwords file
 tests/              pytest suite
 data/               media, metadata and transcripts (git-ignored)
 INSTALL.md          setup guide (Windows GPU + Linux)
+flake.nix/.envrc    Nix devShell (uv, Python 3.12, ffmpeg) for direnv
 ```
 
 ## Quick start

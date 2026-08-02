@@ -22,6 +22,11 @@ list.yaml
 *.7z
 *.zip
 
+# nix / direnv
+.direnv/
+result
+result-*
+
 # python
 __pycache__/
 *.py[cod]
