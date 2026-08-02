@@ -31,7 +31,7 @@ goto :run
 if not exist "%LIST%" goto :no_list
 echo [stt] list : %LIST%
 echo [stt] data : %HERE%data
-"%PY%" "%HERE%batch_stt.py" --list "%LIST%" --base-dir "%HERE%data" %1 %2 %3 %4 %5 %6 %7 %8 %9
+"%PY%" -m stt batch --list "%LIST%" --base-dir "%HERE%data" %1 %2 %3 %4 %5 %6 %7 %8 %9
 set "CODE=%ERRORLEVEL%"
 if not "%CODE%"=="0" echo [stt] finished with errors (exit %CODE%)
 pause

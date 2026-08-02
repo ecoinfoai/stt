@@ -6,15 +6,12 @@ GPU 환경에서 첫 실행으로 확인한다.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import transcribe
+from stt import transcribe
 
 
 class FakeModel:

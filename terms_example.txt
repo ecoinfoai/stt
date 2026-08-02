@@ -1,5 +1,5 @@
 # Example terms file - one term per line, '#' lines are comments.
-# Usage: uv run transcribe.py lecture.mp4 --terms terms_example.txt
+# Usage: stt transcribe lecture.mp4 --terms terms_example.txt
 # Listed terms and names are injected as hotwords to steer the
 # transcription spelling. Edit freely per lecture topic.
 4차 산업혁명

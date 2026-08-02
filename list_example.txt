@@ -1,10 +1,10 @@
-# Example media list for batch_stt.py / run_list.bat / run_list.sh
+# Example media list for stt batch / run_list.bat / run_list.sh
 # One title per line, relative to the data/ folder. The extension
 # is optional - a bare title finds the matching media file, and an
 # audio file wins over a video file of the same name.
 # Lines starting with '#' are comments.
 #
-#     uv run batch_stt.py --list list.txt --dry-run
+#     stt batch --list list.txt --dry-run
 #
 # Use --dry-run first: every title is resolved to a real file
 # before any transcription starts, so typos surface immediately.

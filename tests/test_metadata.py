@@ -1,15 +1,12 @@
 """metadata 모듈 테스트."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import metadata  # noqa: E402
+from stt import metadata
 
 SAMPLE_INFO: dict = {
     "id": "abc123XYZ_1",

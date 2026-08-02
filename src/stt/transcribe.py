@@ -7,9 +7,9 @@ faster-whisper(Whisper 계열 음성인식)로 받아쓰고, 짧은 세그먼트
 영상(.mp4 .mkv ...)과 녹음(.m4a .mp3 .wav ...)을 구분 없이 받는다.
 
 사용 예:
-    python transcribe.py 강연.mp4
-    python transcribe.py 녹음.m4a 강의폴더 --srt
-    python transcribe.py 강연.mp4 --terms terms.txt --no-timestamps
+    stt transcribe 강연.mp4
+    stt transcribe 녹음.m4a 강의폴더 --srt
+    stt transcribe 강연.mp4 --terms terms.txt --no-timestamps
 """
 from __future__ import annotations
 
@@ -557,7 +557,7 @@ def build_run_info(model_name: str, language: str, duration_s: float):
         >>> build_run_info("small", "ko", 60.0).language
         'ko'
     """
-    import metadata
+    from stt import metadata
 
     return metadata.RunInfo(
         model=model_name,
@@ -581,7 +581,7 @@ def write_metadata(media: Path, out_dir: Path | None, run) -> Path:
     Examples:
         >>> write_metadata(Path("a.m4a"), None, r)  # doctest: +SKIP
     """
-    import metadata
+    from stt import metadata
 
     return metadata.write_for_media(media, out_dir, run)
 
@@ -730,6 +730,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         'ko'
     """
     parser = argparse.ArgumentParser(
+        prog="stt transcribe",
         description=(
             "강연 영상/녹음 → 한국어 전사문(TXT). "
             "영상과 오디오 파일 모두 지원."
@@ -833,7 +834,3 @@ def main(argv: Sequence[str] | None = None) -> int:
     run_with_fallback(pending, chain, device, args, terms)
     print("전체 완료.")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

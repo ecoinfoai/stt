@@ -14,5 +14,5 @@ if not exist "%PY%" (
   pause
   exit /b 1
 )
-"%PY%" "%~dp0transcribe.py" %*
+"%PY%" -m stt transcribe %*
 pause

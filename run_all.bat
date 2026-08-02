@@ -32,12 +32,12 @@ if not exist "%URLS%" goto :no_list
 
 echo.
 echo === 1/2  downloading (yt-dlp) ===
-"%PY%" "%HERE%fetch.py" --urls "%URLS%" --out-dir "%HERE%data"
+"%PY%" -m stt fetch --urls "%URLS%" --out-dir "%HERE%data"
 if errorlevel 1 echo [warn] some downloads failed - continuing with what arrived
 
 echo.
 echo === 2/2  transcribing (faster-whisper) ===
-"%PY%" "%HERE%transcribe.py" "%HERE%data" %1 %2 %3 %4 %5 %6 %7 %8 %9
+"%PY%" -m stt transcribe "%HERE%data" %1 %2 %3 %4 %5 %6 %7 %8 %9
 set "CODE=%ERRORLEVEL%"
 
 echo.

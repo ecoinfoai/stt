@@ -17,7 +17,7 @@
             # wheels for every locked dependency (ctranslate2, onnxruntime, av).
             pkgs.python312
             pkgs.uv
-            # yt-dlp shells out to ffmpeg to extract audio (fetch.py).
+            # yt-dlp shells out to ffmpeg to extract audio (stt fetch).
             pkgs.ffmpeg
           ];
 

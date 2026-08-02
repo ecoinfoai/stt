@@ -31,5 +31,5 @@ fi
 
 echo "[stt] list : $LIST"
 echo "[stt] data : $HERE/data"
-exec "${PY[@]}" "$HERE/batch_stt.py" \
+exec "${PY[@]}" -m stt batch \
     --list "$LIST" --base-dir "$HERE/data" "$@"

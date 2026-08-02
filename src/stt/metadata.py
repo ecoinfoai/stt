@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias
 
-import transcribe
+from stt import transcribe
 
 Meta: TypeAlias = dict[str, Any]
 

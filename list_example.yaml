@@ -1,5 +1,5 @@
-# Example media list with per-item options for batch_stt.py.
-#     uv run batch_stt.py --list list.yaml --dry-run
+# Example media list with per-item options for stt batch.
+#     stt batch --list list.yaml --dry-run
 #
 # Items sharing the same options are transcribed together, so the
 # model is loaded once per option group - keep overrides to the

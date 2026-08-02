@@ -8,9 +8,9 @@ archive.txt에 기록해 두고 건너뛰므로 목록에 URL을 더한 뒤 다�
 일시 제한에 걸릴 가능성을 줄인다.
 
 사용 예:
-    python fetch.py --urls urls.txt
-    python fetch.py --urls urls.txt --dry-run
-    python fetch.py --urls urls.txt --auto-subs --video
+    stt fetch --urls urls.txt
+    stt fetch --urls urls.txt --dry-run
+    stt fetch --urls urls.txt --auto-subs --video
 """
 from __future__ import annotations
 
@@ -216,6 +216,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         'm4a'
     """
     parser = argparse.ArgumentParser(
+        prog="stt fetch",
         description=(
             "URL 목록의 유튜브 영상을 음원과 메타데이터로 내려받는다."
         ),
@@ -288,7 +289,3 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print("\n내려받기 완료.")
     return result.returncode
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

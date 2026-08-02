@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "stt"
 version = "0.2.0"
@@ -9,6 +13,9 @@ dependencies = [
     "yt-dlp>=2025.1",
     "pyyaml>=6",
 ]
+
+[project.scripts]
+stt = "stt.cli:main"
 
 [project.optional-dependencies]
 # Linux GPU machines: `uv sync --extra cuda` installs NVIDIA runtime libs.
@@ -23,7 +30,5 @@ dev = [
     "pytest>=7",
 ]
 
-[tool.uv]
-# Script-style project: `uv sync` installs dependencies only,
-# without building/installing the project itself as a package.
-package = false
+[tool.setuptools.packages.find]
+where = ["src"]

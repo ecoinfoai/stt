@@ -34,7 +34,7 @@ winget install Gyan.FFmpeg
 ```
 
 Open a new terminal afterwards so `ffmpeg` is on `PATH`, then check
-with `ffmpeg -version`. Only `fetch.py` needs it; transcription of
+with `ffmpeg -version`. Only `stt fetch` needs it; transcription of
 files you already have works without it.
 
 ### 1-4. GPU libraries (cuBLAS + cuDNN 9)
@@ -77,7 +77,7 @@ run_all.bat urls.txt
 For files you already have, transcribe directly:
 
 ```powershell
-uv run transcribe.py "data\lecture.m4a" --terms terms_example.txt
+uv run stt transcribe "data\lecture.m4a" --terms terms_example.txt
 ```
 
 Or drag & drop media files onto `transcribe.bat`.
@@ -89,7 +89,7 @@ Or drag & drop media files onto `transcribe.bat`.
 ```sh
 uv sync --extra cuda    # installs nvidia-cublas-cu12 / nvidia-cudnn-cu12 wheels
 export LD_LIBRARY_PATH=$(uv run python -c 'import os, nvidia.cublas.lib, nvidia.cudnn.lib; print(os.path.dirname(nvidia.cublas.lib.__file__) + ":" + os.path.dirname(nvidia.cudnn.lib.__file__))')
-uv run transcribe.py data/lecture.mp4
+uv run stt transcribe data/lecture.mp4
 ```
 
 `run_all.sh` and `run_list.sh` do this export for you (see
@@ -112,7 +112,7 @@ uv sync           # GPU machines: uv sync --extra cuda
 ```
 
 `.envrc` adds the cuBLAS/cuDNN directories of the `cuda` extra to
-`LD_LIBRARY_PATH`, so `uv run transcribe.py …` works directly. The
+`LD_LIBRARY_PATH`, so `uv run stt transcribe …` works directly. The
 lookup happens when direnv loads the environment — run `direnv
 reload` once after the first `uv sync --extra cuda`.
 
@@ -126,7 +126,7 @@ No NVIDIA libraries needed:
 
 ```sh
 uv sync
-uv run transcribe.py data/ --model small --beam 1
+uv run stt transcribe data/ --model small --beam 1
 ```
 
 Re-running is safe: existing transcripts are skipped, which makes

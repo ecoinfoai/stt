@@ -2,16 +2,16 @@
 """목록 파일에 적어 둔 여러 미디어를 순서대로 전사하는 배치 러너.
 
 `.txt`(한 줄에 제목 하나) 또는 `.yaml`(항목별 옵션 지정 가능)
-목록을 읽어 미디어 폴더의 실제 파일로 해석한 뒤 transcribe.py를
+목록을 읽어 미디어 폴더의 실제 파일로 해석한 뒤 transcribe 모듈을
 호출한다. 확장자를 적지 않은 '제목'만으로도 파일을 찾으며, 같은
 옵션을 쓰는 항목끼리 묶어 처리하므로 모델은 옵션 묶음당 한 번만
 적재된다. 목록에 없는 파일이 하나라도 있으면 전사를 시작하기
 전에 전부 모아 보고하고 멈춘다.
 
 사용 예:
-    python batch_stt.py --list list.txt
-    python batch_stt.py --list list.yaml --dry-run
-    python batch_stt.py --list list.txt --base-dir data --keep-going
+    stt batch --list list.txt
+    stt batch --list list.yaml --dry-run
+    stt batch --list list.txt --base-dir data --keep-going
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence, TypeAlias
 
-import transcribe
+from stt import transcribe
 
 Options: TypeAlias = dict[str, Any]
 Resolved: TypeAlias = tuple[Path, Options]
@@ -404,7 +404,7 @@ def build_argv(
     out_dir: Path | None,
     overwrite: bool,
 ) -> list[str]:
-    """transcribe.py에 넘길 인자 목록을 만든다.
+    """transcribe.main()에 넘길 인자 목록을 만든다.
 
     Args:
         paths: 이 묶음에서 전사할 미디어 경로들.
@@ -513,6 +513,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         PosixPath('data')
     """
     parser = argparse.ArgumentParser(
+        prog="stt batch",
         description=(
             "목록 파일(.txt/.yaml)에 적은 여러 미디어를 "
             "순서대로 전사한다."
@@ -576,7 +577,3 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     print(f"\n목록 전체 완료: {len(pairs)}개 파일.")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

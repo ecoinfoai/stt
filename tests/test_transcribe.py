@@ -1,4 +1,4 @@
-"""Tests for transcribe.py pure post-processing functions.
+"""Tests for stt.transcribe pure post-processing functions.
 
 Covers: timestamp formatting, media discovery, terms loading,
 paragraph assembly, and TXT/SRT rendering. Model inference is
@@ -6,15 +6,11 @@ covered separately by an end-to-end smoke run.
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from transcribe import (
+from stt.transcribe import (
     build_header,
     build_paragraphs,
     discover_media,

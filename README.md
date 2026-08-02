@@ -8,13 +8,13 @@ your GPU with
 audio ever leaves your machine.
 
 ```
-urls.txt ──fetch.py──▶ data/title [ID].m4a          (audio)
-                       data/title [ID].info.json    (metadata)
-                              │
-                       transcribe.py
-                              ▼
-                       data/title [ID].txt          (transcript)
-                       data/title [ID].meta.yaml    (note metadata)
+urls.txt ─stt fetch─▶ data/title [ID].m4a           (audio)
+                      data/title [ID].info.json     (metadata)
+                             │
+                      stt transcribe
+                             ▼
+                      data/title [ID].txt           (transcript)
+                      data/title [ID].meta.yaml     (note metadata)
 ```
 
 Every stage skips what is already done: downloads are recorded in
@@ -42,10 +42,11 @@ are processed.
 ## Layout
 
 ```
-fetch.py            download audio + metadata from a URL list
-transcribe.py       transcription CLI
-metadata.py         info.json + run info → .meta.yaml
-batch_stt.py        transcribe a curated list, per-item options
+src/stt/cli.py          `stt` entry point, subcommand dispatch
+src/stt/fetch.py        download audio + metadata from a URL list
+src/stt/transcribe.py   transcription CLI
+src/stt/metadata.py     info.json + run info → .meta.yaml
+src/stt/batch.py        transcribe a curated list, per-item options
 
 run_all.bat/.sh     fetch + transcribe in one go
 run_list.bat/.sh    transcribe from a list file
@@ -73,19 +74,30 @@ cp urls_example.txt urls.txt     # edit: one YouTube URL per line
 ./run_all.sh urls.txt            # Windows: run_all.bat urls.txt
 ```
 
+To get an `stt` command on your PATH, independent of the working
+directory, install the project as a uv tool:
+
+```sh
+uv tool install -e .             # then: stt transcribe data/
+```
+
+Inside the repo, `uv run stt …` works without installing anything.
+
 The first transcription downloads the model from Hugging Face
 (large-v3 ≈ 3.1 GB) into the local cache; later runs start
 immediately.
 
-Without uv, a plain venv works too:
-`pip install -r requirements.txt`.
+Without uv, a plain venv works too: `pip install -e .`.
 
 ## Usage
 
-### fetch.py — download audio and metadata
+`stt` has three subcommands; `stt` alone lists them and
+`stt <command> --help` shows the options below.
+
+### stt fetch — download audio and metadata
 
 ```sh
-uv run fetch.py --urls urls.txt
+stt fetch --urls urls.txt
 ```
 
 | Option | Default | Description |
@@ -104,10 +116,10 @@ always applied to stay well under YouTube's rate limits. Runs of
 30–50 URLs are routine; a temporary block, if it ever happens,
 clears on its own within hours.
 
-### transcribe.py — media → transcript
+### stt transcribe — media → transcript
 
 ```sh
-uv run transcribe.py PATH [PATH ...] [options]
+stt transcribe PATH [PATH ...] [options]
 ```
 
 | Option | Default | Description |
@@ -128,14 +140,14 @@ uv run transcribe.py PATH [PATH ...] [options]
 CPU-only servers: `--model small --beam 1` is the practical
 combination for batch automation.
 
-### batch_stt.py — transcribe a curated list
+### stt batch — transcribe a curated list
 
 Use this when the media is already downloaded and you want a
 subset, or different options for some files.
 
 ```sh
-uv run batch_stt.py --list list.txt --dry-run
-uv run batch_stt.py --list list.yaml --keep-going
+stt batch --list list.txt --dry-run
+stt batch --list list.yaml --keep-going
 ```
 
 A list entry may be a bare title without extension — the matching

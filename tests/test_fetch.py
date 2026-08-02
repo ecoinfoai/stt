@@ -6,9 +6,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import fetch  # noqa: E402
+from stt import fetch
 
 
 class TestParseUrlList:

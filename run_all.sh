@@ -30,12 +30,12 @@ fi
 
 echo
 echo "=== 1/2  downloading (yt-dlp) ==="
-"${PY[@]}" "$HERE/fetch.py" --urls "$URLS" --out-dir "$HERE/data" || \
+"${PY[@]}" -m stt fetch --urls "$URLS" --out-dir "$HERE/data" || \
     echo "[warn] some downloads failed - continuing with what arrived"
 
 echo
 echo "=== 2/2  transcribing (faster-whisper) ==="
-"${PY[@]}" "$HERE/transcribe.py" "$HERE/data" "$@"
+"${PY[@]}" -m stt transcribe "$HERE/data" "$@"
 CODE=$?
 
 echo
