@@ -43,3 +43,6 @@ _to_delete/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Logs
+*.log
