@@ -111,6 +111,11 @@ stt fetch --urls urls.txt
 | `--cookies-from-browser` | — | e.g. `chrome`, for restricted videos |
 | `--dry-run` | off | print the yt-dlp command and stop |
 
+One line in, one video out: `--no-playlist` is always applied, so
+a URL copied straight out of YouTube with a `?list=…` attached
+fetches that video alone rather than the whole playlist. (A bare
+playlist URL, which points at no single video, still expands.)
+
 Request pacing (`--sleep-requests 1`, `--sleep-interval 3..8`) is
 always applied to stay well under YouTube's rate limits. Runs of
 30–50 URLs are routine; a temporary block, if it ever happens,

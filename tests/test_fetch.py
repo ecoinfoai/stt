@@ -158,6 +158,15 @@ class TestBuildCommand:
         )
         assert "-x" not in command
 
+    def test_build_command_never_expands_playlists(self, tmp_path):
+        """?list= 파라미터가 붙어도 그 영상 하나만 받는다."""
+        command = fetch.build_command(
+            ["https://youtu.be/aaa?list=PLxxx"],
+            self._args(out_dir=tmp_path),
+        )
+        assert "--no-playlist" in command
+        assert "--yes-playlist" not in command
+
     def test_build_command_writes_info_json(self, tmp_path):
         """메타데이터 저장 옵션은 항상 들어간다."""
         command = fetch.build_command(

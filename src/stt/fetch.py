@@ -2,7 +2,9 @@
 """URL 목록에 적힌 유튜브 영상을 음원과 메타데이터로 내려받는다.
 
 yt-dlp를 감싸 파일 이름을 '제목 [영상ID].확장자'로 통일하고, 옆에
-'제목 [영상ID].info.json'을 함께 남긴다. 이미 받은 영상은
+'제목 [영상ID].info.json'을 함께 남긴다. 목록의 한 줄은 언제나
+영상 하나이며, 주소에 '?list=...'가 붙어 있어도 그 영상만
+받는다. 이미 받은 영상은
 archive.txt에 기록해 두고 건너뛰므로 목록에 URL을 더한 뒤 다시
 돌리면 새로 추가된 것만 내려받는다. 요청 간격을 벌려 유튜브의
 일시 제한에 걸릴 가능성을 줄인다.
@@ -184,6 +186,9 @@ def build_command(
         "--download-archive", str(archive),
         "--no-overwrites",
         "--ignore-errors",
+        # 유튜브에서 복사한 주소에는 ?list=가 딸려 오기 쉽다. 그대로
+        # 두면 yt-dlp가 재생목록 전체를 받는다.
+        "--no-playlist",
         *SLEEP_OPTIONS,
     ]
     if not args.video:
