@@ -154,7 +154,7 @@ class TestBuildMeta:
     def test_build_meta_template_version(self):
         """템플릿 버전이 기록된다."""
         meta = metadata.build_meta(SAMPLE_INFO, SAMPLE_RUN)
-        assert meta["_meta"]["template_version"] == "1.1"
+        assert meta["_meta"]["template_version"] == "1.2"
 
 
 class TestLoadInfoJson:

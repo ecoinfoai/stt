@@ -3,7 +3,7 @@
 
 미디어 옆의 '제목 [ID].info.json'과 전사 실행 정보를 합쳐
 '제목 [ID].meta.yaml'을 만든다. 항목 이름은 transcript-report
-스킬의 보고서 템플릿(template_version 1.1) frontmatter와 같게
+스킬의 보고서 템플릿(template_version 1.2) frontmatter와 같게
 맞춰, 노트를 만들 때 그대로 옮겨 적을 수 있게 한다.
 
 기계로 확정되는 값만 채우고, 추정한 값은 _meta.candidates에,
@@ -23,7 +23,7 @@ import transcribe
 Meta: TypeAlias = dict[str, Any]
 
 #: 이 파일이 맞추는 보고서 템플릿 버전.
-TEMPLATE_VERSION: str = "1.1"
+TEMPLATE_VERSION: str = "1.2"
 
 #: 사람이 판단해야 해서 자동으로 채우지 않는 항목.
 HUMAN_FIELDS: tuple[str, ...] = (
