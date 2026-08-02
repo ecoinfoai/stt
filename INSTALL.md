@@ -49,6 +49,12 @@ files you already have works without it.
 Alternative: install cuDNN 9 for CUDA 12 from NVIDIA's official
 site and ensure the DLLs are on PATH.
 
+> **Re-run this step after every `uv sync` that recreates `.venv`.**
+> The DLLs live inside `.venv\Scripts\`, so deleting or rebuilding
+> the environment removes them and transcription fails with
+> `cublas64_12.dll is not found`. Keeping a copy of the extracted
+> DLLs outside the repo makes this a one-command fix.
+
 ### 1-5. Verify
 
 ```powershell
@@ -119,14 +125,14 @@ small 0.5 GB. Interrupted downloads resume on retry.
 
 | Symptom | Fix |
 |---|---|
-| `cublas`/`cudnn` DLL error | DLLs must sit directly in `.venv\Scripts\` (Windows) or be on `LD_LIBRARY_PATH` (Linux) |
+| `cublas`/`cudnn` DLL error | DLLs must sit directly in `.venv\Scripts\` (Windows) or be on `LD_LIBRARY_PATH` (Linux); re-copy them after any `uv sync` that recreated `.venv` |
 | `GPU: 0` | update the NVIDIA driver, re-check `nvidia-smi` |
 | repeated out-of-memory | run with `--model small` or `--device cpu` (auto-fallback usually handles this) |
 | too slow | `--beam 1` or `--model large-v3-turbo`; on CPU use `--model small` |
 | "empty transcription" error | file may be silent; retry with `--language auto` |
 | model download fails | check network and re-run (resumes) |
-| `yt-dlp을(를) 찾지 못했습니다` | `uv sync`, or `uv run pip install -U yt-dlp` |
-| `ffmpeg을(를) 찾지 못했습니다` | install ffmpeg (section 1-3 / Linux notes) and open a new terminal |
+| `yt-dlp를 찾지 못했습니다` | run `uv sync` in the repository folder |
+| `ffmpeg를 찾지 못했습니다` | install ffmpeg (section 1-3 / Linux notes) and open a new terminal |
 | YouTube asks to "confirm you're not a bot" | wait a few hours; add `--cookies-from-browser chrome`; avoid VPN/datacenter IPs |
 | download stops partway | re-run — `data/archive.txt` makes it resume with the rest |
 

@@ -184,7 +184,7 @@ def test_dll_error_gets_guidance(tmp_path, media, monkeypatch):
         transcribe, "load_model", lambda name, device: DllModel()
     )
     args = transcribe.parse_args([str(media), "--device", "cpu"])
-    with pytest.raises(RuntimeError, match="Scripts"):
+    with pytest.raises(RuntimeError, match="INSTALL.md"):
         transcribe.run_with_fallback(
             [media], ("big",), "cpu", args, None
         )

@@ -633,6 +633,33 @@ def process_one(
     )
 
 
+def dll_guidance(error: RuntimeError) -> str:
+    """CUDA DLL 오류에 붙일 안내 문구를 만든다.
+
+    DLL을 넣어야 할 실제 폴더 경로를 함께 알려준다. venv를 새로
+    만들면 그 안에 넣어 둔 DLL도 사라지므로 그 점도 짚는다.
+
+    Args:
+        error: 원본 RuntimeError.
+
+    Returns:
+        원본 메시지에 안내를 덧붙인 문자열.
+
+    Examples:
+        >>> "INSTALL.md" in dll_guidance(RuntimeError("cublas"))
+        True
+    """
+    return (
+        f"{error}\n→ CUDA DLL을 찾지 못했습니다. cuBLAS·cuDNN DLL "
+        f"파일들을 (하위 폴더가 아니라) 이 폴더 바로 안에 넣어야 "
+        f"합니다:\n"
+        f"   {Path(sys.executable).parent}\n"
+        f"'uv sync'로 venv를 새로 만들면 넣어 둔 DLL도 함께 사라지니 "
+        f"다시 복사하세요. INSTALL.md 1-4장 참고. 급하면 "
+        f"--device cpu로 실행할 수 있습니다."
+    )
+
+
 def run_with_fallback(
     pending: list[Path],
     chain: tuple[str, ...],
@@ -673,12 +700,7 @@ def run_with_fallback(
             return
         except RuntimeError as error:
             if is_dll_error(error) and not is_oom_error(error):
-                raise RuntimeError(
-                    f"{error}\n→ CUDA DLL을 찾지 못했습니다. "
-                    f"cuBLAS·cuDNN DLL 파일들이 (하위 폴더가 아니라) "
-                    f"venv의 Scripts 폴더 바로 안에 있는지 확인하세요. "
-                    f"설치_사용_안내.md 1-3, 4장 참고."
-                ) from error
+                raise RuntimeError(dll_guidance(error)) from error
             if not is_oom_error(error):
                 raise
             print(

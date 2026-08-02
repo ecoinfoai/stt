@@ -15,6 +15,7 @@ archive.txt에 기록해 두고 건너뛰므로 목록에 URL을 더한 뒤 다�
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -34,14 +35,8 @@ SLEEP_OPTIONS: tuple[str, ...] = (
     "--max-sleep-interval", "8",
 )
 
-#: yt-dlp가 없을 때 안내할 설치 방법.
-_INSTALL_HINTS: dict[str, str] = {
-    "yt-dlp": "uv sync 로 설치되거나 'uv run pip install -U yt-dlp'",
-    "ffmpeg": (
-        "Windows는 'winget install Gyan.FFmpeg', "
-        "리눅스는 'sudo apt install ffmpeg'"
-    ),
-}
+#: ffmpeg 실행 파일 이름(운영체제별).
+_FFMPEG_NAMES: tuple[str, ...] = ("ffmpeg.exe", "ffmpeg")
 
 
 def parse_url_list(text: str) -> list[str]:
@@ -112,21 +107,55 @@ def load_urls(path: Path) -> list[str]:
     return parse_url_list(path.read_text(encoding="utf-8"))
 
 
+def find_ffmpeg() -> str | None:
+    """ffmpeg 실행 파일을 PATH와 venv 폴더에서 찾는다.
+
+    PATH를 먼저 보고, 없으면 지금 파이썬이 들어 있는 폴더(venv의
+    Scripts 또는 bin)를 본다. venv 안에만 두고 쓰는 설치 방식도
+    인식하기 위함이다.
+
+    Returns:
+        찾은 ffmpeg 경로. 없으면 None.
+
+    Examples:
+        >>> find_ffmpeg()  # doctest: +SKIP
+    """
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    exe_dir = Path(sys.executable).parent
+    for name in _FFMPEG_NAMES:
+        candidate = exe_dir / name
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def require_tools() -> None:
-    """yt-dlp와 ffmpeg가 설치돼 있는지 확인한다.
+    """yt-dlp 모듈과 ffmpeg 실행 파일이 있는지 확인한다.
+
+    yt-dlp는 PATH가 아니라 지금 파이썬에 설치된 모듈로 확인한다.
+    venv 안에 설치돼 있어도 PATH에는 없을 수 있기 때문이다.
 
     Raises:
-        RuntimeError: 둘 중 하나라도 실행 파일을 찾지 못했을 때.
+        RuntimeError: yt-dlp 모듈이나 ffmpeg를 찾지 못했을 때.
 
     Examples:
         >>> require_tools()  # doctest: +SKIP
     """
-    for name, hint in _INSTALL_HINTS.items():
-        if shutil.which(name) is None:
-            raise RuntimeError(
-                f"{name}을(를) 찾지 못했습니다. 설치 방법: {hint}. "
-                f"설치 뒤 새 터미널에서 다시 실행하세요."
-            )
+    if importlib.util.find_spec("yt_dlp") is None:
+        raise RuntimeError(
+            f"yt-dlp를 찾지 못했습니다. 이 파이썬에 설치돼 있지 "
+            f"않습니다: {sys.executable}. 저장소 폴더에서 "
+            f"'uv sync'를 실행하세요."
+        )
+    if find_ffmpeg() is None:
+        raise RuntimeError(
+            "ffmpeg를 찾지 못했습니다. 내려받은 음원을 변환하는 데 "
+            "필요합니다. Windows는 'winget install Gyan.FFmpeg', "
+            "리눅스는 'sudo apt install ffmpeg'로 설치한 뒤 "
+            "새 터미널에서 다시 실행하세요."
+        )
 
 
 def build_command(
@@ -143,12 +172,12 @@ def build_command(
 
     Examples:
         >>> ns = parse_args(["--urls", "urls.txt"])
-        >>> build_command(["https://youtu.be/a"], ns)[0]
-        'yt-dlp'
+        >>> build_command(["https://youtu.be/a"], ns)[1:3]
+        ['-m', 'yt_dlp']
     """
     archive = args.out_dir / ARCHIVE_NAME
     command = [
-        "yt-dlp",
+        sys.executable, "-m", "yt_dlp",
         "-P", str(args.out_dir),
         "-o", OUTPUT_TEMPLATE,
         "--write-info-json",
@@ -167,6 +196,9 @@ def build_command(
         ]
     if args.cookies_from_browser:
         command += ["--cookies-from-browser", args.cookies_from_browser]
+    ffmpeg = find_ffmpeg()
+    if ffmpeg:
+        command += ["--ffmpeg-location", ffmpeg]
     return command + list(urls)
 
 

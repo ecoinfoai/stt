@@ -61,28 +61,56 @@ class TestLoadUrls:
             fetch.load_urls(tmp_path / "none.txt")
 
 
+class TestFindFfmpeg:
+    """find_ffmpeg 테스트."""
+
+    def test_find_ffmpeg_on_path(self, monkeypatch):
+        """PATH에 있으면 그 경로를 돌려준다."""
+        monkeypatch.setattr(
+            fetch.shutil, "which", lambda name: "/usr/bin/ffmpeg"
+        )
+        assert fetch.find_ffmpeg() == "/usr/bin/ffmpeg"
+
+    def test_find_ffmpeg_in_venv(self, monkeypatch, tmp_path):
+        """PATH에 없어도 파이썬 옆에 있으면 찾는다."""
+        monkeypatch.setattr(fetch.shutil, "which", lambda name: None)
+        binary = tmp_path / "ffmpeg"
+        binary.write_bytes(b"")
+        monkeypatch.setattr(fetch.sys, "executable", str(tmp_path / "python"))
+        assert fetch.find_ffmpeg() == str(binary)
+
+    def test_find_ffmpeg_absent(self, monkeypatch, tmp_path):
+        """어디에도 없으면 None."""
+        monkeypatch.setattr(fetch.shutil, "which", lambda name: None)
+        monkeypatch.setattr(fetch.sys, "executable", str(tmp_path / "python"))
+        assert fetch.find_ffmpeg() is None
+
+
 class TestRequireTools:
     """require_tools 테스트."""
 
     def test_require_tools_ok(self, monkeypatch):
-        """두 도구가 모두 있으면 통과한다."""
-        monkeypatch.setattr(fetch.shutil, "which", lambda name: "/bin/x")
+        """모듈과 ffmpeg가 모두 있으면 통과한다."""
+        monkeypatch.setattr(fetch, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+        monkeypatch.setattr(
+            fetch.importlib.util, "find_spec", lambda name: object()
+        )
         fetch.require_tools()
 
     def test_require_tools_missing_yt_dlp(self, monkeypatch):
-        """yt-dlp가 없으면 설치 안내와 함께 오류."""
+        """yt-dlp 모듈이 없으면 uv sync 안내와 함께 오류."""
+        monkeypatch.setattr(fetch, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
         monkeypatch.setattr(
-            fetch.shutil, "which",
-            lambda name: None if name == "yt-dlp" else "/bin/x",
+            fetch.importlib.util, "find_spec", lambda name: None
         )
-        with pytest.raises(RuntimeError, match="yt-dlp"):
+        with pytest.raises(RuntimeError, match="uv sync"):
             fetch.require_tools()
 
     def test_require_tools_missing_ffmpeg(self, monkeypatch):
         """ffmpeg가 없으면 설치 안내와 함께 오류."""
+        monkeypatch.setattr(fetch, "find_ffmpeg", lambda: None)
         monkeypatch.setattr(
-            fetch.shutil, "which",
-            lambda name: None if name == "ffmpeg" else "/bin/x",
+            fetch.importlib.util, "find_spec", lambda name: object()
         )
         with pytest.raises(RuntimeError, match="ffmpeg"):
             fetch.require_tools()
@@ -97,6 +125,24 @@ class TestBuildCommand:
         for key, value in overrides.items():
             setattr(args, key, value)
         return args
+
+    def test_build_command_runs_module(self, tmp_path):
+        """PATH가 아니라 지금 파이썬의 yt_dlp 모듈을 실행한다."""
+        command = fetch.build_command(
+            ["https://youtu.be/aaa"], self._args(out_dir=tmp_path)
+        )
+        assert command[0] == fetch.sys.executable
+        assert command[1:3] == ["-m", "yt_dlp"]
+
+    def test_build_command_ffmpeg_location(self, tmp_path, monkeypatch):
+        """찾은 ffmpeg 경로를 yt-dlp에 알려준다."""
+        monkeypatch.setattr(fetch, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+        command = fetch.build_command(
+            ["https://youtu.be/aaa"], self._args(out_dir=tmp_path)
+        )
+        assert command[command.index("--ffmpeg-location") + 1] == (
+            "/usr/bin/ffmpeg"
+        )
 
     def test_build_command_audio_by_default(self, tmp_path):
         """기본은 음원 추출이다."""
@@ -198,7 +244,7 @@ class TestMain:
         """--dry-run은 명령만 보여주고 실행하지 않는다."""
         list_file = tmp_path / "urls.txt"
         list_file.write_text("https://youtu.be/aaa\n", encoding="utf-8")
-        monkeypatch.setattr(fetch.shutil, "which", lambda name: "/bin/x")
+        monkeypatch.setattr(fetch, "require_tools", lambda: None)
         monkeypatch.setattr(
             fetch.subprocess, "run",
             lambda *a, **k: pytest.fail("실행되면 안 됨"),
@@ -208,13 +254,13 @@ class TestMain:
             "--dry-run",
         ])
         assert code == 0
-        assert "yt-dlp" in capsys.readouterr().out
+        assert "yt_dlp" in capsys.readouterr().out
 
     def test_main_returns_yt_dlp_exit_code(self, tmp_path, monkeypatch):
         """yt-dlp 종료 코드를 그대로 돌려준다."""
         list_file = tmp_path / "urls.txt"
         list_file.write_text("https://youtu.be/aaa\n", encoding="utf-8")
-        monkeypatch.setattr(fetch.shutil, "which", lambda name: "/bin/x")
+        monkeypatch.setattr(fetch, "require_tools", lambda: None)
 
         class _Result:
             returncode = 2
@@ -232,7 +278,7 @@ class TestMain:
         list_file = tmp_path / "urls.txt"
         list_file.write_text("https://youtu.be/aaa\n", encoding="utf-8")
         target = tmp_path / "data"
-        monkeypatch.setattr(fetch.shutil, "which", lambda name: "/bin/x")
+        monkeypatch.setattr(fetch, "require_tools", lambda: None)
         fetch.main([
             "--urls", str(list_file), "--out-dir", str(target),
             "--dry-run",
