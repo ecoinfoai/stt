@@ -16,6 +16,7 @@ from stt.transcribe import (
     discover_media,
     format_timestamp,
     load_terms,
+    parse_args,
     prepare_dll_search_path,
     render_srt,
     render_txt,
@@ -220,3 +221,36 @@ class TestRenderSrt:
     def test_render_srt_empty_raises(self):
         with pytest.raises(ValueError):
             render_srt([])
+
+
+class TestParseArgsDiarize:
+    """Tests for the --diarize flag."""
+
+    def test_parse_args_diarize_off_by_default(self):
+        assert parse_args(["a.mp4"]).diarize is False
+
+    def test_parse_args_diarize_on_with_flag(self):
+        assert parse_args(["a.mp4", "--diarize"]).diarize is True
+
+    def test_parse_args_speakers_none_by_default(self):
+        assert parse_args(["a.mp4"]).speakers is None
+
+    def test_parse_args_speakers_accepts_count(self):
+        assert parse_args(["a.mp4", "--speakers", "3"]).speakers == 3
+
+    def test_parse_args_min_speaker_seconds_default(self):
+        assert parse_args(["a.mp4"]).min_speaker_seconds == pytest.approx(1.5)
+
+
+class TestBuildHeaderDiarized:
+    """Tests for the diarization note in build_header."""
+
+    def test_build_header_omits_note_by_default(self):
+        head = build_header("a.m4a", "large-v3", "ko", 60.0)
+        assert "화자분리" not in head
+
+    def test_build_header_records_diarization(self):
+        head = build_header("a.m4a", "large-v3", "ko", 60.0, diarized=True)
+        assert "화자분리" in head
+        for line in head.strip().splitlines():
+            assert line.startswith("#")

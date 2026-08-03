@@ -92,6 +92,25 @@ export LD_LIBRARY_PATH=$(uv run python -c 'import os, nvidia.cublas.lib, nvidia.
 uv run stt transcribe data/lecture.mp4
 ```
 
+### Speaker diarization (`--diarize`)
+
+```sh
+uv sync --extra diarize   # pyannote.audio + torch (~5 GB) + nvidia-cublas-cu12
+```
+
+> **Never combine `--extra cuda` with `--extra diarize`.** torch ships its
+> own CUDA 13 stack, and `nvidia-cudnn-cu12` writes `libcudnn.so.9` into the
+> same `nvidia/cudnn/lib` directory that torch's `nvidia-cudnn-cu13` uses.
+> Removing either package deletes the other's library file, and `uv sync`
+> will not repair it — you have to `rm -rf .venv` and sync again. The
+> `diarize` extra already pulls the cuBLAS 12 wheel that ctranslate2 needs,
+> so it covers GPU transcription on its own.
+
+`--diarize` also needs a HuggingFace token in `HF_TOKEN` and access to three
+gated models — accept the conditions on each page while logged in:
+`pyannote/segmentation-3.0`, `pyannote/speaker-diarization-3.1`, and
+`pyannote/speaker-diarization-community-1`. All three are free.
+
 `run_all.sh` and `run_list.sh` do this export for you (see
 `_venv.sh`), so nothing extra is needed when you go through them.
 For direct `uv run` calls, put the export into your shell profile

@@ -32,6 +32,10 @@ SUPPORTED_EXTS: frozenset[str] = frozenset({
     ".m4a", ".mp3", ".wav", ".flac", ".ogg", ".opus", ".aac", ".wma",
 })
 
+#: --diarize에서 화자 판정을 신뢰하지 않는 문단 길이 기준(초).
+#: diarize 모듈을 늦게 부르기 위해 값만 여기 둔다.
+DEFAULT_MIN_SPEAKER_SECONDS: float = 1.5
+
 #: 자동 모드에서 시도하는 모델 순서(앞이 실패하면 뒤로 폴백).
 GPU_MODEL_CHAIN: tuple[str, ...] = ("large-v3", "large-v3-turbo", "small")
 CPU_DEFAULT_MODEL: str = "small"
@@ -309,6 +313,7 @@ def build_header(
     model_name: str,
     language: str,
     duration_s: float,
+    diarized: bool = False,
 ) -> str:
     """전사문 머리에 붙일 메타데이터 주석 블록을 만든다.
 
@@ -317,6 +322,7 @@ def build_header(
         model_name: 사용한 Whisper 모델 이름.
         language: 전사 언어 코드(예: 'ko').
         duration_s: 원본 길이(초).
+        diarized: 화자 분리를 거쳤으면 True.
 
     Returns:
         '#'로 시작하는 줄들 + 빈 줄로 끝나는 헤더 문자열.
@@ -331,6 +337,13 @@ def build_header(
         f"# 모델: faster-whisper {model_name} | 언어: {language} "
         f"| 길이: {duration}",
     ]
+    if diarized:
+        from stt.diarize import PIPELINE_NAME
+
+        lines.append(
+            f"# 화자분리: {PIPELINE_NAME} | '(?)'는 구간이 짧아 "
+            f"화자 판정을 신뢰하기 어려운 문단"
+        )
     return "\n".join(lines) + "\n\n"
 
 
@@ -483,6 +496,7 @@ def transcribe_file(
     language: str | None,
     terms: str | None,
     beam_size: int,
+    word_timestamps: bool = False,
 ) -> tuple[list[SegmentLike], float, str]:
     """미디어 파일 하나를 전사해 세그먼트 목록을 돌려준다.
 
@@ -492,6 +506,7 @@ def transcribe_file(
         language: 언어 코드('ko' 등) 또는 자동 감지 시 None.
         terms: hotwords로 넣을 용어 문자열 또는 None.
         beam_size: 빔 서치 크기(클수록 정확, 느림).
+        word_timestamps: True면 단어 단위 시각도 함께 받는다(화자 분리용).
 
     Returns:
         (세그먼트 목록, 오디오 길이(초), 전사 언어 코드) 튜플.
@@ -509,6 +524,7 @@ def transcribe_file(
         vad_filter=True,
         condition_on_previous_text=False,
         hotwords=terms,
+        word_timestamps=word_timestamps,
         log_progress=True,
     )
     segments = list(segments_iter)  # 실제 전사는 여기서 진행된다.
@@ -539,7 +555,9 @@ def output_path_for(media: Path, out_dir: Path | None, ext: str) -> Path:
     return base / (media.stem + ext)
 
 
-def build_run_info(model_name: str, language: str, duration_s: float):
+def build_run_info(
+    model_name: str, language: str, duration_s: float, diarized: bool = False
+):
     """메타데이터 파일에 넣을 전사 실행 정보를 만든다.
 
     metadata 모듈이 transcribe를 참조하므로 순환 import를 피하려고
@@ -549,6 +567,7 @@ def build_run_info(model_name: str, language: str, duration_s: float):
         model_name: 사용한 Whisper 모델 이름.
         language: 전사 언어 코드.
         duration_s: 원본 길이(초).
+        diarized: 화자 분리를 거쳤으면 True.
 
     Returns:
         metadata.RunInfo 인스턴스.
@@ -564,6 +583,7 @@ def build_run_info(model_name: str, language: str, duration_s: float):
         language=language,
         duration_s=duration_s,
         transcribed=date.today().isoformat(),
+        diarized=diarized,
     )
 
 
@@ -586,12 +606,58 @@ def write_metadata(media: Path, out_dir: Path | None, run) -> Path:
     return metadata.write_for_media(media, out_dir, run)
 
 
+def build_diarized_body(
+    media: Path,
+    segments: Sequence[SegmentLike],
+    args: argparse.Namespace,
+    pipeline,
+) -> str:
+    """화자 분리를 거쳐 '[MM:SS] 화자N: ...' 본문을 만든다.
+
+    Args:
+        media: 원본 미디어 파일 경로.
+        segments: word_timestamps=True로 받은 세그먼트 목록.
+        args: 파싱된 CLI 인자.
+        pipeline: load_pipeline()이 적재한 화자 분리 파이프라인.
+
+    Returns:
+        화자 문단으로 이뤄진 본문 문자열.
+
+    Raises:
+        RuntimeError: 단어 단위 시각이 비어 있을 때.
+
+    Examples:
+        >>> build_diarized_body(Path("a.m4a"), segs, ns, p)  # doctest: +SKIP
+    """
+    import tempfile
+
+    from stt import diarize as dz
+
+    words = [w for segment in segments for w in (segment.words or [])]
+    if not words:
+        raise RuntimeError(
+            f"빈 단어 타임스탬프: '{media.name}'에서 단어 단위 시각을 "
+            f"받지 못했습니다. 화자 분리에는 word_timestamps가 필요합니다."
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = dz.to_wav(media, Path(tmp) / "audio.wav")
+        turns = dz.diarize_wav(pipeline, wav, args.speakers)
+    blocks = dz.assign_blocks(
+        words, turns, args.min_speaker_seconds,
+        gap_s=args.gap, max_chars=args.max_chars,
+    )
+    speakers = sorted({block.speaker for block in blocks})
+    print(f"  화자 {len(speakers)}명, 문단 {len(blocks)}개")
+    return dz.render_diarized(blocks, timestamps=not args.no_timestamps)
+
+
 def process_one(
     model: "WhisperModel",
     model_name: str,
     media: Path,
     args: argparse.Namespace,
     terms: str | None,
+    pipeline=None,
 ) -> None:
     """파일 하나를 전사하고 TXT(및 선택적 SRT)로 저장한다.
 
@@ -601,6 +667,7 @@ def process_one(
         media: 전사할 미디어 파일.
         args: 파싱된 CLI 인자.
         terms: hotwords 용어 문자열 또는 None.
+        pipeline: --diarize일 때 쓸 화자 분리 파이프라인.
 
     Examples:
         >>> process_one(m, "small", Path("a.m4a"), ns, None)  # doctest: +SKIP
@@ -608,13 +675,19 @@ def process_one(
     started = time.monotonic()
     requested = None if args.language == "auto" else args.language
     segments, duration, language = transcribe_file(
-        model, media, requested, terms, args.beam
+        model, media, requested, terms, args.beam,
+        word_timestamps=args.diarize,
     )
-    paragraphs = build_paragraphs(
-        segments, gap_s=args.gap, max_chars=args.max_chars
+    header = build_header(
+        media.name, model_name, language, duration, diarized=args.diarize
     )
-    header = build_header(media.name, model_name, language, duration)
-    body = render_txt(paragraphs, timestamps=not args.no_timestamps)
+    if args.diarize:
+        body = build_diarized_body(media, segments, args, pipeline)
+    else:
+        paragraphs = build_paragraphs(
+            segments, gap_s=args.gap, max_chars=args.max_chars
+        )
+        body = render_txt(paragraphs, timestamps=not args.no_timestamps)
     txt_path = output_path_for(media, args.output_dir, ".txt")
     txt_path.write_text(header + body, encoding="utf-8")
     outputs = [txt_path.name]
@@ -623,7 +696,7 @@ def process_one(
         srt_path.write_text(render_srt(segments), encoding="utf-8")
         outputs.append(srt_path.name)
     if not args.no_meta:
-        run = build_run_info(model_name, language, duration)
+        run = build_run_info(model_name, language, duration, args.diarize)
         meta_path = write_metadata(media, args.output_dir, run)
         outputs.append(meta_path.name)
     elapsed = time.monotonic() - started
@@ -666,6 +739,7 @@ def run_with_fallback(
     device: str,
     args: argparse.Namespace,
     terms: str | None,
+    pipeline=None,
 ) -> None:
     """모델 폴백 체인을 따라 남은 파일들을 모두 처리한다.
 
@@ -678,6 +752,7 @@ def run_with_fallback(
         device: 'cuda' 또는 'cpu'.
         args: 파싱된 CLI 인자.
         terms: hotwords 용어 문자열 또는 None.
+        pipeline: --diarize일 때 쓸 화자 분리 파이프라인.
 
     Raises:
         RuntimeError: 모든 모델을 시도해도 처리하지 못했을 때.
@@ -695,7 +770,7 @@ def run_with_fallback(
                 media = pending[0]
                 done = total - len(pending) + 1
                 print(f"[{done}/{total}] {media.name}")
-                process_one(model, model_name, media, args, terms)
+                process_one(model, model_name, media, args, terms, pipeline)
                 pending.pop(0)
             return
         except RuntimeError as error:
@@ -769,6 +844,19 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="노트용 메타데이터(.meta.yaml)를 만들지 않는다",
     )
     parser.add_argument(
+        "--diarize", action="store_true",
+        help="화자를 구분해 '[MM:SS] 화자1: ...' 형식으로 저장"
+             " (uv sync --extra diarize, HF_TOKEN 필요)",
+    )
+    parser.add_argument(
+        "--speakers", type=int, default=None,
+        help="화자 수를 아는 경우의 힌트 (기본: 자동 판단)",
+    )
+    parser.add_argument(
+        "--min-speaker-seconds", type=float, default=DEFAULT_MIN_SPEAKER_SECONDS,
+        help=f"이 길이 미만 문단에 '(?)' 표시 (기본: {DEFAULT_MIN_SPEAKER_SECONDS})",
+    )
+    parser.add_argument(
         "--overwrite", action="store_true",
         help="이미 있는 출력 파일을 다시 만든다",
     )
@@ -831,6 +919,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"대상 {len(pending)}개 | 장치: {device} | "
         f"모델 후보: {' → '.join(chain)}"
     )
-    run_with_fallback(pending, chain, device, args, terms)
+    pipeline = None
+    if args.diarize:
+        from stt import diarize as dz
+
+        print(f"  화자 분리 준비: {dz.PIPELINE_NAME}")
+        pipeline = dz.load_pipeline(device)
+    run_with_fallback(pending, chain, device, args, terms, pipeline)
     print("전체 완료.")
     return 0

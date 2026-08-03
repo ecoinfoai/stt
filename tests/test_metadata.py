@@ -151,7 +151,7 @@ class TestBuildMeta:
     def test_build_meta_template_version(self):
         """템플릿 버전이 기록된다."""
         meta = metadata.build_meta(SAMPLE_INFO, SAMPLE_RUN)
-        assert meta["_meta"]["template_version"] == "1.2"
+        assert meta["_meta"]["template_version"] == "1.3"
 
 
 class TestLoadInfoJson:
@@ -258,3 +258,20 @@ class TestWriteForMedia:
         out.mkdir()
         path = metadata.write_for_media(media, out, SAMPLE_RUN)
         assert path.parent == out
+
+
+class TestDiarizedRunInfo:
+    """Tests for recording diarization in the metadata sidecar."""
+
+    def test_template_version_is_1_3(self):
+        assert metadata.TEMPLATE_VERSION == "1.3"
+
+    def test_build_meta_records_diarized_flag(self):
+        run = metadata.RunInfo("large-v3", "ko", 60.0, "2026-08-03", diarized=True)
+        meta = metadata.build_meta(None, run)
+        assert meta["diarized"] is True
+
+    def test_build_meta_defaults_diarized_false(self):
+        run = metadata.RunInfo("large-v3", "ko", 60.0, "2026-08-03")
+        meta = metadata.build_meta(None, run)
+        assert meta["diarized"] is False

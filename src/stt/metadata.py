@@ -3,7 +3,7 @@
 
 미디어 옆의 '제목 [ID].info.json'과 전사 실행 정보를 합쳐
 '제목 [ID].meta.yaml'을 만든다. 항목 이름은 transcript-report
-스킬의 보고서 템플릿(template_version 1.2) frontmatter와 같게
+스킬의 보고서 템플릿(template_version 1.3) frontmatter와 같게
 맞춰, 노트를 만들 때 그대로 옮겨 적을 수 있게 한다.
 
 기계로 확정되는 값만 채우고, 추정한 값은 _meta.candidates에,
@@ -23,7 +23,7 @@ from stt import transcribe
 Meta: TypeAlias = dict[str, Any]
 
 #: 이 파일이 맞추는 보고서 템플릿 버전.
-TEMPLATE_VERSION: str = "1.2"
+TEMPLATE_VERSION: str = "1.3"
 
 #: 사람이 판단해야 해서 자동으로 채우지 않는 항목.
 HUMAN_FIELDS: tuple[str, ...] = (
@@ -57,12 +57,14 @@ class RunInfo:
         language: 전사 언어 코드(예: 'ko').
         duration_s: 원본 길이(초).
         transcribed: 전사 실행일(YYYY-MM-DD).
+        diarized: 화자 분리를 거쳤으면 True.
     """
 
     model: str
     language: str
     duration_s: float
     transcribed: str
+    diarized: bool = False
 
 
 def format_upload_date(value: str | None) -> str:
@@ -223,6 +225,7 @@ def build_meta(info: dict | None, run: RunInfo) -> Meta:
         "topics": [],
         "model": f"faster-whisper {run.model}",
         "duration": transcribe.format_timestamp(run.duration_s),
+        "diarized": run.diarized,
     })
     inner: Meta = {
         "template_version": TEMPLATE_VERSION,

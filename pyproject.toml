@@ -24,6 +24,19 @@ cuda = [
     "nvidia-cublas-cu12>=12",
     "nvidia-cudnn-cu12>=9,<10",
 ]
+# Speaker diarization (stt transcribe --diarize). Pulls torch — ~5GB.
+# Needs HF_TOKEN and access to three gated pyannote models; see README.
+#
+# Do NOT combine with the `cuda` extra. torch ships its own CUDA 13 stack,
+# and nvidia-cudnn-cu12 installs over torch's libcudnn.so.9 in the shared
+# nvidia/cudnn/lib directory — removing either one deletes the other's
+# library file, leaving a venv that only a full rebuild can fix.
+# ctranslate2 is a CUDA 12 build, so it needs cuBLAS 12 (a distinct
+# soname from torch's libcublas.so.13) while sharing torch's cuDNN 9.
+diarize = [
+    "pyannote.audio>=3.1",
+    "nvidia-cublas-cu12>=12",
+]
 
 [dependency-groups]
 dev = [
