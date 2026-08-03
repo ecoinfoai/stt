@@ -36,6 +36,9 @@ SUPPORTED_EXTS: frozenset[str] = frozenset({
 #: diarize 모듈을 늦게 부르기 위해 값만 여기 둔다.
 DEFAULT_MIN_SPEAKER_SECONDS: float = 1.5
 
+#: --voice-db에서 같은 사람으로 볼 최소 코사인 유사도.
+DEFAULT_VOICE_THRESHOLD: float = 0.75
+
 #: 자동 모드에서 시도하는 모델 순서(앞이 실패하면 뒤로 폴백).
 GPU_MODEL_CHAIN: tuple[str, ...] = ("large-v3", "large-v3-turbo", "small")
 CPU_DEFAULT_MODEL: str = "small"
@@ -641,7 +644,12 @@ def build_diarized_body(
         )
     with tempfile.TemporaryDirectory() as tmp:
         wav = dz.to_wav(media, Path(tmp) / "audio.wav")
-        turns = dz.diarize_wav(pipeline, wav, args.speakers)
+        voices = (
+            dz.load_voice_db(args.voice_db) if args.voice_db else None
+        )
+        turns = dz.diarize_wav(
+            pipeline, wav, args.speakers, voices, args.voice_threshold
+        )
     blocks = dz.assign_blocks(
         words, turns, args.min_speaker_seconds,
         gap_s=args.gap, max_chars=args.max_chars,
@@ -855,6 +863,16 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--min-speaker-seconds", type=float, default=DEFAULT_MIN_SPEAKER_SECONDS,
         help=f"이 길이 미만 문단에 '(?)' 표시 (기본: {DEFAULT_MIN_SPEAKER_SECONDS})",
+    )
+    parser.add_argument(
+        "--voice-db", type=Path, default=None,
+        help="등록된 목소리 사전(JSON) — 화자N 대신 실명을 붙인다"
+             " ('stt enroll'로 만든다)",
+    )
+    parser.add_argument(
+        "--voice-threshold", type=float, default=DEFAULT_VOICE_THRESHOLD,
+        help=f"등록 목소리와 같은 사람으로 볼 최소 유사도"
+             f" (기본: {DEFAULT_VOICE_THRESHOLD})",
     )
     parser.add_argument(
         "--overwrite", action="store_true",

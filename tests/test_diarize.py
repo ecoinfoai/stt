@@ -15,10 +15,15 @@ from stt.diarize import (
     Block,
     Turn,
     assign_blocks,
+    cosine_similarity,
     ffmpeg_wav_command,
     group_sentences,
+    label_for_display,
+    merge_voice,
     nearest_speaker,
+    rename_turns,
     render_diarized,
+    resolve_speaker_names,
     speaker_at,
     speaker_label,
 )
@@ -230,3 +235,107 @@ class TestAssignBlocksParagraphing:
     def test_assign_blocks_invalid_max_chars_raises(self):
         with pytest.raises(ValueError):
             assign_blocks([], [], 0.0, max_chars=0)
+
+
+class TestCosineSimilarity:
+    """Tests for cosine_similarity."""
+
+    def test_cosine_similarity_identical_is_one(self):
+        assert cosine_similarity([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+
+    def test_cosine_similarity_orthogonal_is_zero(self):
+        assert cosine_similarity([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+
+    def test_cosine_similarity_ignores_magnitude(self):
+        assert cosine_similarity([1.0, 1.0], [5.0, 5.0]) == pytest.approx(1.0)
+
+    def test_cosine_similarity_length_mismatch_raises(self):
+        with pytest.raises(ValueError):
+            cosine_similarity([1.0], [1.0, 2.0])
+
+    def test_cosine_similarity_zero_vector_raises(self):
+        with pytest.raises(ValueError):
+            cosine_similarity([0.0, 0.0], [1.0, 0.0])
+
+
+class TestResolveSpeakerNames:
+    """Tests for resolve_speaker_names."""
+
+    def test_resolve_speaker_names_maps_above_threshold(self):
+        db = {"한석준": [1.0, 0.0], "차인표": [0.0, 1.0]}
+        names = resolve_speaker_names(
+            ["SPEAKER_00", "SPEAKER_01"], [[0.9, 0.1], [0.1, 0.9]], db, 0.8
+        )
+        assert names == {"SPEAKER_00": "한석준", "SPEAKER_01": "차인표"}
+
+    def test_resolve_speaker_names_keeps_raw_below_threshold(self):
+        db = {"한석준": [1.0, 0.0]}
+        names = resolve_speaker_names(["SPEAKER_00"], [[0.0, 1.0]], db, 0.8)
+        assert names == {"SPEAKER_00": "SPEAKER_00"}
+
+    def test_resolve_speaker_names_assigns_each_name_once(self):
+        """같은 사람에게 두 화자가 붙지 않아야 한다."""
+        db = {"한석준": [1.0, 0.0]}
+        names = resolve_speaker_names(
+            ["SPEAKER_00", "SPEAKER_01"], [[1.0, 0.0], [0.99, 0.01]], db, 0.8
+        )
+        assert names["SPEAKER_00"] == "한석준"
+        assert names["SPEAKER_01"] == "SPEAKER_01"
+
+    def test_resolve_speaker_names_empty_db_keeps_raw(self):
+        names = resolve_speaker_names(["SPEAKER_00"], [[1.0, 0.0]], {}, 0.8)
+        assert names == {"SPEAKER_00": "SPEAKER_00"}
+
+    def test_resolve_speaker_names_length_mismatch_raises(self):
+        with pytest.raises(ValueError):
+            resolve_speaker_names(["SPEAKER_00"], [], {"a": [1.0]}, 0.8)
+
+
+class TestRenameTurns:
+    """Tests for rename_turns."""
+
+    def test_rename_turns_applies_mapping(self):
+        turns = [Turn(0.0, 1.0, "SPEAKER_00"), Turn(1.0, 2.0, "SPEAKER_01")]
+        out = rename_turns(turns, {"SPEAKER_00": "한석준"})
+        assert [t.speaker for t in out] == ["한석준", "SPEAKER_01"]
+
+    def test_rename_turns_keeps_times(self):
+        turns = [Turn(3.0, 4.5, "SPEAKER_00")]
+        out = rename_turns(turns, {"SPEAKER_00": "차인표"})
+        assert (out[0].start, out[0].end) == (3.0, 4.5)
+
+
+class TestLabelForDisplay:
+    """Tests for label_for_display."""
+
+    def test_label_for_display_inverts_speaker_label(self):
+        assert label_for_display("화자1") == "SPEAKER_00"
+        assert label_for_display("화자3") == "SPEAKER_02"
+
+    def test_label_for_display_passes_through_raw_label(self):
+        assert label_for_display("SPEAKER_00") == "SPEAKER_00"
+
+    def test_label_for_display_rejects_zero(self):
+        with pytest.raises(ValueError):
+            label_for_display("화자0")
+
+
+class TestMergeVoice:
+    """Tests for merge_voice."""
+
+    def test_merge_voice_adds_new_name(self):
+        db = merge_voice({}, "한석준", [1.0, 0.0])
+        assert db == {"한석준": [1.0, 0.0]}
+
+    def test_merge_voice_averages_existing_name(self):
+        db = merge_voice({"한석준": [1.0, 0.0]}, "한석준", [0.0, 1.0])
+        assert db["한석준"] == pytest.approx([0.5, 0.5])
+
+    def test_merge_voice_does_not_mutate_input(self):
+        original = {"한석준": [1.0, 0.0]}
+        merge_voice(original, "한석준", [0.0, 1.0])
+        assert original == {"한석준": [1.0, 0.0]}
+
+    def test_merge_voice_dimension_mismatch_raises(self):
+        with pytest.raises(ValueError):
+            merge_voice({"한석준": [1.0, 0.0]}, "한석준", [1.0])

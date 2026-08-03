@@ -141,9 +141,42 @@ stt transcribe PATH [PATH ...] [options]
 | `--beam` | 5 | beam size (1 = faster, slightly less accurate) |
 | `--gap` | 2.0 | silence length (s) that starts a new paragraph |
 | `--max-chars` | 800 | max paragraph length |
+| `--diarize` | off | label speakers: `[MM:SS] 화자1: ...` |
+| `--speakers N` | auto | speaker-count hint for `--diarize` |
+| `--min-speaker-seconds` | 1.5 | shorter blocks are marked `(?)` |
+| `--voice-db FILE` | — | enrolled voices; writes real names instead of 화자N |
+| `--voice-threshold` | 0.75 | min cosine similarity to accept a match |
 
 CPU-only servers: `--model small --beam 1` is the practical
 combination for batch automation.
+
+### stt enroll — register speaker voices
+
+`--diarize` alone labels people `화자1`, `화자2` — numbers that mean
+nothing across files, so the same host is `화자1` in one episode and
+`화자2` in the next. Enrollment fixes that: read a diarized transcript,
+work out who each number is, write it down, and `stt enroll` extracts
+that person's voice embedding and stores it under their name.
+
+```sh
+stt enroll --map enroll.yaml --db voices.json
+stt transcribe data --diarize --voice-db voices.json
+```
+
+```yaml
+# enroll.yaml — one entry per file you have already identified
+- media: "data/interview.m4a"
+  speakers:
+    화자1: 한석준
+    화자2: 차인표
+```
+
+Enrolling the same person from several files averages their
+embeddings, which represents the voice better. Speakers that match
+nothing in the database keep their `화자N` label, so an incomplete
+database degrades gracefully rather than mislabelling anyone.
+
+Requires the `diarize` extra and `HF_TOKEN` — see INSTALL.md.
 
 ### stt batch — transcribe a curated list
 

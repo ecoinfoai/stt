@@ -254,3 +254,17 @@ class TestBuildHeaderDiarized:
         assert "화자분리" in head
         for line in head.strip().splitlines():
             assert line.startswith("#")
+
+
+class TestParseArgsVoiceDb:
+    """Tests for the --voice-db flag."""
+
+    def test_parse_args_voice_db_none_by_default(self):
+        assert parse_args(["a.mp4"]).voice_db is None
+
+    def test_parse_args_voice_db_accepts_path(self):
+        from pathlib import Path as _P
+        assert parse_args(["a.mp4", "--voice-db", "v.json"]).voice_db == _P("v.json")
+
+    def test_parse_args_voice_threshold_default(self):
+        assert parse_args(["a.mp4"]).voice_threshold == pytest.approx(0.75)

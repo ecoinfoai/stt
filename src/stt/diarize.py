@@ -14,10 +14,12 @@ pyannote.audio가 찾은 화자 구간(턴)과 faster-whisper의 단어 단위
 """
 from __future__ import annotations
 
+import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Protocol, Sequence, TypeAlias
 
 from stt.transcribe import format_timestamp
 
@@ -32,6 +34,12 @@ PIPELINE_NAME: str = "pyannote/speaker-diarization-3.1"
 
 #: 이 길이 미만인 문단은 화자 판정을 신뢰하지 않는다(초).
 DEFAULT_MIN_SECONDS: float = 1.5
+
+#: 등록된 목소리와 같은 사람으로 볼 최소 코사인 유사도.
+DEFAULT_VOICE_THRESHOLD: float = 0.75
+
+#: 이름 → 화자 임베딩.
+VoiceDB: TypeAlias = dict[str, list[float]]
 
 
 class WordLike(Protocol):
@@ -292,6 +300,230 @@ def render_diarized(blocks: Sequence[Block], timestamps: bool) -> str:
     return "\n\n".join(lines) + "\n"
 
 
+def label_for_display(name: str) -> str:
+    """표시용 '화자N'을 pyannote 라벨 'SPEAKER_(N-1)'로 되돌린다.
+
+    등록 지도(enroll map)에 사람이 전사문에서 본 '화자1' 그대로 적을 수
+    있게 하려고 speaker_label()의 역함수를 둔다.
+
+    Args:
+        name: '화자N' 또는 이미 pyannote 라벨인 문자열.
+
+    Returns:
+        pyannote 라벨.
+
+    Raises:
+        ValueError: '화자0'처럼 1보다 작은 번호일 때.
+
+    Examples:
+        >>> label_for_display("화자1")
+        'SPEAKER_00'
+    """
+    if not name.startswith("화자"):
+        return name
+    index = name[len("화자"):]
+    if not index.isdigit():
+        return name
+    number = int(index)
+    if number < 1:
+        raise ValueError(
+            f"잘못된 화자 번호: '{name}'. 화자 번호는 1부터 셉니다."
+        )
+    return f"{_RAW_SPEAKER_PREFIX}{number - 1:02d}"
+
+
+def merge_voice(
+    voices: VoiceDB, name: str, vector: Sequence[float]
+) -> VoiceDB:
+    """목소리 사전에 임베딩을 더한다(같은 이름이면 평균).
+
+    같은 사람을 여러 파일에서 등록할수록 평균이 그 사람의 목소리를 더
+    잘 대표한다.
+
+    Args:
+        voices: 기존 이름 → 임베딩 사전(변경하지 않는다).
+        name: 등록할 이름.
+        vector: 화자 임베딩.
+
+    Returns:
+        새 사전.
+
+    Raises:
+        ValueError: 같은 이름의 기존 임베딩과 차원이 다를 때.
+
+    Examples:
+        >>> merge_voice({}, "김", [1.0, 0.0])
+        {'김': [1.0, 0.0]}
+    """
+    new = {key: list(value) for key, value in voices.items()}
+    incoming = [float(x) for x in vector]
+    existing = new.get(name)
+    if existing is None:
+        new[name] = incoming
+        return new
+    if len(existing) != len(incoming):
+        raise ValueError(
+            f"임베딩 차원 불일치: '{name}'의 기존 값은 {len(existing)}차원, "
+            f"새 값은 {len(incoming)}차원입니다."
+        )
+    new[name] = [(a + b) / 2.0 for a, b in zip(existing, incoming)]
+    return new
+
+
+def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
+    """두 벡터의 코사인 유사도를 구한다.
+
+    Args:
+        a: 벡터 하나.
+        b: 같은 길이의 벡터.
+
+    Returns:
+        -1.0 이상 1.0 이하의 유사도. 1에 가까울수록 같은 목소리다.
+
+    Raises:
+        ValueError: 길이가 다르거나 한쪽이 영벡터일 때.
+
+    Examples:
+        >>> cosine_similarity([1.0, 0.0], [1.0, 0.0])
+        1.0
+    """
+    if len(a) != len(b):
+        raise ValueError(
+            f"벡터 길이 불일치: {len(a)} != {len(b)}. cosine_similarity()는 "
+            f"같은 차원의 벡터 두 개를 받아야 합니다."
+        )
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        raise ValueError(
+            "영벡터: cosine_similarity()는 크기가 0인 벡터를 비교할 수 "
+            "없습니다. 화자 임베딩이 비어 있는지 확인하세요."
+        )
+    return sum(x * y for x, y in zip(a, b)) / (norm_a * norm_b)
+
+
+def resolve_speaker_names(
+    labels: Sequence[str],
+    embeddings: Sequence[Sequence[float]],
+    voices: VoiceDB,
+    threshold: float = DEFAULT_VOICE_THRESHOLD,
+) -> dict[str, str]:
+    """화자 임베딩을 등록된 목소리와 대조해 실명을 붙인다.
+
+    유사도가 높은 쌍부터 차례로 배정하며, 등록된 이름 하나는 한 화자에게만
+    붙는다 — 같은 사람이 두 화자로 갈리는 일을 막기 위해서다. 문턱을 넘는
+    짝이 없으면 원래 라벨(SPEAKER_00 등)을 그대로 둔다.
+
+    Args:
+        labels: 화자 라벨 목록(pyannote 순서).
+        embeddings: labels와 같은 순서·개수의 임베딩 목록.
+        voices: 이름 → 임베딩 사전.
+        threshold: 같은 사람으로 볼 최소 코사인 유사도.
+
+    Returns:
+        라벨 → 표시할 이름 사전(대조 실패 시 라벨 그대로).
+
+    Raises:
+        ValueError: labels와 embeddings의 개수가 다를 때.
+
+    Examples:
+        >>> resolve_speaker_names(["SPEAKER_00"], [[1.0, 0.0]], {}, 0.8)
+        {'SPEAKER_00': 'SPEAKER_00'}
+    """
+    if len(labels) != len(embeddings):
+        raise ValueError(
+            f"개수 불일치: 화자 {len(labels)}명인데 임베딩은 "
+            f"{len(embeddings)}개입니다. pyannote 출력이 온전한지 "
+            f"확인하세요."
+        )
+    pairs = [
+        (cosine_similarity(embedding, vector), label, name)
+        for label, embedding in zip(labels, embeddings)
+        for name, vector in voices.items()
+        if cosine_similarity(embedding, vector) >= threshold
+    ]
+    pairs.sort(key=lambda p: -p[0])
+    resolved: dict[str, str] = {}
+    taken: set[str] = set()
+    for _, label, name in pairs:
+        if label in resolved or name in taken:
+            continue
+        resolved[label] = name
+        taken.add(name)
+    return {label: resolved.get(label, label) for label in labels}
+
+
+def rename_turns(
+    turns: Sequence[Turn], mapping: dict[str, str]
+) -> list[Turn]:
+    """화자 턴의 라벨을 사전에 따라 바꾼다.
+
+    Args:
+        turns: 화자 턴 목록.
+        mapping: 바꿀 라벨 → 새 이름 사전.
+
+    Returns:
+        라벨만 바뀐 새 턴 목록(시각은 그대로).
+
+    Examples:
+        >>> rename_turns([Turn(0.0, 1.0, "SPEAKER_00")], {"SPEAKER_00": "김"})
+        [Turn(start=0.0, end=1.0, speaker='김')]
+    """
+    return [
+        Turn(start=t.start, end=t.end, speaker=mapping.get(t.speaker, t.speaker))
+        for t in turns
+    ]
+
+
+def load_voice_db(path: Path) -> VoiceDB:
+    """등록된 목소리 사전을 읽는다.
+
+    Args:
+        path: JSON 파일 경로(이름 → 임베딩 배열).
+
+    Returns:
+        이름 → 임베딩 사전. 파일이 없으면 빈 사전.
+
+    Raises:
+        ValueError: JSON 형식이 이름 → 숫자 배열이 아닐 때.
+
+    Examples:
+        >>> load_voice_db(Path("없는파일.json"))
+        {}
+    """
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not all(
+        isinstance(v, list) and all(isinstance(x, (int, float)) for x in v)
+        for v in data.values()
+    ):
+        raise ValueError(
+            f"잘못된 목소리 사전: '{path}'는 이름 → 숫자 배열 형태의 "
+            f"JSON이어야 합니다."
+        )
+    return {name: [float(x) for x in vector] for name, vector in data.items()}
+
+
+def save_voice_db(voices: VoiceDB, path: Path) -> Path:
+    """등록된 목소리 사전을 JSON으로 저장한다.
+
+    Args:
+        voices: 이름 → 임베딩 사전.
+        path: 저장할 JSON 경로.
+
+    Returns:
+        저장한 경로.
+
+    Examples:
+        >>> save_voice_db({}, Path("voices.json"))  # doctest: +SKIP
+    """
+    path.write_text(
+        json.dumps(voices, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return path
+
+
 def load_pipeline(device: str):
     """pyannote 화자 분리 파이프라인을 적재한다.
 
@@ -424,13 +656,77 @@ def read_wav(path: Path) -> tuple["object", int]:
     return torch.from_numpy(pcm.reshape(-1, channels).T.copy()), sample_rate
 
 
-def diarize_wav(pipeline, wav: Path, num_speakers: int | None = None) -> list[Turn]:
+def diarize_embeddings(
+    pipeline, wav: Path, num_speakers: int | None = None
+) -> tuple[list[str], list[list[float]]]:
+    """WAV에서 화자 라벨과 화자별 임베딩을 함께 뽑는다.
+
+    pyannote는 임베딩을 `speaker_diarization.labels()` 순서로 돌려주므로
+    두 목록의 i번째가 서로 짝이다.
+
+    Args:
+        pipeline: load_pipeline()이 적재한 파이프라인.
+        wav: 16-bit PCM WAV 파일 경로.
+        num_speakers: 화자 수를 아는 경우의 힌트(모르면 None).
+
+    Returns:
+        (라벨 목록, 임베딩 목록) 튜플.
+
+    Raises:
+        RuntimeError: 임베딩을 받지 못했을 때.
+
+    Examples:
+        >>> diarize_embeddings(p, Path("a.wav"))  # doctest: +SKIP
+    """
+    output = _run_pipeline(pipeline, wav, num_speakers)
+    labels = list(output.speaker_diarization.labels())
+    if output.speaker_embeddings is None:
+        raise RuntimeError(
+            f"화자 임베딩 없음: '{wav.name}'에서 목소리 벡터를 받지 "
+            f"못했습니다. pyannote 파이프라인 버전을 확인하세요."
+        )
+    embeddings = [
+        [float(x) for x in row] for row in output.speaker_embeddings
+    ]
+    return labels, embeddings
+
+
+def _run_pipeline(pipeline, wav: Path, num_speakers: int | None):
+    """WAV을 파형으로 읽어 파이프라인에 넘긴다.
+
+    Args:
+        pipeline: load_pipeline()이 적재한 파이프라인.
+        wav: 16-bit PCM WAV 파일 경로.
+        num_speakers: 화자 수 힌트 또는 None.
+
+    Returns:
+        pyannote DiarizeOutput.
+
+    Examples:
+        >>> _run_pipeline(p, Path("a.wav"), None)  # doctest: +SKIP
+    """
+    waveform, sample_rate = read_wav(wav)
+    kwargs = {} if num_speakers is None else {"num_speakers": num_speakers}
+    return pipeline(
+        {"waveform": waveform, "sample_rate": sample_rate}, **kwargs
+    )
+
+
+def diarize_wav(
+    pipeline,
+    wav: Path,
+    num_speakers: int | None = None,
+    voices: VoiceDB | None = None,
+    threshold: float = DEFAULT_VOICE_THRESHOLD,
+) -> list[Turn]:
     """WAV 파일에서 화자 턴 목록을 뽑는다.
 
     Args:
         pipeline: load_pipeline()이 적재한 파이프라인.
         wav: 16-bit PCM WAV 파일 경로.
         num_speakers: 화자 수를 아는 경우의 힌트(모르면 None).
+        voices: 등록된 목소리 사전(주면 화자 라벨을 실명으로 바꾼다).
+        threshold: 같은 사람으로 볼 최소 코사인 유사도.
 
     Returns:
         시작 시각 순으로 정렬된 화자 턴 목록.
@@ -441,11 +737,7 @@ def diarize_wav(pipeline, wav: Path, num_speakers: int | None = None) -> list[Tu
     Examples:
         >>> diarize_wav(p, Path("a.wav"))  # doctest: +SKIP
     """
-    waveform, sample_rate = read_wav(wav)
-    kwargs = {} if num_speakers is None else {"num_speakers": num_speakers}
-    output = pipeline(
-        {"waveform": waveform, "sample_rate": sample_rate}, **kwargs
-    )
+    output = _run_pipeline(pipeline, wav, num_speakers)
     annotation = output.speaker_diarization
     turns = [
         Turn(start=segment.start, end=segment.end, speaker=label)
@@ -455,5 +747,13 @@ def diarize_wav(pipeline, wav: Path, num_speakers: int | None = None) -> list[Tu
         raise RuntimeError(
             f"빈 화자 분리 결과: '{wav.name}'에서 화자 구간을 찾지 "
             f"못했습니다. 무음 파일이 아닌지 확인하세요."
+        )
+    if voices and output.speaker_embeddings is not None:
+        labels = list(annotation.labels())
+        embeddings = [
+            [float(x) for x in row] for row in output.speaker_embeddings
+        ]
+        turns = rename_turns(
+            turns, resolve_speaker_names(labels, embeddings, voices, threshold)
         )
     return sorted(turns, key=lambda t: t.start)
