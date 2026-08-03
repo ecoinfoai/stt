@@ -178,6 +178,23 @@ database degrades gracefully rather than mislabelling anyone.
 
 Requires the `diarize` extra and `HF_TOKEN` — see INSTALL.md.
 
+### Resuming a long `--diarize` run
+
+`resume_retranscribe.py` picks up an interrupted bulk re-transcription.
+It reads what is finished from the results rather than from a log —
+a file re-done with `--diarize` carries `diarized: true` in its
+`.meta.yaml` — so a lost log or a dropped session costs nothing.
+
+```sh
+./.venv/bin/python resume_retranscribe.py --dry-run   # list what is left
+./.venv/bin/python resume_retranscribe.py             # run it
+```
+
+Do **not** resume by re-running `stt transcribe data` without
+`--overwrite`: files not yet re-done still hold their old transcript,
+so they are skipped as "already transcribed" and you end up with a
+mix of old and new. The script passes only the pending files.
+
 ### stt batch — transcribe a curated list
 
 Use this when the media is already downloaded and you want a
