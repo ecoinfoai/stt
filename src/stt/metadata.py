@@ -58,6 +58,7 @@ class RunInfo:
         duration_s: 원본 길이(초).
         transcribed: 전사 실행일(YYYY-MM-DD).
         diarized: 화자 분리를 거쳤으면 True.
+        terms: 용어 파일을 썼다면 그 hotwords 반영 결과(없으면 None).
     """
 
     model: str
@@ -65,6 +66,7 @@ class RunInfo:
     duration_s: float
     transcribed: str
     diarized: bool = False
+    terms: transcribe.TermsReport | None = None
 
 
 def format_upload_date(value: str | None) -> str:
@@ -243,6 +245,13 @@ def build_meta(info: dict | None, run: RunInfo) -> Meta:
             "published": format_upload_date(source.get("upload_date")),
             "chapters": format_chapters(source.get("chapters")),
         })
+    if run.terms is not None:
+        inner["terms"] = {
+            "file": run.terms.name,
+            "applied": run.terms.applied,
+            "total": run.terms.total,
+            "dropped": list(run.terms.dropped),
+        }
     meta["_meta"] = inner
     return meta
 

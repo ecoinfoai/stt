@@ -14,12 +14,20 @@ import pytest
 from stt import transcribe
 
 
+class FakeTokenizer:
+    """tokenizers.Tokenizer.encode 계약을 가진 스텁(글자 하나가 토큰 하나)."""
+
+    def encode(self, text: str, add_special_tokens: bool = True):
+        return SimpleNamespace(ids=[ord(ch) for ch in text])
+
+
 class FakeModel:
     """WhisperModel.transcribe와 같은 계약을 가진 스텁."""
 
     def __init__(self, fail_oom: bool = False):
         self.fail_oom = fail_oom
         self.calls: list[dict] = []
+        self.hf_tokenizer = FakeTokenizer()
 
     def transcribe(self, audio: str, **kwargs):
         self.calls.append({"audio": audio, **kwargs})
@@ -68,6 +76,52 @@ def test_main_passes_terms_as_hotwords(tmp_path, media, monkeypatch):
     assert fake.calls[0]["hotwords"] == "기업가정신, 헬스케어"
     assert fake.calls[0]["language"] == "ko"
     assert fake.calls[0]["vad_filter"] is True
+
+
+def test_main_reports_terms_budget_and_records_meta(
+    tmp_path, media, monkeypatch, capsys
+):
+    """한도를 넘은 용어는 화면에 알리고 .meta.yaml의 _meta.terms에 남긴다."""
+    import yaml
+
+    monkeypatch.setattr(
+        transcribe, "load_model", lambda name, device: FakeModel()
+    )
+    long_terms = ["a" * 100, "b" * 100, "c" * 100, "d" * 100]
+    terms = tmp_path / "terms.txt"
+    terms.write_text("\n".join(long_terms) + "\n", encoding="utf-8")
+    code = transcribe.main(
+        [str(media), "--device", "cpu", "--terms", str(terms)]
+    )
+    assert code == 0  # 경고만 하고 전사는 계속한다.
+    captured = capsys.readouterr()
+    assert "반영 2개 / 전체 4개" in captured.out
+    assert "terms.txt" in captured.out
+    assert long_terms[2] in captured.err and long_terms[3] in captured.err
+    meta = yaml.safe_load(
+        (tmp_path / "강연.meta.yaml").read_text(encoding="utf-8")
+    )
+    assert meta["_meta"]["terms"] == {
+        "file": "terms.txt", "applied": 2, "total": 4,
+        "dropped": long_terms[2:],
+    }
+    assert "terms" not in meta
+
+
+def test_main_without_terms_records_nothing_about_terms(
+    tmp_path, media, monkeypatch, capsys
+):
+    import yaml
+
+    monkeypatch.setattr(
+        transcribe, "load_model", lambda name, device: FakeModel()
+    )
+    transcribe.main([str(media), "--device", "cpu"])
+    assert "반영" not in capsys.readouterr().out
+    meta = yaml.safe_load(
+        (tmp_path / "강연.meta.yaml").read_text(encoding="utf-8")
+    )
+    assert "terms" not in meta["_meta"]
 
 
 def test_main_writes_srt_when_requested(tmp_path, media, monkeypatch):

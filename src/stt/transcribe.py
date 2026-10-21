@@ -18,9 +18,12 @@ import gc
 import os
 import sys
 import time
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Protocol, Sequence, TypeAlias
+from typing import (
+    TYPE_CHECKING, Callable, Iterable, Protocol, Sequence, TypeAlias,
+)
 
 if TYPE_CHECKING:  # 무거운 import는 실행 시점으로 미룬다.
     from faster_whisper import WhisperModel
@@ -31,6 +34,12 @@ SUPPORTED_EXTS: frozenset[str] = frozenset({
     ".mp4", ".mkv", ".mov", ".avi", ".webm", ".ts",
     ".m4a", ".mp3", ".wav", ".flac", ".ogg", ".opus", ".aac", ".wma",
 })
+
+#: faster-whisper가 hotwords로 남기는 최대 토큰 수. get_prompt()가
+#: 인코딩 길이가 max_length // 2 이상이면 max_length // 2 - 1개로 자르며
+#: (faster_whisper/transcribe.py, WhisperModel.max_length = 448),
+#: 넘친 부분은 알림 없이 버려진다.
+HOTWORD_TOKEN_LIMIT: int = 448 // 2 - 1
 
 #: --diarize에서 화자 판정을 신뢰하지 않는 문단 길이 기준(초).
 #: diarize 모듈을 늦게 부르기 위해 값만 여기 둔다.
@@ -181,25 +190,24 @@ def discover_media(paths: Sequence[Path]) -> list[Path]:
     return found
 
 
-def load_terms(path: Path) -> str:
-    """용어 파일을 읽어 쉼표로 이은 용어 문자열을 만든다.
+def load_term_list(path: Path) -> list[str]:
+    """용어 파일을 읽어 용어 목록을 파일에 적힌 순서대로 돌려준다.
 
     한 줄에 용어 하나를 쓰며, '#'로 시작하는 줄과 빈 줄은 무시한다.
-    결과는 Whisper의 hotwords로 주입되어 전문용어 표기를 유도한다.
 
     Args:
         path: 용어 파일 경로(UTF-8 텍스트).
 
     Returns:
-        '용어1, 용어2, ...' 형태의 문자열.
+        앞뒤 공백을 뗀 용어 목록.
 
     Raises:
         FileNotFoundError: 파일이 없을 때.
         ValueError: 유효한 용어가 한 줄도 없을 때.
 
     Examples:
-        >>> load_terms(Path("terms.txt"))  # doctest: +SKIP
-        '기업가정신, 비즈니스 모델 캔버스'
+        >>> load_term_list(Path("terms.txt"))  # doctest: +SKIP
+        ['기업가정신', '비즈니스 모델 캔버스']
     """
     if not path.is_file():
         raise FileNotFoundError(
@@ -216,7 +224,132 @@ def load_terms(path: Path) -> str:
             f"빈 용어 파일: '{path}'에 유효한 용어가 없습니다. "
             f"한 줄에 용어 하나씩 적어 주세요('#' 줄은 주석)."
         )
-    return ", ".join(terms)
+    return terms
+
+
+def load_terms(path: Path) -> str:
+    """용어 파일을 읽어 쉼표로 이은 용어 문자열을 만든다.
+
+    결과는 Whisper의 hotwords로 주입되어 전문용어 표기를 유도한다.
+
+    Args:
+        path: 용어 파일 경로(UTF-8 텍스트).
+
+    Returns:
+        '용어1, 용어2, ...' 형태의 문자열.
+
+    Raises:
+        FileNotFoundError: 파일이 없을 때.
+        ValueError: 유효한 용어가 한 줄도 없을 때.
+
+    Examples:
+        >>> load_terms(Path("terms.txt"))  # doctest: +SKIP
+        '기업가정신, 비즈니스 모델 캔버스'
+    """
+    return ", ".join(load_term_list(path))
+
+
+@dataclass(frozen=True)
+class TermsReport:
+    """용어 파일 하나가 hotwords 토큰 한도에 얼마나 들어갔는지의 결과.
+
+    Attributes:
+        name: 용어 파일 이름.
+        applied: 엔진이 실제로 보는 용어 수(앞에서부터 센다).
+        total: 파일의 전체 용어 수.
+        dropped: 한도를 넘어 엔진이 무시하는 용어(파일 순서).
+    """
+
+    name: str
+    applied: int
+    total: int
+    dropped: tuple[str, ...]
+
+
+def count_applied_terms(
+    terms: Sequence[str],
+    encode: Callable[[str], list[int]],
+    limit: int = HOTWORD_TOKEN_LIMIT,
+) -> int:
+    """hotwords 토큰 한도 안에 통째로 들어가는 앞쪽 용어 수를 센다.
+
+    faster-whisper와 똑같이 " " + ", ".join(용어).strip()을 인코딩해
+    첫 limit개 토큰만 남는다고 보고, 용어의 토큰이 모두 그 안에 있어야
+    '반영'으로 센다. 한도 경계에 걸쳐 잘린 용어는 반영되지 않은 것이다.
+
+    Args:
+        terms: 파일 순서의 용어 목록.
+        encode: 문자열을 토큰 ID 목록으로 바꾸는 함수(특수 토큰 없이).
+        limit: 엔진이 남기는 최대 토큰 수.
+
+    Returns:
+        반영되는 용어 수(앞에서부터 연속).
+
+    Examples:
+        >>> count_applied_terms(["ab", "cd"], lambda t: list(t), limit=7)
+        2
+    """
+    applied = 0
+    for count in range(1, len(terms) + 1):
+        text = " " + ", ".join(terms[:count]).strip()
+        if len(encode(text)) > limit:
+            break
+        applied = count
+    return applied
+
+
+def build_terms_report(
+    name: str,
+    terms: Sequence[str],
+    encode: Callable[[str], list[int]],
+    limit: int = HOTWORD_TOKEN_LIMIT,
+) -> TermsReport:
+    """용어 목록의 hotwords 반영 결과를 만든다.
+
+    Args:
+        name: 용어 파일 이름.
+        terms: 파일 순서의 용어 목록.
+        encode: 문자열을 토큰 ID 목록으로 바꾸는 함수(특수 토큰 없이).
+        limit: 엔진이 남기는 최대 토큰 수.
+
+    Returns:
+        TermsReport 인스턴스.
+
+    Examples:
+        >>> build_terms_report("t.txt", ["ab", "cd"], list, limit=3).dropped
+        ('cd',)
+    """
+    applied = count_applied_terms(terms, encode, limit)
+    return TermsReport(
+        name=name,
+        applied=applied,
+        total=len(terms),
+        dropped=tuple(terms[applied:]),
+    )
+
+
+def report_terms_budget(report: TermsReport) -> None:
+    """반영 용어 수를 알리고, 잘린 용어가 있으면 stderr로 경고한다.
+
+    Args:
+        report: build_terms_report()의 결과.
+
+    Examples:
+        >>> report_terms_budget(TermsReport("t.txt", 1, 1, ()))
+        용어 파일 t.txt: 반영 1개 / 전체 1개
+    """
+    print(
+        f"용어 파일 {report.name}: "
+        f"반영 {report.applied}개 / 전체 {report.total}개"
+    )
+    if report.dropped:
+        print(
+            f"[경고] '{report.name}'의 뒤쪽 {len(report.dropped)}개 "
+            f"용어는 엔진의 hotwords 토큰 한도({HOTWORD_TOKEN_LIMIT}) "
+            f"때문에 무시됩니다. 중요한 용어를 파일 앞쪽으로 옮기세요. "
+            f"무시되는 용어: {', '.join(report.dropped)}",
+            file=sys.stderr,
+        )
 
 
 def build_paragraphs(
@@ -382,6 +515,9 @@ def render_srt(segments: Sequence[SegmentLike]) -> str:
 def detect_device(requested: str) -> str:
     """실행 장치를 결정한다('auto'면 CUDA 유무로 판단).
 
+    'auto'가 GPU 없이 CPU로 정해지면 stderr에 경고를 낸다. 호출하는
+    쪽(transcribe, enroll)마다 빠뜨리지 않도록 여기서 한 번만 낸다.
+
     Args:
         requested: 'auto', 'cuda', 'cpu' 중 하나.
 
@@ -404,7 +540,15 @@ def detect_device(requested: str) -> str:
         return requested
     import ctranslate2
 
-    return "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+    if ctranslate2.get_cuda_device_count() > 0:
+        return "cuda"
+    print(
+        "[경고] GPU를 찾지 못해 CPU로 실행합니다. GPU보다 훨씬 "
+        "느립니다. GPU가 있어야 하는 작업이면 '--device cuda'로 "
+        "지정하세요(GPU가 없으면 CPU로 넘어가지 않고 오류로 멈춥니다).",
+        file=sys.stderr,
+    )
+    return "cpu"
 
 
 def resolve_model_chain(model_arg: str, device: str) -> tuple[str, ...]:
@@ -559,7 +703,11 @@ def output_path_for(media: Path, out_dir: Path | None, ext: str) -> Path:
 
 
 def build_run_info(
-    model_name: str, language: str, duration_s: float, diarized: bool = False
+    model_name: str,
+    language: str,
+    duration_s: float,
+    diarized: bool = False,
+    terms: TermsReport | None = None,
 ):
     """메타데이터 파일에 넣을 전사 실행 정보를 만든다.
 
@@ -571,6 +719,7 @@ def build_run_info(
         language: 전사 언어 코드.
         duration_s: 원본 길이(초).
         diarized: 화자 분리를 거쳤으면 True.
+        terms: 용어 파일을 썼다면 그 hotwords 반영 결과.
 
     Returns:
         metadata.RunInfo 인스턴스.
@@ -587,6 +736,7 @@ def build_run_info(
         duration_s=duration_s,
         transcribed=date.today().isoformat(),
         diarized=diarized,
+        terms=terms,
     )
 
 
@@ -666,6 +816,7 @@ def process_one(
     args: argparse.Namespace,
     terms: str | None,
     pipeline=None,
+    terms_report: TermsReport | None = None,
 ) -> None:
     """파일 하나를 전사하고 TXT(및 선택적 SRT)로 저장한다.
 
@@ -676,6 +827,7 @@ def process_one(
         args: 파싱된 CLI 인자.
         terms: hotwords 용어 문자열 또는 None.
         pipeline: --diarize일 때 쓸 화자 분리 파이프라인.
+        terms_report: 용어 파일의 hotwords 반영 결과(메타데이터 기록용).
 
     Examples:
         >>> process_one(m, "small", Path("a.m4a"), ns, None)  # doctest: +SKIP
@@ -704,7 +856,9 @@ def process_one(
         srt_path.write_text(render_srt(segments), encoding="utf-8")
         outputs.append(srt_path.name)
     if not args.no_meta:
-        run = build_run_info(model_name, language, duration, args.diarize)
+        run = build_run_info(
+            model_name, language, duration, args.diarize, terms_report
+        )
         meta_path = write_metadata(media, args.output_dir, run)
         outputs.append(meta_path.name)
     elapsed = time.monotonic() - started
@@ -753,6 +907,8 @@ def run_with_fallback(
 
     GPU 메모리 부족(RuntimeError)이 나면 모델을 내리고 체인의
     다음(더 작은) 모델로 이어서 처리한다.
+    용어 파일을 쓰면 모델을 적재할 때마다 그 모델의 토크나이저로
+    hotwords 반영 결과를 알리고 메타데이터에 남긴다.
 
     Args:
         pending: 아직 처리하지 않은 미디어 파일 목록(소모됨).
@@ -774,11 +930,25 @@ def run_with_fallback(
         model = None
         try:
             model = load_model(model_name, device)
+            terms_report = None
+            if terms is not None:
+                terms_report = build_terms_report(
+                    args.terms.name,
+                    load_term_list(args.terms),
+                    lambda text: model.hf_tokenizer.encode(
+                        text, add_special_tokens=False
+                    ).ids,
+                    HOTWORD_TOKEN_LIMIT,
+                )
+                report_terms_budget(terms_report)
             while pending:
                 media = pending[0]
                 done = total - len(pending) + 1
                 print(f"[{done}/{total}] {media.name}")
-                process_one(model, model_name, media, args, terms, pipeline)
+                process_one(
+                    model, model_name, media, args, terms, pipeline,
+                    terms_report,
+                )
                 pending.pop(0)
             return
         except RuntimeError as error:

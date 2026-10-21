@@ -6,20 +6,28 @@ covered separately by an end-to-end smoke run.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from stt.transcribe import (
+    HOTWORD_TOKEN_LIMIT,
+    TermsReport,
     build_header,
     build_paragraphs,
+    build_terms_report,
+    count_applied_terms,
+    detect_device,
     discover_media,
     format_timestamp,
+    load_term_list,
     load_terms,
     parse_args,
     prepare_dll_search_path,
     render_srt,
     render_txt,
+    report_terms_budget,
     srt_timestamp,
 )
 
@@ -268,3 +276,174 @@ class TestParseArgsVoiceDb:
 
     def test_parse_args_voice_threshold_default(self):
         assert parse_args(["a.mp4"]).voice_threshold == pytest.approx(0.75)
+
+
+class TestDetectDevice:
+    """Tests for detect_device and its CPU-fallback warning."""
+
+    @staticmethod
+    def _gpu_count(monkeypatch, count: int) -> None:
+        import ctranslate2
+
+        monkeypatch.setattr(
+            ctranslate2, "get_cuda_device_count", lambda: count
+        )
+
+    def test_detect_device_auto_without_gpu_warns_on_stderr(
+        self, monkeypatch, capsys
+    ):
+        self._gpu_count(monkeypatch, 0)
+        assert detect_device("auto") == "cpu"
+        captured = capsys.readouterr()
+        assert "GPU를 찾지 못" in captured.err
+        assert "CPU" in captured.err
+        assert "느립니다" in captured.err
+        assert "--device cuda" in captured.err
+        assert captured.out == ""
+
+    def test_detect_device_auto_with_gpu_is_silent(
+        self, monkeypatch, capsys
+    ):
+        self._gpu_count(monkeypatch, 1)
+        assert detect_device("auto") == "cuda"
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_detect_device_explicit_cpu_is_silent(
+        self, monkeypatch, capsys
+    ):
+        self._gpu_count(monkeypatch, 0)
+        assert detect_device("cpu") == "cpu"
+        assert capsys.readouterr().err == ""
+
+    def test_detect_device_explicit_cuda_is_silent(
+        self, monkeypatch, capsys
+    ):
+        self._gpu_count(monkeypatch, 0)
+        assert detect_device("cuda") == "cuda"
+        assert capsys.readouterr().err == ""
+
+    def test_detect_device_invalid_raises(self):
+        with pytest.raises(ValueError):
+            detect_device("tpu")
+
+
+def char_encode(text: str) -> list[int]:
+    """Fake encoder: one token per character."""
+    return [ord(ch) for ch in text]
+
+
+class TestCountAppliedTerms:
+    """Tests for count_applied_terms (hotword token budget)."""
+
+    def test_limit_matches_faster_whisper_rule(self):
+        assert HOTWORD_TOKEN_LIMIT == 448 // 2 - 1 == 223
+
+    def test_count_applied_terms_no_overflow(self):
+        terms = ["ab", "cd", "ef"]  # " ab, cd, ef" = 11 tokens
+        assert count_applied_terms(terms, char_encode, limit=11) == 3
+
+    def test_count_applied_terms_overflow_at_term_boundary(self):
+        terms = ["ab", "cd", "ef"]  # " ab, cd" = 7 tokens exactly
+        assert count_applied_terms(terms, char_encode, limit=7) == 2
+
+    def test_count_applied_terms_overflow_inside_term_drops_it(self):
+        terms = ["ab", "cd", "ef"]  # limit cuts " ab, cd, e"
+        assert count_applied_terms(terms, char_encode, limit=9) == 2
+
+    def test_count_applied_terms_empty_list(self):
+        assert count_applied_terms([], char_encode, limit=5) == 0
+
+    def test_count_applied_terms_single_huge_term(self):
+        assert count_applied_terms(["a" * 300], char_encode) == 0
+
+    def test_count_applied_terms_encodes_like_faster_whisper(self):
+        seen: list[str] = []
+
+        def spy(text: str) -> list[int]:
+            seen.append(text)
+            return char_encode(text)
+
+        count_applied_terms(["ab", "cd"], spy, limit=99)
+        assert seen == [" ab", " ab, cd"]
+
+
+class TestBuildTermsReport:
+    """Tests for build_terms_report."""
+
+    def test_build_terms_report_lists_dropped_tail(self):
+        report = build_terms_report(
+            "t.txt", ["ab", "cd", "ef", "gh"], char_encode, limit=7
+        )
+        assert report == TermsReport(
+            name="t.txt", applied=2, total=4, dropped=("ef", "gh")
+        )
+
+    def test_build_terms_report_nothing_dropped(self):
+        report = build_terms_report("t.txt", ["ab"], char_encode, limit=9)
+        assert report.applied == report.total == 1
+        assert report.dropped == ()
+
+
+class TestLoadTermList:
+    """Tests for load_term_list."""
+
+    def test_load_term_list_keeps_order_and_skips_comments(self, tmp_path):
+        f = tmp_path / "t.txt"
+        f.write_text("# c\n기업가정신\n\n  헬스케어  \n", encoding="utf-8")
+        assert load_term_list(f) == ["기업가정신", "헬스케어"]
+
+    def test_load_term_list_missing_file_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            load_term_list(tmp_path / "none.txt")
+
+
+class TestReportTermsBudget:
+    """Tests for report_terms_budget output."""
+
+    def test_report_prints_counts_on_stdout(self, capsys):
+        report_terms_budget(TermsReport("t.txt", 3, 3, ()))
+        captured = capsys.readouterr()
+        assert "t.txt" in captured.out
+        assert "반영 3개 / 전체 3개" in captured.out
+        assert captured.err == ""
+
+    def test_report_warns_with_dropped_terms_on_stderr(self, capsys):
+        report_terms_budget(TermsReport("t.txt", 1, 3, ("cd", "ef")))
+        captured = capsys.readouterr()
+        assert "반영 1개 / 전체 3개" in captured.out
+        assert "[경고]" in captured.err
+        assert "cd" in captured.err and "ef" in captured.err
+
+
+REAL_TOKENIZER_FILES = sorted(
+    (Path.home() / ".cache/huggingface/hub"
+     / "models--Systran--faster-whisper-large-v3").glob(
+        "snapshots/*/tokenizer.json"
+    )
+)
+
+
+@pytest.mark.skipif(
+    not REAL_TOKENIZER_FILES,
+    reason="large-v3 tokenizer.json is not in the Hugging Face cache",
+)
+class TestRealTokenizerBudget:
+    """Acceptance fact measured on 2026-10-15 with the repo's terms.txt."""
+
+    def test_repo_terms_file_budget_with_large_v3_tokenizer(self):
+        from tokenizers import Tokenizer
+
+        tokenizer = Tokenizer.from_file(str(REAL_TOKENIZER_FILES[-1]))
+
+        def encode(text: str) -> list[int]:
+            return tokenizer.encode(text, add_special_tokens=False).ids
+
+        terms_file = Path(__file__).parent.parent / "terms.txt"
+        report = build_terms_report(
+            terms_file.name, load_term_list(terms_file), encode
+        )
+        assert report.total == 137
+        assert report.applied == 37
+        assert report.dropped[0] == "지식인사이드"
+        assert len(report.dropped) == 100

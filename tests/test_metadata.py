@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from stt import metadata
+from stt import metadata, transcribe
 
 SAMPLE_INFO: dict = {
     "id": "abc123XYZ_1",
@@ -275,3 +275,43 @@ class TestDiarizedRunInfo:
         run = metadata.RunInfo("large-v3", "ko", 60.0, "2026-08-03")
         meta = metadata.build_meta(None, run)
         assert meta["diarized"] is False
+
+
+class TestTermsBudgetMeta:
+    """Tests for recording the hotword budget under _meta.terms."""
+
+    def test_build_meta_records_terms_budget(self):
+        report = transcribe.TermsReport(
+            name="terms.txt", applied=37, total=40, dropped=("가", "나", "다")
+        )
+        run = metadata.RunInfo(
+            "large-v3", "ko", 60.0, "2026-10-21", terms=report
+        )
+        meta = metadata.build_meta(None, run)
+        assert meta["_meta"]["terms"] == {
+            "file": "terms.txt",
+            "applied": 37,
+            "total": 40,
+            "dropped": ["가", "나", "다"],
+        }
+
+    def test_build_meta_terms_stay_out_of_report_fields(self):
+        report = transcribe.TermsReport("terms.txt", 1, 1, ())
+        run = metadata.RunInfo(
+            "large-v3", "ko", 60.0, "2026-10-21", terms=report
+        )
+        assert "terms" not in metadata.build_meta(None, run)
+
+    def test_build_meta_without_terms_writes_nothing(self):
+        run = metadata.RunInfo("large-v3", "ko", 60.0, "2026-10-21")
+        assert "terms" not in metadata.build_meta(None, run)["_meta"]
+
+    def test_terms_budget_survives_yaml_roundtrip(self, tmp_path):
+        report = transcribe.TermsReport("terms.txt", 1, 2, ("나",))
+        run = metadata.RunInfo(
+            "large-v3", "ko", 60.0, "2026-10-21", terms=report
+        )
+        path = tmp_path / "m.meta.yaml"
+        metadata.write_meta_yaml(path, metadata.build_meta(None, run))
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert loaded["_meta"]["terms"]["dropped"] == ["나"]
