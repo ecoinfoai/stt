@@ -21,16 +21,13 @@ else
 fi
 
 CUDA_LIBS="$("${PY[@]}" - <<'PYEOF' 2>/dev/null || true
-import os
 try:
     import nvidia.cublas.lib as cublas
     import nvidia.cudnn.lib as cudnn
 except ImportError:
     raise SystemExit(0)
-print(":".join([
-    os.path.dirname(cublas.__file__),
-    os.path.dirname(cudnn.__file__),
-]))
+# namespace packages have __file__ = None; use __path__ instead
+print(":".join([cublas.__path__[0], cudnn.__path__[0]]))
 PYEOF
 )"
 if [ -n "$CUDA_LIBS" ]; then

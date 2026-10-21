@@ -88,7 +88,7 @@ Or drag & drop media files onto `transcribe.bat`.
 
 ```sh
 uv sync --extra cuda    # installs nvidia-cublas-cu12 / nvidia-cudnn-cu12 wheels
-export LD_LIBRARY_PATH=$(uv run python -c 'import os, nvidia.cublas.lib, nvidia.cudnn.lib; print(os.path.dirname(nvidia.cublas.lib.__file__) + ":" + os.path.dirname(nvidia.cudnn.lib.__file__))')
+export LD_LIBRARY_PATH=$(uv run python -c 'import nvidia.cublas.lib as a, nvidia.cudnn.lib as b; print(a.__path__[0] + ":" + b.__path__[0])')
 uv run stt transcribe data/lecture.mp4
 ```
 
