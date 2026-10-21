@@ -130,7 +130,7 @@ stt transcribe PATH [PATH ...] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--model` | auto | `auto` = large-v3 → large-v3-turbo → small fallback |
-| `--device` | auto | `cuda` if available, else `cpu` |
+| `--device` | auto | `cuda` if available, else `cpu` (with a stderr warning); `cuda` fails if no GPU is found |
 | `--language` | ko | language code, `auto` to detect |
 | `--terms FILE` | — | hotwords file (one term per line, `#` comments) |
 | `--no-timestamps` | off | plain text without `[MM:SS]` markers |
@@ -149,6 +149,14 @@ stt transcribe PATH [PATH ...] [options]
 
 CPU-only servers: `--model small --beam 1` is the practical
 combination for batch automation.
+
+`--terms` has a hard budget: faster-whisper keeps only the first 223
+tokens of the hotwords string and silently ignores the rest, which in
+Korean is a few dozen terms. Before transcribing, stt prints
+`반영 N개 / 전체 M개` (applied / total) for the terms file and, when
+terms are cut, warns on stderr with the ignored ones listed. Put the
+terms that matter most at the top of the file. The same numbers are
+saved under `_meta.terms` in the `.meta.yaml`.
 
 ### stt enroll — register speaker voices
 
@@ -216,12 +224,12 @@ group; see `list_example.yaml` for per-item overrides.
 ## Note metadata (`.meta.yaml`)
 
 Field names match the `transcript-report` note template
-(`template_version` 1.1), so a note generator can copy them across
+(`template_version` 1.3), so a note generator can copy them across
 without translation:
 
 | Filled automatically | Left for you |
 |---|---|
-| `source_url`, `language`, `duration`, `model`, `transcribed` | `title`, `speaker`, `institution`, `source_type`, `recorded`, `course`, `topics` |
+| `source_url`, `language`, `duration`, `model`, `transcribed`, `diarized` | `title`, `speaker`, `institution`, `source_type`, `recorded`, `course`, `topics` |
 
 Values that can only be guessed are never written into the real
 fields. They go to `_meta.candidates` (speaker inferred from the
