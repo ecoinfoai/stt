@@ -429,7 +429,7 @@ description: "Task list for 001-server-transcription"
 - [X] T064 [US5] `src/stt/server/engine.py`: `allow_empty=True` 로 전사하고 빈 결과면 화자 구분과 renderer 를 건너뛰어 머리글만 쓴다(R20-11);
   `classify_error(exc) -> tuple[reason, detail]` — OOM(`transcribe.is_oom_error`) → `gpu_out_of_memory`, PyAV 해독 오류 → `unreadable_audio`, 그 밖 →
   `engine_error`, detail 은 이유마다 고정 문장; 실패 판정을 `outcome.json` 에 쓰고 종료 0, `out/` 은 비우고, 예외 원문·traceback 을 출력하지 않음 — turns T058, T060 GREEN — closes US5-4, US5-7, US5-8
-- [ ] T065 [US5] US5 확인: 전체 시험 통과. RED 해당 없음 — 확인 — closes US5-1…US5-9, SC-009
+- [X] T065 [US5] US5 확인: 전체 시험 통과. RED 해당 없음 — 확인 — closes US5-1…US5-9, SC-009
 
 **Checkpoint**: 모든 이야기가 가짜 엔진·가짜 모델로 GREEN 이다.
 
