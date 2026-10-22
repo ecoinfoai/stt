@@ -439,13 +439,13 @@ description: "Task list for 001-server-transcription"
 
 **Purpose**: 호스트에 붙일 수 있게 묶고, 실제 systemd 위에서 권한·격리·잠금·삭제를 확인한다(quickstart B). FR-015·FR-035·FR-037·SC-002·SC-011.
 
-- [ ] T066 [P] `tests/server/test_models.py` 에 받기를 더한다 — RED: `fetch(models_dir, token, download)` 가 저장소마다 **고정 커밋**
+- [X] T066 [P] `tests/server/test_models.py` 에 받기를 더한다 — RED: `fetch(models_dir, token, download)` 가 저장소마다 **고정 커밋**
   (`revision=<commit>`)·`cache_dir=<models_dir>/hub`·토큰으로 받기 함수를 부르고(가짜), `refs/main` 을 그 커밋으로 쓰고, 다 받으면 `.complete` 에 고정
   목록을 씀; `.complete` 의 목록이 같으면 받기 함수를 부르지 않음(망 없음); 목록이 다르면 다시 받음; 받기 실패면 `.complete` 를 쓰지 않고 어느
   저장소인지 영어로; 토큰 값이 출력에 없음; `stt server fetch-models` 종료 0·1·2 — supports FR-015, SC-002 — verify RED
-- [ ] T067 `src/stt/server/models.py` 의 `fetch` 와 `src/stt/server/cli.py` 의 `fetch-models --models DIR`: 위 동작(research R9), 토큰은 환경 변수
+- [X] T067 `src/stt/server/models.py` 의 `fetch` 와 `src/stt/server/cli.py` 의 `fetch-models --models DIR`: 위 동작(research R9), 토큰은 환경 변수
   `HF_TOKEN`(모듈이 전용 agenix 파일을 `EnvironmentFile` 로 준다) — turns T066 GREEN — supports FR-015, SC-002
-- [ ] T068 [P] `.github/workflows/ci.yml` 의 flake 작업을 `nix flake check --no-build` 로 바꾼다(R15). 서버 패키지·VM 확인을 flake 에 더하기
+- [X] T068 [P] `.github/workflows/ci.yml` 의 flake 작업을 `nix flake check --no-build` 로 바꾼다(R15). 서버 패키지·VM 확인을 flake 에 더하기
   **전에** 한다 — 순서가 바뀌면 그 사이에 올린 커밋에서 CI 가 CUDA 패키지와 VM 을 빌드한다. RED 해당 없음 — CI 설정. 확인: 로컬
   `nix flake check --no-build` 통과 — supports SC-013
 - [ ] T069 `flake.nix` 에 `checks.x86_64-linux.server-smoke`(runCommand: `${server}/bin/stt server --help`, `${server}/bin/python -c "from stt.server import
