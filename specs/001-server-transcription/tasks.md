@@ -74,7 +74,7 @@ description: "Task list for 001-server-transcription"
 
 **⚠️ CRITICAL**: 이 단계가 끝나야 이야기를 시작한다.
 
-- [ ] T005 [P] `tests/server/test_contract.py` — `stt.server.contract` 가 없으므로 RED:
+- [X] T005 [P] `tests/server/test_contract.py` — `stt.server.contract` 가 없으므로 RED:
   (a) 패키지 사본 세 개와 `specs/001-server-transcription/contracts/*.schema.json` 의 바이트 일치;
   (b) `contracts/README.md` 의 ```json 블록 네 개 — 요청 셋은 `validate_request` 통과, 응답 하나는 `validate_response` 통과;
   (c) 틀린 요청이 거절되고 detail 이 data-model §2.4 의 꼴: `schema_version` 없음·`2`, 대문자 UUID, 공백 든 `requested_by`, `audio` 에 `file`·
@@ -85,7 +85,7 @@ description: "Task list for 001-server-transcription"
   (f) `contract.language_supported("ko")` True, `"xx"` False, 그리고 `contract.LANGUAGE_CODES` 가 `faster_whisper.tokenizer._LANGUAGE_CODES` 와 같음
   (faster-whisper 는 이 시험 안에서만 불러온다 — R5);
   (g) `uv build --wheel` 로 만든 휠 안에 `stt/server/schemas/*.json` 세 개가 있음(`uv` 가 없으면 그 이유로 건너뜀, R21-21) — supports US1-8, US5-6, SC-012 — verify RED
-- [ ] T006 `src/stt/server/contract.py`: `load_schema(name: Literal["request", "response", "result"]) -> dict`(importlib.resources),
+- [X] T006 `src/stt/server/contract.py`: `load_schema(name: Literal["request", "response", "result"]) -> dict`(importlib.resources),
   `validate_request(doc) -> str | None`(`kind` 로 `$defs/transcribe`·`$defs/delete` 갈래를 골라 검사, 첫 오류를 §2.4 의 detail 로 — 규칙 이름
   (`required`·`pattern`·`uniqueItems`·`enum`·`const`·`additionalProperties`·`minItems`·`maxItems`·`minLength`·`maxLength`·`type`·`oneOf`)마다 고정 문구),
   `validate_response(doc) -> str | None`, `validate_result(doc) -> str | None`(내부 확인용), `LANGUAGE_CODES: frozenset[str]`(faster-whisper 1.2.1 의
