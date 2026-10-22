@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fcntl
-import importlib
 import os
 import subprocess
 import sys
@@ -13,7 +12,6 @@ from typing import Iterator
 
 import pytest
 
-from stt import gpu_lock
 from stt.gpu_lock import (
     WAIT_MESSAGE,
     MissingGpuLockError,
@@ -199,10 +197,13 @@ def test_try_acquire_on_missing_file_raises_and_does_not_create_it(tmp_path: Pat
     assert not missing.exists()
 
 
-def test_module_imports_without_fcntl(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "fcntl", None)
-    monkeypatch.delitem(sys.modules, "stt.gpu_lock", raising=False)
-    fresh = importlib.import_module("stt.gpu_lock")
-    assert fresh is not gpu_lock
-    assert fresh.lock_path_from_env({"STT_GPU_LOCK": "x"}) == Path("x")
-    assert fresh.lock_path_from_env({}) is None
+def test_module_imports_without_fcntl() -> None:
+    script = (
+        "import sys\n"
+        "sys.modules['fcntl'] = None\n"
+        "from pathlib import Path\n"
+        "import stt.gpu_lock as module\n"
+        "assert module.lock_path_from_env({'STT_GPU_LOCK': 'x'}) == Path('x')\n"
+        "assert module.lock_path_from_env({}) is None\n"
+    )
+    subprocess.run([sys.executable, "-c", script], check=True)
