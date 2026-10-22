@@ -125,6 +125,23 @@ def _settle(layout: Layout, job: Job, work_dir: Path, failure: Failure | None, n
             _log(job.request_id, f"failed {failure.reason}")
 
 
+def _pick(layout: Layout, at: datetime) -> Job | None:
+    """Starts the oldest queued job whose recording is not yet due for deletion.
+
+    A queued job whose recording is already due is failed with ``audio_deleted``
+    instead of being started, without waiting for the sweep.
+    """
+    while True:
+        queued = queued_in_order(load_jobs(layout))
+        if not queued:
+            return None
+        cause = lifecycle.due_cause(load_audio(layout, queued[0].audio_id), at)
+        if cause is None:
+            return lifecycle.start(layout, queued[0], at)
+        for failed in lifecycle.delete_audio(layout, queued[0].audio_id, cause, at):
+            _log(failed.request_id, "failed audio_deleted")
+
+
 def run_one(
     layout: Layout,
     engine_cmd: Sequence[str],
@@ -146,10 +163,9 @@ def run_one(
         True if a job was run, False if the queue was empty.
     """
     with hold(layout.state_lock):
-        queued = queued_in_order(load_jobs(layout))
-        if not queued:
+        job = _pick(layout, now())
+        if job is None:
             return False
-        job = lifecycle.start(layout, queued[0], now())
     _log(job.request_id, "running")
     work_dir = _prepare(layout, job)
     try:
@@ -180,6 +196,9 @@ def run(
     Returns:
         0 once the queue is empty.
     """
+    with hold(layout.state_lock):
+        for interrupted in lifecycle.clear_dead_worker(layout, now()):
+            _log(interrupted.request_id, "failed interrupted")
     while run_one(layout, engine_cmd, now, poll_s=poll_s, models_dir=models_dir):
         pass
     return 0
