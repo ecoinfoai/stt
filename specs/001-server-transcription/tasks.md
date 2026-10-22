@@ -191,7 +191,7 @@ description: "Task list for 001-server-transcription"
   빈 루트에서 둘 다 0 — supports US1-1 — verify RED
 - [ ] T023 [P] [US1] `tests/server/test_logging.py` — RED: 힌트 `"zzhintword"`·요청자 `"zzrequester"` 로 받기 → 워커(가짜 엔진) → 엔진(가짜 모델)을
   돌린 뒤 `capfd` 의 stdout·stderr 에 두 낱말과 전사문이 0번, `request_id` 와 상태 낱말은 있음 — supports FR-037 — verify RED
-- [ ] T024 [P] [US1] `tests/server/test_models.py` — RED: `models.PINNED` 가 research R9 표의 저장소 다섯·커밋과 같음; `ref_mismatches(hf_home)` 이
+- [X] T024 [P] [US1] `tests/server/test_models.py` — RED: `models.PINNED` 가 research R9 표의 저장소 다섯·커밋과 같음; `ref_mismatches(hf_home)` 이
   없는 저장소·다른 커밋을 모두 저장소 이름으로 돌려주고, 모두 맞으면 `[]` — supports US5-5(시작 점검), FR-012 — verify RED
 
 ### Implementation for User Story 1 (turn T018–T024 GREEN)
@@ -203,7 +203,7 @@ description: "Task list for 001-server-transcription"
   (임시 WAV 는 지금처럼 `TemporaryDirectory` — 엔진에서는 `TMPDIR` 이 작업 폴더라 함께 지워진다). 명령줄 출력 그대로 — turns `test_diarized_blocks_split_from_rendering` GREEN (T021) — supports US1-2, US4-4
 - [X] T027 [P] [US1] `src/stt/diarize.py` R8-4: `load_pipeline` 이 `HF_HUB_OFFLINE` 이 켜져 있으면(`"1"`) `HF_TOKEN` 없이 `token=None` 으로 읽는다.
   docstring 영어, 기존 토큰 오류 문구는 그대로 — turns `test_edge_6_offline_pipeline_needs_no_token` GREEN (T021) — supports 경계 사례 6
-- [ ] T028 [P] [US1] `src/stt/server/models.py`: `PINNED: tuple[tuple[str, str], ...]`(R9 표), `ref_mismatches(hf_home: Path) -> list[str]`
+- [X] T028 [P] [US1] `src/stt/server/models.py`: `PINNED: tuple[tuple[str, str], ...]`(R9 표), `ref_mismatches(hf_home: Path) -> list[str]`
   (`hub/models--<org>--<name>/refs/main` 을 읽어 비교) — turns T024 GREEN — supports US5-5, FR-012
 - [ ] T029 [US1] `src/stt/server/lifecycle.py`(R20-9): `start(layout, job, now)` — `queued` → `running`, 대기 표시 삭제, 응답 갱신;
   `finish(layout, job, state, now, failure=None)` — 끝 상태로 가는 **유일한 길**: 상태·`finished_at`·`failure`, 대기 표시 삭제, 남은 `queued` 응답의
