@@ -69,8 +69,9 @@ flake.nix/.envrc    Nix devShell (uv, Python 3.12, ffmpeg) for direnv
 
 ## Quick start
 
-Requires [uv](https://docs.astral.sh/uv/), `ffmpeg`, and — for GPU
-use — NVIDIA libraries (see [INSTALL.md](INSTALL.md)).
+Requires [uv](https://docs.astral.sh/uv/), `ffmpeg`, and an NVIDIA
+GPU with its libraries — stt runs on the GPU only (see
+[INSTALL.md](INSTALL.md)).
 
 ```sh
 uv sync                          # creates .venv with dependencies

@@ -147,7 +147,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--device", default="auto", choices=list(DEVICE_CHOICES),
-        help="실행 장치 — 둘 다 GPU (기본: auto)",
+        help="Device; auto and cuda both mean the GPU (default: auto)",
     )
     return parser.parse_args(list(argv))
 

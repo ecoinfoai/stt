@@ -440,7 +440,7 @@ def fake_pyannote_cuda(monkeypatch, fake_pyannote):
     return set_cuda
 
 
-def test_us4_5_no_cuda_stops_without_cpu_fallback(
+def test_us4_6_no_cuda_stops_without_cpu_fallback(
     fake_pyannote_cuda, monkeypatch, capsys
 ):
     """A CUDA-less torch stops load_pipeline; no CPU pipeline, no warning."""

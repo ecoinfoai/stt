@@ -199,7 +199,7 @@ def test_us4_4_cli_unchanged_without_lock(
     assert (tmp_path / "talk.txt").read_text(encoding="utf-8") == plain_text
 
 
-def test_us4_6_lock_is_taken_with_device_auto(
+def test_us4_1_lock_is_taken_with_device_auto(
     media: Path,
     lock_file: Path,
     holder: Holder,

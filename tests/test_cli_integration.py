@@ -44,9 +44,10 @@ class FakeModel:
 
 @pytest.fixture(autouse=True)
 def one_cuda_device(monkeypatch) -> None:
-    """Makes the GPU-only device check see one CUDA device."""
+    """Makes the GPU-only device check see one CUDA device, with no GPU lock."""
     import ctranslate2
 
+    monkeypatch.delenv("STT_GPU_LOCK", raising=False)
     monkeypatch.setattr(ctranslate2, "get_cuda_device_count", lambda: 1)
 
 

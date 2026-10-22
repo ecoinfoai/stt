@@ -335,7 +335,7 @@ class TestGpuOnlyCommandLine:
         assert parse_args(["a.mp4", "--device", device]).device == device
 
     @pytest.mark.parametrize("device", ["auto", "cuda"])
-    def test_main_without_gpu_stops_before_loading_a_model(
+    def test_us4_5_main_without_gpu_stops_before_loading_a_model(
         self, tmp_path, monkeypatch, capsys, device
     ):
         from stt import transcribe
@@ -354,7 +354,7 @@ class TestGpuOnlyCommandLine:
         assert loaded == []
         assert not (tmp_path / "talk.txt").exists()
 
-    def test_main_diarize_with_torch_without_cuda_stops(
+    def test_us4_6_main_diarize_with_torch_without_cuda_stops(
         self, tmp_path, monkeypatch, capsys
     ):
         import sys
@@ -363,6 +363,7 @@ class TestGpuOnlyCommandLine:
         from stt import transcribe
 
         _gpu_count(monkeypatch, 1)
+        monkeypatch.delenv("STT_GPU_LOCK", raising=False)
         monkeypatch.setenv("HF_HUB_OFFLINE", "1")
         torch = types.ModuleType("torch")
         torch.cuda = SimpleNamespace(is_available=lambda: False)
@@ -384,7 +385,7 @@ class TestGpuOnlyCommandLine:
             "stt runs on the GPU only."
         )
 
-    def test_main_prints_no_cpu_warning_or_cpu_hint(
+    def test_us4_5_main_prints_no_cpu_warning_or_cpu_hint(
         self, tmp_path, monkeypatch, capsys
     ):
         from stt import transcribe

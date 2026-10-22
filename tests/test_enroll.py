@@ -99,7 +99,7 @@ class TestGpuOnlyMain:
         monkeypatch.setattr(ctranslate2, "get_cuda_device_count", lambda: count)
 
     @pytest.mark.parametrize("device", ["auto", "cuda"])
-    def test_main_without_cuda_device_stops(
+    def test_us4_5_main_without_cuda_device_stops(
         self, tmp_path, monkeypatch, capsys, device
     ):
         from stt import diarize, enroll
@@ -115,7 +115,7 @@ class TestGpuOnlyMain:
         assert not (tmp_path / "voices.json").exists()
 
     @pytest.mark.parametrize("device", ["auto", "cuda"])
-    def test_main_with_torch_without_cuda_stops(
+    def test_us4_6_main_with_torch_without_cuda_stops(
         self, tmp_path, monkeypatch, capsys, device
     ):
         import sys
@@ -125,6 +125,7 @@ class TestGpuOnlyMain:
         from stt import diarize, enroll
 
         self._ctranslate2_gpus(monkeypatch, 1)
+        monkeypatch.delenv("STT_GPU_LOCK", raising=False)
         monkeypatch.setenv("HF_HUB_OFFLINE", "1")
         torch = types.ModuleType("torch")
         torch.cuda = SimpleNamespace(is_available=lambda: False)

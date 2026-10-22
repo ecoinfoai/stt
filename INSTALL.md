@@ -128,7 +128,7 @@ and ffmpeg, plus the `LD_LIBRARY_PATH` entries the PyPI wheels
 
 ```sh
 direnv allow      # or: nix develop
-uv sync           # GPU machines: uv sync --extra cuda
+uv sync --extra cuda
 ```
 
 `.envrc` adds the cuBLAS/cuDNN directories of the `cuda` extra to
@@ -158,7 +158,7 @@ small 0.5 GB. Interrupted downloads resume on retry.
 | `cublas`/`cudnn` DLL error | DLLs must sit directly in `.venv\Scripts\` (Windows) or be on `LD_LIBRARY_PATH` (Linux); re-copy them after any `uv sync` that recreated `.venv` |
 | `GPU: 0` | update the NVIDIA driver, re-check `nvidia-smi` |
 | `No usable GPU was found; stt runs on the GPU only.` | stt has no CPU mode; install the NVIDIA driver and the CUDA libraries above, then check `nvidia-smi` |
-| `Speaker diarization needs a GPU, but torch cannot use CUDA; stt runs on the GPU only.` | install a CUDA-enabled torch (`uv sync --extra diarize` on a GPU machine) and check `nvidia-smi` |
+| `Speaker diarization needs a GPU, but torch cannot use CUDA; stt runs on the GPU only.` | install a CUDA-enabled torch (`uv sync --extra diarize`) and check `nvidia-smi` |
 | repeated out-of-memory | run with `--model small` (auto-fallback usually handles this) |
 | too slow | `--beam 1` or `--model large-v3-turbo` |
 | "empty transcription" error | file may be silent; retry with `--language auto` |

@@ -697,11 +697,13 @@ def load_model(model_name: str, device: str) -> "WhisperModel":
     from faster_whisper import WhisperModel
 
     compute = "int8_float16"
+    threads = os.cpu_count() or 4
     print(f"  모델 적재: {model_name} ({device}, {compute})")
     return WhisperModel(
         model_name,
         device=device,
         compute_type=compute,
+        cpu_threads=threads,
     )
 
 
@@ -1132,7 +1134,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--device", default="auto", choices=list(DEVICE_CHOICES),
-        help="실행 장치 — 둘 다 GPU (기본: auto)",
+        help="Device; auto and cuda both mean the GPU (default: auto)",
     )
     parser.add_argument(
         "--language", default="ko",
