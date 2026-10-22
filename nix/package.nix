@@ -18,7 +18,9 @@ let
     ];
   };
 
-  workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = src; };
+  # Read uv.lock from the flake source: `flake check --no-build` cannot read files inside an unrealised
+  # fileset path. `stt` itself is still built from `src` (override below).
+  workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ../.; };
 
   sp = python.sitePackages;
   driverLib = "/run/opengl-driver/lib"; # libcuda.so.1 comes from the host driver
@@ -45,6 +47,7 @@ let
     lib.genAttrs (lib.filter (lib.hasPrefix "nvidia-") (lib.attrNames prev))
       (n: prev.${n}.overrideAttrs (linkAgainst [ ] [ ]))
     // {
+      stt = prev.stt.overrideAttrs (_: { inherit src; });
       nvidia-cusparse = prev.nvidia-cusparse.overrideAttrs (linkAgainst [ final.nvidia-nvjitlink ] [ ]);
       nvidia-cusolver = prev.nvidia-cusolver.overrideAttrs (linkAgainst
         (with final; [ nvidia-nvjitlink nvidia-cusparse nvidia-cublas ]) [ ]);
