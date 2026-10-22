@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import stat
 import subprocess
@@ -426,3 +427,37 @@ def test_open_attachment_has_no_size_limit(tmp_path: Path) -> None:
 
     with open_attachment(path) as handle:
         assert len(handle.read()) == 2 * 1024 * 1024
+
+
+@pytest.mark.parametrize("code", [errno.EMFILE, errno.ENFILE, errno.ENOMEM, errno.EIO, errno.ENOTDIR])
+@pytest.mark.parametrize("reader", [read_request_bytes, open_attachment])
+def test_server_side_open_failures_propagate_as_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader, code: int
+) -> None:
+    path = tmp_path / "r.json"
+    path.write_bytes(b"{}")
+
+    def failing_open(*args: object, **kwargs: object) -> int:
+        raise OSError(code, os.strerror(code))
+
+    monkeypatch.setattr(layout_module.os, "open", failing_open)
+
+    with pytest.raises(OSError) as caught:
+        reader(path)
+
+    assert not isinstance(caught.value, UnsafeFileError)
+    assert caught.value.errno == code
+
+
+def test_enxio_on_open_is_reported_as_not_regular(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing_open(*args: object, **kwargs: object) -> int:
+        raise OSError(errno.ENXIO, os.strerror(errno.ENXIO))
+
+    monkeypatch.setattr(layout_module.os, "open", failing_open)
+
+    with pytest.raises(UnsafeFileError) as caught:
+        open_attachment(tmp_path / "a.m4a")
+
+    assert caught.value.reason == "not_regular"

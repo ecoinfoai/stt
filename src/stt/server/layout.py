@@ -20,6 +20,14 @@ _ATTACHMENT_NAME = re.compile(rf"({_UUID})\.audio\.(?:m4a|mp3|wav|flac|ogg|opus|
 
 UnsafeReason = Literal["symlink", "hardlink", "not_regular", "too_large", "unreadable"]
 
+_OPEN_ERRNO_REASONS: dict[int | None, UnsafeReason] = {
+    errno.ELOOP: "symlink",
+    errno.EACCES: "unreadable",
+    errno.EPERM: "unreadable",
+    errno.ENOENT: "unreadable",
+    errno.ENXIO: "not_regular",
+}
+
 _ROOT_MODE = 0o751
 _REQUESTS_MODE = 0o751
 _INBOX_MODE = 0o770
@@ -154,8 +162,9 @@ def _release_on_exit(fd: int) -> Iterator[None]:
 def try_hold(path: Path) -> AbstractContextManager[None] | None:
     """Takes an exclusive flock on `path` without waiting.
 
-    The lock is already held when this returns; the returned context manager must be
-    entered (``with``) so that it is released on exit.
+    The lock is already held when this returns; the caller must enter the returned
+    context manager (``with``) so that it is released on exit. If it is never entered
+    the lock stays held until the process exits (garbage collection does not release it).
 
     Args:
         path: Lock file (created if missing).
@@ -178,12 +187,16 @@ def try_hold(path: Path) -> AbstractContextManager[None] | None:
 def _open_regular(path: Path) -> int:
     """Opens `path` read-only and returns the descriptor of a regular, singly-linked file.
 
-    O_NONBLOCK keeps an open on a FIFO without writer from blocking.
+    O_NONBLOCK keeps an open on a FIFO without writer from blocking. Only errnos that
+    describe the file itself become `UnsafeFileError`; server-side or transient faults
+    (EMFILE, ENFILE, ENOMEM, EIO, ENOTDIR, ...) propagate as the original `OSError`.
     """
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError as error:
-        reason: UnsafeReason = "symlink" if error.errno == errno.ELOOP else "unreadable"
+        reason = _OPEN_ERRNO_REASONS.get(error.errno)
+        if reason is None:
+            raise
         raise UnsafeFileError(reason) from None
     try:
         info = os.fstat(fd)
@@ -211,6 +224,7 @@ def read_request_bytes(path: Path, limit: int = REQUEST_LIMIT_BYTES) -> bytes:
         UnsafeFileError: For a symlink, hard link, non-regular file, unreadable file
             or a file larger than `limit`; the content is not read in these cases
             (a file that grew past `limit` after the size check is read up to `limit` + 1 bytes).
+        OSError: For server-side or transient open failures (e.g. EMFILE).
     """
     fd = _open_regular(path)
     with os.fdopen(fd, "rb") as handle:
@@ -233,5 +247,6 @@ def open_attachment(path: Path) -> BinaryIO:
 
     Raises:
         UnsafeFileError: For a symlink, hard link, non-regular or unreadable file.
+        OSError: For server-side or transient open failures (e.g. EMFILE).
     """
     return os.fdopen(_open_regular(path), "rb")
