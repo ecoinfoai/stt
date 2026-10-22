@@ -764,3 +764,28 @@ def test_sweep_removes_an_after_job_recording_whose_job_record_is_gone(
     run_sweep(layout, clock)
 
     assert not (layout.audio / request_id).exists()
+
+
+def test_pick_raises_when_failing_a_due_job_leaves_it_queued(
+    layout: Layout, wav: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request_id = submit(layout, wav, clock, delete_audio="at_midnight")
+    clock.set("2026-03-02T15:00:30Z")
+    monkeypatch.setattr(lifecycle, "delete_audio", lambda *args, **kwargs: [])
+    outcome: dict[str, Any] = {}
+
+    def pick() -> None:
+        try:
+            with hold(layout.state_lock):
+                outcome["job"] = worker._pick(layout, clock.now())
+        except RuntimeError as error:
+            outcome["error"] = error
+
+    picker = threading.Thread(target=pick, daemon=True)
+    picker.start()
+    picker.join(5)
+
+    assert not picker.is_alive()
+    assert "job" not in outcome
+    assert str(outcome["error"]) == f"{request_id}: job is still queued after its due recording was deleted"
+    assert load_job(layout, request_id).state == "queued"

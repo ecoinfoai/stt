@@ -180,14 +180,21 @@ def _pick(layout: Layout, at: datetime) -> Job | None:
 
     A queued job whose recording is already due is failed with ``audio_deleted``
     instead of being returned, without waiting for the sweep.
+
+    Raises:
+        RuntimeError: If a job is still first in line after failing it, which would
+            otherwise spin while ``state.lock`` is held.
     """
+    failed: str | None = None
     while True:
         queued = queued_in_order(load_jobs(layout))
         if not queued:
             return None
-        if _fail_if_due(layout, queued[0], at):
-            continue
-        return queued[0]
+        if queued[0].request_id == failed:
+            raise RuntimeError(f"{failed}: job is still queued after its due recording was deleted")
+        if not _fail_if_due(layout, queued[0], at):
+            return queued[0]
+        failed = queued[0].request_id
 
 
 def _fail_if_due(layout: Layout, job: Job, at: datetime) -> bool:
