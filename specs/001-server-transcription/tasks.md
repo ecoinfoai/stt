@@ -106,12 +106,12 @@ description: "Task list for 001-server-transcription"
   하드 링크(링크 수 2), FIFO·폴더, 크기 초과(요청만), 읽기 권한 없음(root 로 돌면 건너뜀)에서 `UnsafeFileError`(이유 코드)를 내고 내용을 읽지 않음 — supports US1-1, US2-4, US5-6 — verify RED
 - [X] T010 `src/stt/server/layout.py`: 위 배치·이름 규칙·원자적 쓰기(fsync 뒤 rename)·flock 도우미·`O_NOFOLLOW` 열기와 `fstat`(일반 파일·링크 수 1)
   확인 — turns T009 GREEN — supports US1-1, US2-4, US5-6
-- [ ] T011 [P] `tests/server/test_records.py` — RED: `Job`·`Audio`(data-model §3·§4 의 칸 — `Audio.policy` 는 `{"after_job": id}` | `{"at": time}`,
+- [X] T011 [P] `tests/server/test_records.py` — RED: `Job`·`Audio`(data-model §3·§4 의 칸 — `Audio.policy` 는 `{"after_job": id}` | `{"at": time}`,
   `received_at`, `hard_deadline`, `Job.failure.cause`, frozen dataclass)의 JSON 왕복; `save_job`/`load_job`/`load_jobs`, `save_audio`/`load_audio`
   (원자적, 0600, 녹음 기록은 `audio/<audio_id>.json` — 녹음 파일 폴더 `audio/<audio_id>/` 밖, R21-4);
   `next_seq(jobs)` = 최대값 + 1(없으면 1); `queue_position(job, jobs)` — `queued` 가운데 seq 가 작은 것의 수 + 1, `running` 은 세지 않음, `queued` 가
   아니면 None; `queued_in_order(jobs)` — supports US1-7 — verify RED
-- [ ] T012 `src/stt/server/records.py`: 위 기록 형식과 읽기·쓰기(`dataclasses.replace` 로 바꾼 사본을 저장) — turns T011 GREEN — supports US1-7
+- [X] T012 `src/stt/server/records.py`: 위 기록 형식과 읽기·쓰기(`dataclasses.replace` 로 바꾼 사본을 저장) — turns T011 GREEN — supports US1-7
 - [ ] T013 [P] `tests/server/test_responses.py` — RED: `job_status(job, audio, jobs, now) -> dict` 가 상태마다 `contract.validate_response` 를
   통과: `queued` 만 `queue_position`, `done` 은 `result.transcript == "<id>/transcript.txt"`·`result.data == "<id>/result.json"`, 결과를 지웠으면
   `result.deleted_at`, `failed` 는 `failure.reason`·`detail`(·`audio_deleted` 면 `cause`), `deleted` 는 `deleted.at`, 녹음 칸 `delete_policy`·
