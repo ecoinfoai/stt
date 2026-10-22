@@ -49,12 +49,12 @@ description: "Task list for 001-server-transcription"
 
 **Purpose**: 의존성·패키지 뼈대·시험 도구
 
-- [ ] T001 `pyproject.toml`: 판 `0.3.0`, 선택 묶음 `server = ["jsonschema>=4.18"]`, `[tool.setuptools.package-data] "stt.server" = ["schemas/*.json"]`
+- [X] T001 `pyproject.toml`: 판 `0.3.0`, 선택 묶음 `server = ["jsonschema>=4.18"]`, `[tool.setuptools.package-data] "stt.server" = ["schemas/*.json"]`
   를 더하고 `uv lock` 으로 `uv.lock` 을 갱신한다(R6). RED 해당 없음 — 의존성·패키지 자료 선언(휠에 실리는지는 T005(g)가 시험한다). 확인:
   `uv sync --locked --extra server` 성공, 기존 243개 시험 통과 — supports SC-013
-- [ ] T002 [P] `src/stt/server/__init__.py`(영어 모듈 docstring 한 줄)와 `src/stt/server/schemas/{request,response,result}.schema.json` 을
+- [X] T002 [P] `src/stt/server/__init__.py`(영어 모듈 docstring 한 줄)와 `src/stt/server/schemas/{request,response,result}.schema.json` 을
   `specs/001-server-transcription/contracts/` 에서 바이트 그대로 복사한다. RED 해당 없음 — 계약 사본(T005 가 바이트 일치를 시험). 확인: `cmp` 세 번 일치 — supports SC-012
-- [ ] T003 [P] `tests/server/__init__.py`(빈 파일)와 `tests/server/conftest.py`. RED 해당 없음 — 시험 도구. 담을 것:
+- [X] T003 [P] `tests/server/__init__.py`(빈 파일)와 `tests/server/conftest.py`. RED 해당 없음 — 시험 도구. 담을 것:
   `root`(tmp 폴더), `FakeClock`(`now() -> datetime`(UTC aware), `advance(seconds)`, `set(iso)`), `make_wav(path, seconds, silent=True) -> Path`
   (표준 라이브러리 `wave`, 16kHz mono 16bit), `new_id() -> str`(소문자 uuid4), `write_transcribe_request(inbox, *, request_id, requested_by,
   attachment: Path | None, from_request=None, language="ko", diarize=False, hints=None, delete_audio="after_job", mode=0o640) -> Path` 와
@@ -64,7 +64,7 @@ description: "Task list for 001-server-transcription"
   워커 인자가 늘면 이 도우미만 고친다), **`gpu_present`**(엔진의 `cuda_device_count`·`torch_cuda_available` 을 「있음」으로),
   **`pinned_models`**(tmp `HF_HOME` 에 `models.PINNED` 의 `refs/main` 을 써 두고 환경 변수를 둠). 모듈은 도우미·fixture 안에서 불러온다(아직 없어도
   수집이 깨지지 않게). 새 시험 파일 이름은 `tests/*.py` 와 겹치지 않게 한다. 확인: `uv run python -m pytest -q tests/server` 수집 오류 없음 — supports 모든 이야기
-- [ ] T004 [P] `.github/workflows/ci.yml` 의 설치 단계를 `uv sync --locked --extra server` 로 바꾼다(R15). RED 해당 없음 — CI 설정 — supports SC-013
+- [X] T004 [P] `.github/workflows/ci.yml` 의 설치 단계를 `uv sync --locked --extra server` 로 바꾼다(R15). RED 해당 없음 — CI 설정 — supports SC-013
 
 ---
 

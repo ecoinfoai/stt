@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ecoinfoai/stt/contracts/result.schema.json",
+  "title": "stt transcription result",
+  "description": "requests/outbox/<request_id>/result.json of a done job. transcript.txt next to it holds the same paragraphs in the command-line text format.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "transcript", "paragraphs", "summary"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "transcript": { "const": "transcript.txt" },
+    "paragraphs": {
+      "description": "In time order. Empty when the recording has no speech.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/paragraph" }
+    },
+    "summary": { "$ref": "#/$defs/summary" }
+  },
+  "$defs": {
+    "seconds": { "type": "number", "minimum": 0 },
+    "paragraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "speaker", "text", "uncertain"],
+      "properties": {
+        "start": { "$ref": "#/$defs/seconds" },
+        "end": { "$ref": "#/$defs/seconds" },
+        "speaker": {
+          "description": "With diarization: the same speaker label as transcript.txt, one per person throughout the transcript. Without: null.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "text": { "type": "string", "minLength": 1 },
+        "uncertain": {
+          "description": "The speaker attribution of this short paragraph is unreliable. Always false without diarization.",
+          "type": "boolean"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "device",
+        "language",
+        "audio_duration_s",
+        "processing_s",
+        "diarized",
+        "hints"
+      ],
+      "properties": {
+        "model": { "const": "large-v3" },
+        "device": { "const": "cuda" },
+        "language": { "type": "string", "pattern": "^[a-z]{2,3}$" },
+        "audio_duration_s": { "$ref": "#/$defs/seconds" },
+        "processing_s": { "$ref": "#/$defs/seconds" },
+        "diarized": {
+          "description": "The diarize value of the request. Stays true when the recording had no speech and diarization had nothing to do.",
+          "type": "boolean"
+        },
+        "hints": {
+          "description": "null when the request had no hints. applied counts the leading terms the engine actually uses (its prompt budget); dropped lists the rest in request order.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["applied", "total", "dropped"],
+              "properties": {
+                "applied": { "type": "integer", "minimum": 0 },
+                "total": { "type": "integer", "minimum": 1 },
+                "dropped": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

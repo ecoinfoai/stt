@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ecoinfoai/stt/contracts/response.schema.json",
+  "title": "stt server response",
+  "description": "What stt writes as requests/outbox/<request_id>.json, replaced atomically. A transcribe request gets a job status; a delete request gets a delete outcome; a request stt cannot use gets a refusal (contracts/README.md section 4). The file and any result disappear within one minute after expires_at, which is 23 h 58 min after acceptance so that deletion always completes within 24 hours.",
+  "oneOf": [
+    { "$ref": "#/$defs/job_status" },
+    { "$ref": "#/$defs/delete_outcome" },
+    { "$ref": "#/$defs/refusal" }
+  ],
+  "$defs": {
+    "request_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "time": {
+      "description": "UTC, RFC 3339, whole seconds.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "detail"],
+      "properties": {
+        "reason": {
+          "enum": [
+            "invalid_request",
+            "audio_too_long",
+            "unreadable_audio",
+            "source_unavailable",
+            "audio_deleted",
+            "processing_timeout",
+            "gpu_out_of_memory",
+            "gpu_unavailable",
+            "models_unavailable",
+            "interrupted",
+            "engine_error"
+          ]
+        },
+        "detail": {
+          "description": "One English sentence for operators. It never repeats request values; for invalid_request it names the offending field. Callers map reason (and cause) to their own user-facing text.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "cause": {
+          "description": "Why the recording was deleted before this job finished. Present only with reason audio_deleted.",
+          "enum": ["midnight", "retention_limit", "deleted_on_request"]
+        }
+      },
+      "if": { "properties": { "reason": { "const": "audio_deleted" } } },
+      "then": { "required": ["cause"] },
+      "else": { "not": { "required": ["cause"] } }
+    },
+    "job_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "state",
+        "updated_at",
+        "expires_at"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "kind": { "const": "transcribe" },
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "state": { "enum": ["queued", "running", "done", "failed", "deleted"] },
+        "queue_position": {
+          "description": "1 = next to run. Present only while queued.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "accepted_at": { "$ref": "#/$defs/time" },
+        "started_at": { "$ref": "#/$defs/time" },
+        "finished_at": { "$ref": "#/$defs/time" },
+        "updated_at": { "$ref": "#/$defs/time" },
+        "expires_at": { "$ref": "#/$defs/time" },
+        "audio": {
+          "description": "The recording this job uses (shared with other jobs that point at it).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["delete_policy", "delete_at"],
+          "properties": {
+            "delete_policy": { "enum": ["after_job", "at_midnight"] },
+            "delete_after": {
+              "description": "With after_job: the request whose end deletes the recording.",
+              "$ref": "#/$defs/request_id"
+            },
+            "delete_at": {
+              "description": "Time the recording is due for deletion; it is gone within one minute after it. For the 24-hour cap this is 23 h 58 min after the recording was first received.",
+              "$ref": "#/$defs/time"
+            },
+            "deleted_at": { "$ref": "#/$defs/time" }
+          },
+          "if": { "properties": { "delete_policy": { "const": "after_job" } } },
+          "then": { "required": ["delete_after"] },
+          "else": { "not": { "required": ["delete_after"] } }
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transcript", "data"],
+          "properties": {
+            "transcript": {
+              "description": "Path relative to requests/outbox/.",
+              "type": "string",
+              "pattern": "^[0-9a-f-]{36}/transcript\\.txt$"
+            },
+            "data": {
+              "description": "Path relative to requests/outbox/ of a file valid against result.schema.json.",
+              "type": "string",
+              "pattern": "^[0-9a-f-]{36}/result\\.json$"
+            },
+            "deleted_at": { "$ref": "#/$defs/time" }
+          }
+        },
+        "failure": { "$ref": "#/$defs/failure" },
+        "deleted": {
+          "description": "Set by a delete request with scope everything.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["at"],
+          "properties": { "at": { "$ref": "#/$defs/time" } }
+        },
+        "duplicate_refused_at": {
+          "description": "The same request_id arrived again; that second request was discarded.",
+          "$ref": "#/$defs/time"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "queued" } } },
+          "then": { "required": ["queue_position", "accepted_at", "audio"] },
+          "else": { "not": { "required": ["queue_position"] } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "running" } } },
+          "then": { "required": ["accepted_at", "started_at", "audio"] }
+        },
+        {
+          "if": { "properties": { "state": { "const": "done" } } },
+          "then": { "required": ["accepted_at", "started_at", "finished_at", "audio", "result"] }
+        },
+        {
+          "if": { "properties": { "state": { "const": "failed" } } },
+          "then": { "required": ["failure", "finished_at"] },
+          "else": { "not": { "required": ["failure"] } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "deleted" } } },
+          "then": { "required": ["deleted"] },
+          "else": { "not": { "required": ["deleted"] } }
+        }
+      ]
+    },
+    "delete_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "target",
+        "scope",
+        "outcome",
+        "processed_at",
+        "expires_at"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "kind": { "const": "delete" },
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "target": { "$ref": "#/$defs/request_id" },
+        "scope": { "enum": ["result", "everything"] },
+        "outcome": {
+          "description": "refused covers both an unknown target and another requester's target, so existence is not revealed.",
+          "enum": ["deleted", "already_deleted", "no_result", "refused"]
+        },
+        "processed_at": { "$ref": "#/$defs/time" },
+        "expires_at": { "$ref": "#/$defs/time" },
+        "duplicate_refused_at": { "$ref": "#/$defs/time" }
+      }
+    },
+    "refusal": {
+      "description": "The request file name was a valid request_id but the request could not be used: the file was unreadable, was a symbolic link or had more than one link or was not a regular file, was larger than 1 MiB, was not UTF-8 JSON, did not match request.schema.json, or is a delete request whose request_id differs from the file name. A transcribe request that matches the schema but fails a later check gets a failed job_status instead; a delete request for an unknown or foreign target gets a delete_outcome of refused.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "failure",
+        "processed_at",
+        "expires_at"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "kind": { "const": "invalid" },
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "failure": {
+          "allOf": [
+            { "$ref": "#/$defs/failure" },
+            { "properties": { "reason": { "const": "invalid_request" } } }
+          ]
+        },
+        "processed_at": { "$ref": "#/$defs/time" },
+        "expires_at": { "$ref": "#/$defs/time" },
+        "duplicate_refused_at": { "$ref": "#/$defs/time" }
+      }
+    }
+  }
+}
