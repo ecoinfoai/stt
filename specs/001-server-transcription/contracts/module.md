@@ -25,7 +25,7 @@ nixos-config 가 한다 — geo-scout 와 같은 모양이다(`nixos-config:flak
 |---|---|---|---|---|---|
 | `stt-intake.path` → `stt-intake.service` | `PathExistsGlob=/var/lib/stt/requests/inbox/*.json` | `stt server intake` | 없음 | 없음 | MemoryMax 1G · 10분 · `StartLimitIntervalSec=0` |
 | `stt-worker.path` → `stt-worker.service` | `PathExistsGlob=/var/lib/stt/queue/*` | `stt server work --gpu-lock /run/stt/gpu.lock` | 없음 | 있음 | MemoryMax 12G · `TimeoutStartSec=infinity` — job 마다의 처리 상한은 워커가 지키고, GPU 잠금 대기에는 상한이 없다(FR-016). 24시간으로 두면 줄이 길 때 처리 중인 job 이 끊긴다 · `after`·`wants` `stt-models.service` · `StartLimitIntervalSec=0` · `KillSignal=SIGKILL` · `restartIfChanged=false` |
-| `stt-sweep.timer` → `stt-sweep.service` | 1분마다(`OnCalendar=minutely`, `AccuracySec=1s`, `Persistent=true`) — 기본 `AccuracySec=1min` 이면 자정 삭제가 1분 넘게 늦을 수 있다 | `stt server sweep` | 없음 | 없음 | MemoryMax 512M · 5분 |
+| `stt-sweep.timer` → `stt-sweep.service` | 1분마다(`OnCalendar=minutely`, `AccuracySec=1s`, `Persistent=true`) — 기본 `AccuracySec=1min` 이면 23:58 정리가 1분 넘게 늦을 수 있다 | `stt server sweep` | 없음 | 없음 | MemoryMax 512M · 5분 |
 | `stt-models.service` | 부팅마다(`wantedBy multi-user`, 조건 없음, `RemainAfterExit=true`). `.complete` 의 고정 목록이 같으면 망에 닿지 않고 바로 끝나고, stt 판이 고정 목록을 바꾸면 새 판을 받는다. 판이 바뀐 배포에서 NixOS 가 다시 돌린다 `[VERIFY]`(research R9). `wants`·`after` `network-online.target` | `stt server fetch-models` | 있음 | 없음 | 2시간 |
 
 모든 단위 공통(geo-scout 의 묶음을 따른다): `Type=oneshot`, `User=stt`, `Group=stt`, `UMask=0027`, `NoNewPrivileges`,
