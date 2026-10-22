@@ -42,6 +42,7 @@ _PHRASES: dict[str, str] = {
     "type": "value has the wrong type",
     "oneOf": "must match exactly one alternative",
 }
+_TOO_DEEP_DETAIL = f"{_ROOT_LABEL}: value is nested too deeply"
 _REQUEST_BRANCHES = {"transcribe": "#/$defs/transcribe", "delete": "#/$defs/delete"}
 
 
@@ -93,7 +94,8 @@ def validate_request(doc: object) -> str | None:
 
     Returns:
         None when valid, otherwise ``<JSON path>: <fixed phrase>`` for the first
-        violation. A missing or unknown ``kind`` is reported at ``kind``.
+        violation. A missing or unknown ``kind`` is reported at ``kind``; a document
+        nested too deeply to compare is reported at the root.
     """
     if not isinstance(doc, dict):
         return f"{_ROOT_LABEL}: {_PHRASES['type']}"
@@ -102,7 +104,10 @@ def validate_request(doc: object) -> str | None:
         return f"kind: {_PHRASES['required']}"
     if not isinstance(kind, str) or kind not in _REQUEST_BRANCHES:
         return f"kind: {_PHRASES['enum']}"
-    return _first_error(_validator("request", _REQUEST_BRANCHES[kind]), doc)
+    try:
+        return _first_error(_validator("request", _REQUEST_BRANCHES[kind]), doc)
+    except RecursionError:
+        return _TOO_DEEP_DETAIL
 
 
 def validate_response(doc: object) -> str | None:

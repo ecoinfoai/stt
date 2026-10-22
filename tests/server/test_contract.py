@@ -112,6 +112,15 @@ def test_valid_requests_pass() -> None:
 
 LONG_RID = RID.upper()
 
+
+def nested_list(depth: int) -> object:
+    """Returns ``"x"`` wrapped in `depth` one-item lists."""
+    value: object = "x"
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
 INVALID_REQUESTS = [
     ("schema_version_missing", transcribe_request(schema_version=None), "schema_version: field is required"),
     ("schema_version_two", transcribe_request(schema_version=2), "schema_version: unsupported value"),
@@ -139,6 +148,11 @@ INVALID_REQUESTS = [
     ("kind_missing", transcribe_request(kind=None), "kind: field is required"),
     ("kind_unknown", transcribe_request(kind="purge"), "kind: value is not allowed"),
     ("not_an_object", ["x"], "request: value has the wrong type"),
+    (
+        "deeply_nested_duplicate_hints",
+        transcribe_request(hints=[nested_list(400), nested_list(400)]),
+        "request: value is nested too deeply",
+    ),
 ]
 
 

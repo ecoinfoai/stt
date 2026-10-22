@@ -399,3 +399,28 @@ def test_edge_7_second_pass_on_pending_first_runs_after_it(layout: Layout, wav: 
     assert read_response(layout, second)["state"] == "done"
     assert not (layout.audio / first).exists()
     assert leftovers(layout.root) == []
+
+
+def _nested(depth: int) -> object:
+    value: object = "x"
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+def test_deeply_nested_hints_are_refused_and_the_next_request_is_still_answered(layout: Layout, wav: Path) -> None:
+    clock = FakeClock()
+    nested_id, valid_id = new_id(), new_id()
+    nested = put_body(layout.inbox, f"{nested_id}.json", transcribe_body(nested_id, hints=[_nested(400), _nested(400)]))
+    os.utime(nested, (1, 1))
+    put_attachment(layout.inbox, f"{valid_id}.audio.wav", wav)
+    put_body(layout.inbox, f"{valid_id}.json", transcribe_body(valid_id))
+
+    intake.run_once(layout, clock.now)
+
+    refused = read_response(layout, nested_id)
+    assert contract.validate_response(refused) is None
+    assert refused["kind"] == "invalid"
+    assert refused["failure"] == {"reason": "invalid_request", "detail": "request: value is nested too deeply"}
+    assert read_response(layout, valid_id)["state"] == "queued"
+    assert inbox_names(layout) == []
