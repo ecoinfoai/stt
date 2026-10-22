@@ -26,6 +26,7 @@ from .conftest import (
 from .fake_engine import TRANSCRIPT_LINE
 from .inbox_helpers import make_layout, put_attachment, put_body, transcribe_body
 from .test_engine import PLAIN_SEGMENTS, Harness
+from .test_us2 import pid_engine
 
 HINT = "zzhintword"
 REQUESTER = "zzrequester"
@@ -171,3 +172,22 @@ def test_engine_failures_never_log_hints_requester_transcript_or_error_text(
     for segment in PLAIN_SEGMENTS:
         assert segment.text.strip() not in output
     assert f"{request_id} failed {reason}" in output
+
+
+def test_processing_timeout_never_logs_hints_requester_transcript_or_error_text(
+    layout: Layout, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    clock = FakeClock()
+    request_id = new_id()
+    put_attachment(layout.inbox, f"{request_id}.audio.wav", make_wav(tmp_path / "source.wav", 2.0))
+    put_body(layout.inbox, f"{request_id}.json", transcribe_body(request_id, requested_by=REQUESTER, hints=[HINT]))
+    intake.run_once(layout, clock.now)
+    _, engine_cmd = pid_engine(tmp_path)
+
+    run_worker(layout, clock, engine_cmd=engine_cmd, processing_limit=lambda duration: 0.5)
+
+    captured = capfd.readouterr()
+    output = captured.out + captured.err
+    for secret in (HINT, REQUESTER, TRANSCRIPT_LINE, "Traceback"):
+        assert secret not in output
+    assert f"{request_id} failed processing_timeout" in output

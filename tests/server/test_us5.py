@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from stt.server import contract, intake
+from stt.server import contract, deadlines, intake
 from stt.server.layout import Layout
 
-from .conftest import FakeClock, make_wav, new_id
+from .conftest import FakeClock, leftovers, make_wav, new_id, run_worker
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, put_bytes, read_response, transcribe_body
+from .test_us2 import assert_group_gone, pid_engine
 
 
 @pytest.fixture
@@ -123,3 +126,128 @@ def test_us5_6_non_uuid_name_dropped_silently_with_fixed_log_line(
     assert name.lower() not in lines[0].lower()
     assert inbox_names(layout) == []
     assert list(layout.outbox.iterdir()) == []
+
+
+AUDIO_TOO_LONG_DETAIL = "The recording is longer than 3 hours."
+UNREADABLE_AUDIO_DETAIL = "The recording could not be read as audio."
+PROCESSING_TIMEOUT_DETAIL = "The job ran longer than its processing time limit."
+
+
+def _submit_wav(layout: Layout, wav: Path, clock: FakeClock) -> str:
+    request_id = new_id()
+    put_attachment(layout.inbox, f"{request_id}.audio.wav", wav)
+    put_body(layout.inbox, f"{request_id}.json", transcribe_body(request_id))
+    intake.run_once(layout, clock.now)
+    return request_id
+
+
+def test_us5_1_over_three_hours_refused(layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(intake, "probe_duration", lambda path: deadlines.MAX_AUDIO_S + 0.5)
+    request_id = _submit_wav(layout, wav, FakeClock())
+
+    response = read_response(layout, request_id)
+    assert contract.validate_response(response) is None
+    assert response["kind"] == "transcribe"
+    assert response["state"] == "failed"
+    assert "accepted_at" not in response
+    assert response["failure"] == {"reason": "audio_too_long", "detail": AUDIO_TOO_LONG_DETAIL}
+    assert inbox_names(layout) == []
+    assert list(layout.audio.iterdir()) == []
+    assert not (layout.jobs / request_id).exists()
+    assert list(layout.queue.iterdir()) == []
+
+
+def test_us5_1_exactly_three_hours_accepted(layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(intake, "probe_duration", lambda path: deadlines.MAX_AUDIO_S)
+    request_id = _submit_wav(layout, wav, FakeClock())
+
+    response = read_response(layout, request_id)
+    assert response["state"] == "queued"
+    assert (layout.jobs / request_id / "job.json").exists()
+
+
+def test_us5_2_unreadable_file_refused(layout: Layout, tmp_path: Path) -> None:
+    noise = tmp_path / "noise.m4a"
+    noise.write_bytes(os.urandom(4096))
+    request_id = new_id()
+    put_attachment(layout.inbox, f"{request_id}.audio.m4a", noise)
+    put_body(
+        layout.inbox,
+        f"{request_id}.json",
+        transcribe_body(request_id, audio={"file": f"{request_id}.audio.m4a"}),
+    )
+
+    intake.run_once(layout, FakeClock().now)
+
+    response = read_response(layout, request_id)
+    assert contract.validate_response(response) is None
+    assert response["state"] == "failed"
+    assert "accepted_at" not in response
+    assert response["failure"] == {"reason": "unreadable_audio", "detail": UNREADABLE_AUDIO_DETAIL}
+    assert str(layout.root) not in response["failure"]["detail"]
+    assert inbox_names(layout) == []
+    assert list(layout.audio.iterdir()) == []
+    assert not (layout.jobs / request_id).exists()
+
+
+def test_us5_2_recording_without_audio_stream_refused(
+    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import av
+
+    class NoAudio:
+        duration = 5 * av.time_base
+
+        class streams:
+            audio: list[object] = []
+
+        def __enter__(self) -> "NoAudio":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr(av, "open", lambda path: NoAudio())
+    request_id = _submit_wav(layout, wav, FakeClock())
+
+    response = read_response(layout, request_id)
+    assert response["failure"] == {"reason": "unreadable_audio", "detail": UNREADABLE_AUDIO_DETAIL}
+    assert list(layout.audio.iterdir()) == []
+    assert not (layout.jobs / request_id).exists()
+
+
+def test_us5_3_timeout_stops_engine_without_result(layout: Layout, wav: Path, tmp_path: Path) -> None:
+    clock = FakeClock()
+    request_id = _submit_wav(layout, wav, clock)
+    pid_file, engine_cmd = pid_engine(tmp_path)
+
+    started = time.monotonic()
+    run_worker(layout, clock, engine_cmd=engine_cmd, processing_limit=lambda duration: 0.5)
+
+    assert time.monotonic() - started < 10
+    response = read_response(layout, request_id)
+    assert contract.validate_response(response) is None
+    assert response["state"] == "failed"
+    assert response["failure"] == {"reason": "processing_timeout", "detail": PROCESSING_TIMEOUT_DETAIL}
+    assert_group_gone(int(pid_file.read_text(encoding="utf-8")))
+    assert not (layout.outbox / request_id).exists()
+    assert not (layout.work / request_id).exists()
+    assert leftovers(layout.root) == []
+
+
+def test_us5_9_short_recording_gets_five_minute_floor(layout: Layout, tmp_path: Path) -> None:
+    clock = FakeClock()
+    request_id = _submit_wav(layout, make_wav(tmp_path / "ten.wav", 10.0), clock)
+    asked: list[float] = []
+    given: list[float] = []
+
+    def spy(duration_s: float) -> float:
+        asked.append(duration_s)
+        given.append(deadlines.processing_limit(duration_s))
+        return given[-1]
+
+    run_worker(layout, clock, processing_limit=spy)
+
+    assert asked == [pytest.approx(10.0, abs=0.01)]
+    assert given == [300.0]
+    assert read_response(layout, request_id)["state"] == "done"

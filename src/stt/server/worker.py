@@ -16,10 +16,10 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Literal, Sequence
 
 from stt import gpu_lock as gpu_lock_module
-from stt.server import lifecycle
+from stt.server import deadlines, lifecycle
 from stt.server.layout import Layout, hold
 from stt.server.records import Failure, Job, load_audio, load_job, load_jobs, queued_in_order
 
@@ -34,6 +34,8 @@ _ENGINE_REASONS = frozenset(
 )
 _MAX_DETAIL_CHARS = 500
 _NO_VERDICT = Failure("engine_error", "The engine stopped without a verdict.")
+_TIMEOUT = Failure("processing_timeout", "The job ran longer than its processing time limit.")
+_Ending = Literal["ended", "stopped", "timeout"]
 
 
 def _log(request_id: str, state: str) -> None:
@@ -69,12 +71,21 @@ def _is_running(layout: Layout, request_id: str) -> bool:
 
 
 def _run_engine(
-    layout: Layout, request_id: str, engine_cmd: Sequence[str], work_dir: Path, models_dir: Path, poll_s: float
-) -> bool:
-    """Runs the engine until it ends; kills it as soon as the job is no longer ``running``.
+    layout: Layout,
+    request_id: str,
+    engine_cmd: Sequence[str],
+    work_dir: Path,
+    models_dir: Path,
+    poll_s: float,
+    limit_s: float,
+) -> _Ending:
+    """Runs the engine until it ends; kills it when the job is no longer ``running`` or `limit_s` has passed.
+
+    The limit is measured on the monotonic clock from the engine's launch.
 
     Returns:
-        True if the engine ended by itself, False if it was killed.
+        ``ended`` if the engine ended by itself, ``stopped`` if the job was taken away,
+        ``timeout`` if the limit ran out.
     """
     env = {**os.environ, "TMPDIR": str(work_dir), "HF_HOME": str(models_dir), "HF_HUB_OFFLINE": "1"}
     process = subprocess.Popen(
@@ -85,18 +96,23 @@ def _run_engine(
         env=env,
         start_new_session=True,
     )
+    deadline = time.monotonic() + limit_s
+    ending: _Ending = "ended"
     try:
         while process.poll() is None:
             if not _is_running(layout, request_id):
+                ending = "stopped"
+                break
+            if time.monotonic() >= deadline:
+                ending = "timeout"
                 break
             time.sleep(poll_s)
-        else:
-            return True
     except BaseException:
         _kill(process)
         raise
-    _kill(process)
-    return False
+    if ending != "ended":
+        _kill(process)
+    return ending
 
 
 def _kill(process: subprocess.Popen[bytes]) -> None:
@@ -199,6 +215,7 @@ def _run_job(
     now: Callable[[], datetime],
     poll_s: float,
     models_dir: Path,
+    processing_limit: Callable[[float], float],
 ) -> None:
     """Starts `request_id` if it is still waiting and runs it; the caller holds the GPU lock."""
     with hold(layout.state_lock):
@@ -208,8 +225,13 @@ def _run_job(
         work_dir = _prepare(layout, job)
     _log(job.request_id, "running")
     try:
-        if _run_engine(layout, job.request_id, engine_cmd, work_dir, models_dir, poll_s):
+        ending = _run_engine(
+            layout, job.request_id, engine_cmd, work_dir, models_dir, poll_s, processing_limit(job.duration_s)
+        )
+        if ending == "ended":
             _settle(layout, job, work_dir, _verdict(work_dir), now)
+        elif ending == "timeout":
+            _settle(layout, job, work_dir, _TIMEOUT, now)
         else:
             _log(job.request_id, "stopped")
     finally:
@@ -224,6 +246,7 @@ def run_one(
     poll_s: float = 2.0,
     models_dir: Path,
     gpu_lock: Path,
+    processing_limit: Callable[[float], float] = deadlines.processing_limit,
 ) -> bool:
     """Runs the oldest queued job to its end, once the GPU lock is held.
 
@@ -238,6 +261,7 @@ def run_one(
             ended or the job was taken away.
         models_dir: Model cache handed to the engine as ``HF_HOME``.
         gpu_lock: Existing lock file shared with the command line.
+        processing_limit: Maps a recording's length in seconds to the seconds the engine may run.
 
     Returns:
         True if a job was picked, False if the queue was empty.
@@ -253,7 +277,7 @@ def run_one(
         held = gpu_lock_module.try_acquire(gpu_lock)
         if held is not None:
             with held:
-                _run_job(layout, job.request_id, engine_cmd, now, poll_s, models_dir)
+                _run_job(layout, job.request_id, engine_cmd, now, poll_s, models_dir, processing_limit)
             return True
         time.sleep(poll_s)
         with hold(layout.state_lock):
@@ -269,6 +293,7 @@ def run(
     poll_s: float = 2.0,
     models_dir: Path,
     gpu_lock: Path,
+    processing_limit: Callable[[float], float] = deadlines.processing_limit,
 ) -> int:
     """Runs queued jobs one at a time until the queue is empty.
 
@@ -283,6 +308,7 @@ def run(
             ended or the job was taken away.
         models_dir: Model cache handed to the engine as ``HF_HOME``.
         gpu_lock: Existing lock file shared with the command line.
+        processing_limit: Maps a recording's length in seconds to the seconds the engine may run.
 
     Returns:
         0 once the queue is empty.
@@ -293,6 +319,14 @@ def run(
     with hold(layout.state_lock):
         for interrupted in lifecycle.clear_dead_worker(layout, now()):
             _log(interrupted.request_id, "failed interrupted")
-    while run_one(layout, engine_cmd, now, poll_s=poll_s, models_dir=models_dir, gpu_lock=gpu_lock):
+    while run_one(
+        layout,
+        engine_cmd,
+        now,
+        poll_s=poll_s,
+        models_dir=models_dir,
+        gpu_lock=gpu_lock,
+        processing_limit=processing_limit,
+    ):
         time.sleep(poll_s)
     return 0

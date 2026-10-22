@@ -55,6 +55,16 @@ _ATTACHMENT_NAME_DETAIL = "audio.file: name must start with the request id"
 _ATTACHMENT_DETAIL = "audio.file: attachment is missing or not a safe regular file"
 _LANGUAGE_DETAIL = "language: language is not supported"
 _SOURCE_UNAVAILABLE_DETAIL = "The source recording is not available."
+_UNREADABLE_AUDIO_DETAIL = "The recording could not be read as audio."
+_AUDIO_TOO_LONG_DETAIL = "The recording is longer than 3 hours."
+
+
+class UnreadableAudioError(Exception):
+    """The recording cannot be opened, has no audio stream or cannot be demuxed."""
+
+
+class AudioTooLongError(Exception):
+    """The recording is longer than ``deadlines.MAX_AUDIO_S``."""
 
 
 def probe_duration(path: Path) -> float:
@@ -68,19 +78,26 @@ def probe_duration(path: Path) -> float:
 
     Returns:
         Duration in seconds.
+
+    Raises:
+        UnreadableAudioError: If the file cannot be opened, has no audio stream or fails to demux.
     """
     import av
 
-    with av.open(str(path)) as container:
-        if container.duration is not None:
-            return float(container.duration) / av.time_base
-        stream = container.streams.audio[0]
-        total = sum(
-            float(packet.duration * stream.time_base)
-            for packet in container.demux(stream)
-            if packet.duration is not None
-        )
-        return total
+    try:
+        with av.open(str(path)) as container:
+            if not container.streams.audio:
+                raise UnreadableAudioError
+            if container.duration is not None:
+                return float(container.duration) / av.time_base
+            stream = container.streams.audio[0]
+            return sum(
+                float(packet.duration * stream.time_base)
+                for packet in container.demux(stream)
+                if packet.duration is not None
+            )
+    except av.error.FFmpegError:
+        raise UnreadableAudioError from None
 
 
 def _log(request_id: str, state: str) -> None:
@@ -184,16 +201,34 @@ def _policy(body: dict[str, Any], now: datetime) -> dict[str, str | datetime]:
     return {"at": deadlines.next_midnight(now)}
 
 
-def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetime) -> None:
-    request_id: str = body["request_id"]
-    attachment_name: str = body["audio"]["file"]
-    folder = layout.audio / request_id
+def _copy_and_probe(source: BinaryIO, folder: Path, extension: str) -> float:
+    """Copies the attachment into `folder` and returns its length; on any failure `folder` is removed.
+
+    Raises:
+        UnreadableAudioError: If the copy is not readable audio.
+        AudioTooLongError: If the copy is longer than ``deadlines.MAX_AUDIO_S``.
+    """
     try:
-        copy = _copy_attachment(source, folder, attachment_name.rsplit(".", 1)[1])
-        duration_s = probe_duration(copy)
+        duration_s = probe_duration(_copy_attachment(source, folder, extension))
+        if duration_s > deadlines.MAX_AUDIO_S:
+            raise AudioTooLongError
+        return duration_s
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
+
+
+def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetime) -> None:
+    request_id: str = body["request_id"]
+    attachment_name: str = body["audio"]["file"]
+    try:
+        duration_s = _copy_and_probe(source, layout.audio / request_id, attachment_name.rsplit(".", 1)[1])
+    except UnreadableAudioError:
+        _fail(layout, request_id, "unreadable_audio", _UNREADABLE_AUDIO_DETAIL, now)
+        return
+    except AudioTooLongError:
+        _fail(layout, request_id, "audio_too_long", _AUDIO_TOO_LONG_DETAIL, now)
+        return
     hints = body.get("hints")
     with hold(layout.state_lock):
         job = Job(

@@ -401,7 +401,7 @@ description: "Task list for 001-server-transcription"
 
 ### Tests for User Story 5 (MANDATORY - write first) ⚠️
 
-- [ ] T057 [P] [US5] `tests/server/test_us5.py` 에 더한다 — RED:
+- [X] T057 [P] [US5] `tests/server/test_us5.py` 에 더한다 — RED:
   `test_us5_1_over_three_hours_refused`(`probe_duration` 을 10,800.5 로 바꿔 끼움 → `failed(audio_too_long)`, 첨부 삭제; 10,800.0 은 받아들임);
   `test_us5_2_unreadable_file_refused`(임의 바이트 `.m4a` — 실제 PyAV → `failed(unreadable_audio)`, detail 이 고정 문장이고 경로·PyAV 원문 없음);
   `test_us5_3_timeout_stops_engine_without_result`(`sleep=30` 엔진, `processing_limit=lambda d: 0.5` 주입 → `processing_timeout`, 프로세스 묶음 없음,
@@ -422,9 +422,9 @@ description: "Task list for 001-server-transcription"
 ### Implementation for User Story 5 (turn T057–T060 GREEN)
 
 - [X] T061 [US5] `src/stt/transcribe.py` R8-2: `transcribe_file(..., allow_empty: bool = False)`; docstring 영어, 기존 오류 문구 그대로 — turns T059 GREEN — supports US5-7
-- [ ] T062 [US5] `src/stt/server/intake.py`: `probe_duration` 이 열 수 없음·음성 흐름 없음을 `failed(unreadable_audio)`, `deadlines.MAX_AUDIO_S` 초과를
+- [X] T062 [US5] `src/stt/server/intake.py`: `probe_duration` 이 열 수 없음·음성 흐름 없음을 `failed(unreadable_audio)`, `deadlines.MAX_AUDIO_S` 초과를
   `failed(audio_too_long)` 으로(고정 문장, 첨부 삭제) — turns `test_us5_1`, `test_us5_2` GREEN (T057) — closes US5-1, US5-2
-- [ ] T063 [US5] `src/stt/server/worker.py`: `processing_limit` 인자(기본 `deadlines.processing_limit`)로 job 의 `duration_s` 에서 상한을 구하고, 엔진을
+- [X] T063 [US5] `src/stt/server/worker.py`: `processing_limit` 인자(기본 `deadlines.processing_limit`)로 job 의 `duration_s` 에서 상한을 구하고, 엔진을
   띄운 때부터 단조 시계로 재어 넘으면 `os.killpg(SIGKILL)` → `finish(failed(processing_timeout))`, 게시하지 않고 작업 폴더 삭제 — turns `test_us5_3`, `test_us5_9` GREEN (T057) — closes US5-3, US5-9
 - [X] T064 [US5] `src/stt/server/engine.py`: `allow_empty=True` 로 전사하고 빈 결과면 화자 구분과 renderer 를 건너뛰어 머리글만 쓴다(R20-11);
   `classify_error(exc) -> tuple[reason, detail]` — OOM(`transcribe.is_oom_error`) → `gpu_out_of_memory`, PyAV 해독 오류 → `unreadable_audio`, 그 밖 →
