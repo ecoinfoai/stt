@@ -1,4 +1,4 @@
-"""The ``stt server`` command group: ``intake`` and ``work``, each under its stage lock."""
+"""The ``stt server`` command group: ``intake``, ``work`` and ``sweep``, each under its stage lock."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ EXIT_BUSY = 75
 _BUSY_MESSAGES = {
     "intake": "Another intake run is in progress.",
     "work": "Another worker run is in progress.",
+    "sweep": "Another sweep run is in progress.",
 }
 
 
@@ -26,13 +27,13 @@ def build_parser() -> argparse.ArgumentParser:
     """Builds the ``stt server`` argument parser.
 
     Returns:
-        A parser with the ``intake`` and ``work`` subcommands.
+        A parser with the ``intake``, ``work`` and ``sweep`` subcommands.
     """
     parser = argparse.ArgumentParser(
         prog="stt server",
         description="Server-side transcription stages; each run drains its queue and exits.",
     )
-    commands = parser.add_subparsers(dest="command", metavar="{intake,work}", required=True)
+    commands = parser.add_subparsers(dest="command", metavar="{intake,work,sweep}", required=True)
 
     intake_parser = commands.add_parser(
         "intake", help="process every request in the inbox once", description="Process every request in the inbox once."
@@ -41,7 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
         "work", help="run queued jobs one at a time until the queue is empty",
         description="Run queued jobs one at a time until the queue is empty.",
     )
-    for sub in (intake_parser, work_parser):
+    sweep_parser = commands.add_parser(
+        "sweep",
+        help="delete what is due, expire old records and clear a dead worker's traces",
+        description="Delete what is due, expire old records and clear a dead worker's traces.",
+    )
+    for sub in (intake_parser, work_parser, sweep_parser):
         sub.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="state root (default: %(default)s)")
     work_parser.add_argument(
         "--models", type=Path, default=DEFAULT_MODELS,
@@ -67,11 +73,19 @@ def _intake(args: argparse.Namespace, layout: Layout) -> int:
     return 0
 
 
+def _sweep(args: argparse.Namespace, layout: Layout) -> int:
+    from stt.server import sweep
+
+    sweep.run_once(layout, _utc_now)
+    return 0
+
+
 # Stage modules load inside the stage functions: they need the optional `server`
 # extra (jsonschema), which the other `stt` commands must not require.
 _STAGES: dict[str, tuple[Callable[[argparse.Namespace, Layout], int], Callable[[Layout], Path]]] = {
     "intake": (_intake, lambda layout: layout.intake_lock),
     "work": (_work, lambda layout: layout.worker_lock),
+    "sweep": (_sweep, lambda layout: layout.sweep_lock),
 }
 
 

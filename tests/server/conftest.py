@@ -51,6 +51,20 @@ class FakeClock:
         self._now = datetime.strptime(iso, _TIME_FORMAT).replace(tzinfo=timezone.utc)
 
 
+def set_to_ctime_plus(clock: FakeClock, path: Path, minutes: float) -> None:
+    """Moves `clock` to `minutes` after the real inode change time of `path`.
+
+    A file's ``st_ctime`` cannot be chosen by a test, so the clock follows it.
+
+    Args:
+        clock: The injected clock.
+        path: A file or folder that exists.
+        minutes: Offset from the file's ``st_ctime``.
+    """
+    changed = datetime.fromtimestamp(os.lstat(path).st_ctime, timezone.utc)
+    clock.set((changed + timedelta(minutes=minutes)).strftime(_TIME_FORMAT))
+
+
 def make_wav(path: Path, seconds: float, silent: bool = True) -> Path:
     """Writes a 16 kHz mono 16-bit WAV file.
 
@@ -280,6 +294,20 @@ def run_worker_once(layout: Any, clock: FakeClock, mode: str = "done", **kwargs:
     options = _worker_kwargs(layout, clock, mode, kwargs)
     with hold(layout.worker_lock):
         return worker.run_one(layout, options.pop("engine_cmd"), options.pop("now"), **options)
+
+
+def run_sweep(layout: Any, clock: FakeClock) -> None:
+    """Runs ``sweep.run_once``, holding ``sweep.lock`` like the CLI.
+
+    Args:
+        layout: A ``stt.server.layout.Layout``.
+        clock: The injected clock.
+    """
+    from stt.server import sweep
+    from stt.server.layout import hold
+
+    with hold(layout.sweep_lock):
+        sweep.run_once(layout, clock.now)
 
 
 @pytest.fixture

@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Callable
 
 import pytest
 
 from stt.server import contract, intake
-from stt.server.layout import Layout
+from stt.server.layout import Layout, hold
 from stt.server.records import load_job
 
-from .conftest import FakeClock, make_wav, new_id
+from .conftest import FakeClock, leftovers, make_wav, new_id, run_sweep, run_worker, set_to_ctime_plus, write_delete_request
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, put_bytes, read_response, transcribe_body
 
 
@@ -207,3 +208,167 @@ def test_directory_with_non_uuid_name_is_removed_silently(
     assert len((capfd.readouterr().out).splitlines()) == 1
     assert inbox_names(layout) == []
     assert list(layout.outbox.iterdir()) == []
+
+
+def test_edge_2_orphan_attachment_removed_after_one_hour(
+    layout: Layout, wav: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    clock = FakeClock()
+    orphan = put_attachment(layout.inbox, f"{new_id()}.audio.wav", wav)
+    half_written = put_bytes(layout.inbox / f"{new_id()}.json.tmp", b"{")
+    old_but_new = put_attachment(layout.inbox, f"{new_id()}.audio.wav", wav)
+    two_days_ago = old_but_new.stat().st_mtime - 2 * 86400
+    os.utime(old_but_new, (two_days_ago, two_days_ago))
+    capfd.readouterr()
+
+    set_to_ctime_plus(clock, orphan, 59)
+    run_sweep(layout, clock)
+
+    assert sorted(path.name for path in layout.inbox.iterdir()) == sorted(
+        [orphan.name, half_written.name, old_but_new.name]
+    )
+    assert capfd.readouterr().out == ""
+
+    set_to_ctime_plus(clock, old_but_new, 59)
+    run_sweep(layout, clock)
+
+    assert old_but_new.exists()
+
+    set_to_ctime_plus(clock, old_but_new, 61)
+    run_sweep(layout, clock)
+
+    assert inbox_names(layout) == []
+    lines = capfd.readouterr().out.splitlines()
+    assert len(lines) == 3
+    assert len(set(lines)) == 1
+    for name in (orphan.name, half_written.name, old_but_new.name):
+        assert name.split(".")[0] not in lines[0]
+
+
+def test_stale_temp_and_orphan_audio_removed_after_one_hour(
+    layout: Layout, wav: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    clock = FakeClock()
+    request_id = new_id()
+    staging = layout.outbox / f".{request_id}.tmp"
+    staging.mkdir()
+    (staging / "result.json").write_text("{}", encoding="utf-8")
+    response_tmp = put_bytes(layout.outbox / f".{request_id}.json.0123abcd.tmp", b"{")
+    record_tmp = layout.jobs / request_id / ".job.json.0123abcd.tmp"
+    record_tmp.parent.mkdir()
+    put_bytes(record_tmp, b"{")
+    orphan_audio = layout.audio / request_id
+    orphan_audio.mkdir()
+    shutil.copyfile(wav, orphan_audio / "audio.wav")
+    capfd.readouterr()
+    kept = [staging, response_tmp, record_tmp, orphan_audio]
+
+    with hold(layout.worker_lock):
+        set_to_ctime_plus(clock, staging, 59)
+        run_sweep(layout, clock)
+        assert all(path.exists() for path in kept)
+        assert capfd.readouterr().out == ""
+
+        set_to_ctime_plus(clock, staging, 61)
+        run_sweep(layout, clock)
+
+    assert not any(path.exists() for path in kept)
+    assert leftovers(layout.root) == []
+    lines = capfd.readouterr().out.splitlines()
+    assert len(lines) == 4
+    assert all(request_id not in line for line in lines)
+
+
+def test_staging_folder_is_removed_at_once_when_no_worker_runs(layout: Layout) -> None:
+    clock = FakeClock()
+    staging = layout.outbox / f".{new_id()}.tmp"
+    staging.mkdir()
+    (staging / "transcript.txt").write_text("half published\n", encoding="utf-8")
+
+    run_sweep(layout, clock)
+
+    assert not staging.exists()
+
+
+def test_edge_3_schedule_holds_without_worker(
+    layout: Layout, wav: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    clock = FakeClock()
+    midnight = new_id()
+    put_attachment(layout.inbox, f"{midnight}.audio.wav", wav)
+    put_body(layout.inbox, f"{midnight}.json", transcribe_body(midnight, delete_audio="at_midnight", hints=["alpha"]))
+    intake.run_once(layout, clock.now)
+    clock.set("2026-03-02T01:01:00Z")
+    limit = new_id()
+    put_attachment(layout.inbox, f"{limit}.audio.wav", wav)
+    put_body(layout.inbox, f"{limit}.json", transcribe_body(limit, delete_audio="after_job", hints=["alpha"]))
+    intake.run_once(layout, clock.now)
+
+    clock.set("2026-03-02T15:00:30Z")
+    run_sweep(layout, clock)
+
+    first = read_response(layout, midnight)
+    assert first["state"] == "failed"
+    assert first["failure"]["reason"] == "audio_deleted"
+    assert first["failure"]["cause"] == "midnight"
+    assert first["audio"]["deleted_at"] == "2026-03-02T15:00:30Z"
+    assert not (layout.audio / midnight).exists()
+    assert read_response(layout, limit)["state"] == "queued"
+    assert (layout.audio / limit / "audio.wav").is_file()
+
+    clock.set("2026-03-03T00:58:30Z")
+    run_sweep(layout, clock)
+
+    assert not (layout.outbox / f"{midnight}.json").exists()
+    assert not (layout.jobs / midnight).exists()
+    assert read_response(layout, limit)["state"] == "queued"
+    assert (layout.audio / limit / "audio.wav").is_file()
+    capfd.readouterr()
+
+    clock.set("2026-03-03T00:59:00Z")
+    run_sweep(layout, clock)
+
+    assert f"{limit} failed audio_deleted" in capfd.readouterr().out
+    assert list(layout.outbox.iterdir()) == []
+    assert list(layout.jobs.iterdir()) == []
+    assert list(layout.audio.iterdir()) == []
+    assert leftovers(layout.root) == []
+
+
+def test_rejected_and_delete_responses_expire_after_24h(layout: Layout, wav: Path) -> None:
+    clock = FakeClock()
+    rejected = new_id()
+    put_attachment(layout.inbox, f"{rejected}.audio.wav", wav)
+    put_body(layout.inbox, f"{rejected}.json", transcribe_body(rejected, language="xx"))
+    intake.run_once(layout, clock.now)
+    clock.advance(30)
+    refused = new_id()
+    put_bytes(layout.inbox / f"{refused}.json", b"{")
+    intake.run_once(layout, clock.now)
+    clock.advance(30)
+    done = new_id()
+    put_attachment(layout.inbox, f"{done}.audio.wav", wav)
+    put_body(layout.inbox, f"{done}.json", transcribe_body(done, delete_audio="at_midnight"))
+    intake.run_once(layout, clock.now)
+    run_worker(layout, clock)
+    clock.advance(30)
+    answer_id = new_id()
+    write_delete_request(layout.inbox, request_id=answer_id, requested_by="professor-a", target=done, scope="result")
+    intake.run_once(layout, clock.now)
+    answered = read_response(layout, answer_id)
+    assert answered["kind"] == "delete"
+    expiry = {
+        rejected: "2026-03-03T00:58:00Z",
+        refused: "2026-03-03T00:58:30Z",
+        answer_id: "2026-03-03T00:59:30Z",
+    }
+    assert {name: read_response(layout, name)["expires_at"] for name in expiry} == expiry
+
+    for name, expires_at in expiry.items():
+        clock.set(expires_at)
+        clock.advance(-1)
+        run_sweep(layout, clock)
+        assert (layout.outbox / f"{name}.json").is_file()
+        clock.advance(1)
+        run_sweep(layout, clock)
+        assert not (layout.outbox / f"{name}.json").exists()

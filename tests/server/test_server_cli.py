@@ -117,6 +117,59 @@ def test_work_exits_75_while_another_process_holds_worker_lock(
     assert err.strip() == "Another worker run is in progress."
 
 
+def test_sweep_exits_75_while_another_process_holds_sweep_lock(
+    root: Path, lock_holder: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lock_holder(root / "sweep.lock")
+
+    assert cli.main(["server", "sweep", "--root", str(root)]) == 75
+
+    err = capsys.readouterr().err
+    assert err.strip() == "Another sweep run is in progress."
+
+
+def test_sweep_exits_0_on_an_empty_root_and_releases_its_lock(root: Path) -> None:
+    for _ in range(2):
+        assert cli.main(["server", "sweep", "--root", str(root)]) == 0
+
+    context = try_hold(root / "sweep.lock")
+    assert context is not None
+    with context:
+        pass
+
+
+def test_sweep_is_not_blocked_by_the_intake_or_worker_locks(root: Path, lock_holder: Any) -> None:
+    lock_holder(root / "intake.lock")
+    lock_holder(root / "worker.lock")
+
+    assert cli.main(["server", "sweep", "--root", str(root)]) == 0
+
+
+def test_sweep_runs_the_stage_under_its_lock_with_a_utc_clock(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_run_once(layout: Layout, now: Any) -> None:
+        seen["root"] = layout.root
+        seen["offset"] = now().utcoffset()
+        seen["lock"] = try_hold(layout.sweep_lock)
+
+    monkeypatch.setattr("stt.server.sweep.run_once", fake_run_once)
+
+    assert cli.main(["server", "sweep", "--root", str(root)]) == 0
+
+    assert seen["root"] == root
+    assert seen["offset"] == timedelta(0)
+    assert seen["lock"] is None
+
+
+def test_sweep_help_exits_0_with_english_text(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["server", "sweep", "--help"]) == 0
+
+    out = capsys.readouterr().out
+    assert "--root" in out and "--models" not in out
+    assert out.isascii()
+
+
 def test_intake_is_not_blocked_by_the_worker_lock(root: Path, lock_holder: Any) -> None:
     lock_holder(root / "worker.lock")
 
@@ -208,6 +261,8 @@ def test_defaults_are_the_production_state_and_model_folders() -> None:
 
     intake_args = parser.parse_args(["intake"])
     work_args = parser.parse_args(["work"])
+    sweep_args = parser.parse_args(["sweep"])
     assert intake_args.root == Path("/var/lib/stt")
     assert work_args.root == Path("/var/lib/stt")
+    assert sweep_args.root == Path("/var/lib/stt")
     assert work_args.models == Path("/var/lib/stt-models")

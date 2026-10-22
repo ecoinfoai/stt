@@ -6,20 +6,23 @@ Every function here must be called with ``state.lock`` held by the caller.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
 from stt.server import deadlines
-from stt.server.layout import Layout, atomic_write_text
+from stt.server.deadlines import parse_time
+from stt.server.layout import Layout, atomic_write_text, is_request_name
 from stt.server.records import (
     Audio,
     DeletedBy,
     Failure,
     Job,
     load_audio,
+    load_audios,
     load_jobs,
     queued_in_order,
     save_audio,
@@ -33,6 +36,10 @@ _MARKER_MODE = 0o600
 EndState = Literal["done", "failed", "deleted"]
 
 _AUDIO_DELETED_DETAIL = "The recording was deleted before the job finished."
+_STALE_AFTER = timedelta(hours=1)
+_LOG_INBOX = "removed an inbox file older than one hour"
+_LOG_TEMP = "removed a stale temporary file or folder"
+_LOG_AUDIO_FOLDER = "removed a recording folder without a record"
 _INTERRUPTED = Failure("interrupted", "The worker stopped before the job finished.")
 _DELETED_BY: dict[str, DeletedBy] = {
     "midnight": "schedule",
@@ -249,3 +256,69 @@ def clear_dead_worker(layout: Layout, now: datetime) -> list[Job]:
         if staging.is_dir():
             shutil.rmtree(staging)
     return interrupted
+
+
+def _remove(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _is_stale(path: Path, now: datetime) -> bool:
+    """True once `path` was last changed more than an hour before `now`, by inode change time."""
+    return now - datetime.fromtimestamp(os.lstat(path).st_ctime, now.tzinfo) > _STALE_AFTER
+
+
+def _remove_stale(paths: list[Path], now: datetime, message: str) -> None:
+    for path in paths:
+        if _is_stale(path, now):
+            _remove(path)
+            print(message, flush=True)
+
+
+def _purge_records(layout: Layout, now: datetime) -> None:
+    """Removes the response, result and record of every expired job, then audio records nobody uses."""
+    jobs = load_jobs(layout)
+    for job in jobs:
+        if job.expires_at <= now:
+            _remove(layout.outbox / job.request_id)
+            (layout.outbox / f"{job.request_id}.json").unlink(missing_ok=True)
+            shutil.rmtree(layout.jobs / job.request_id)
+    alive = {job.request_id for job in jobs if job.expires_at > now}
+    for audio in load_audios(layout):
+        if alive.isdisjoint(audio.users):
+            (layout.audio / f"{audio.audio_id}.json").unlink()
+    for response in layout.outbox.glob("*.json"):
+        if is_request_name(response.name) and not (layout.jobs / response.stem / "job.json").exists():
+            if parse_time(json.loads(response.read_text(encoding="utf-8"))["expires_at"]) <= now:
+                response.unlink()
+
+
+def purge_expired(layout: Layout, now: datetime) -> None:
+    """Removes everything whose time has come; the caller holds ``state.lock``.
+
+    Expired jobs lose their response, result and record; a recording's record goes
+    with its last user. A response without a job record (a rejection or a delete
+    answer) goes at its own ``expires_at``. Inbox files, temporary files and folders
+    and recording folders without a record go once an hour has passed since their
+    last change (ctime); each such removal logs one fixed line without any name.
+
+    Args:
+        layout: The state root.
+        now: The current time.
+    """
+    _purge_records(layout, now)
+    _remove_stale(list(layout.inbox.iterdir()), now, _LOG_INBOX)
+    temporary = [
+        *layout.outbox.glob(".*.tmp"),
+        *layout.jobs.glob("*/.*.tmp"),
+        *layout.audio.glob(".*.tmp"),
+    ]
+    _remove_stale(temporary, now, _LOG_TEMP)
+    unrecorded = [
+        folder
+        for folder in layout.audio.iterdir()
+        if folder.is_dir() and not (layout.audio / f"{folder.name}.json").exists()
+    ]
+    _remove_stale(unrecorded, now, _LOG_AUDIO_FOLDER)

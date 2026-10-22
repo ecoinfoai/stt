@@ -7,6 +7,7 @@ import shutil
 import sys
 import threading
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,17 @@ from stt.server import contract, intake, lifecycle, worker
 from stt.server.layout import Layout, hold
 from stt.server.records import load_audio, load_job
 
-from .conftest import FAKE_ENGINE, FakeClock, leftovers, make_wav, new_id, run_worker, write_delete_request
+from .conftest import (
+    FAKE_ENGINE,
+    FakeClock,
+    leftovers,
+    make_wav,
+    new_id,
+    run_sweep,
+    run_worker,
+    set_to_ctime_plus,
+    write_delete_request,
+)
 from .inbox_helpers import make_layout, put_attachment, put_body, read_response, transcribe_body
 
 INTERRUPTED_DETAIL = "The worker stopped before the job finished."
@@ -470,3 +481,194 @@ def test_engine_is_killed_when_the_poll_loop_raises(
 
     assert_group_gone(int(pid_file.read_text(encoding="utf-8")))
     assert not (layout.work / request_id).exists()
+
+
+def plant_dead_worker_traces(layout: Layout, clock: FakeClock, request_id: str, published: bool) -> None:
+    """Leaves what a killed worker leaves: a ``running`` job, a work folder with a WAV, maybe a published result."""
+    with hold(layout.state_lock):
+        lifecycle.start(layout, load_job(layout, request_id), clock.now())
+    (layout.work / request_id / "out").mkdir(parents=True)
+    make_wav(layout.work / request_id / "out" / "chunk.wav", 0.1)
+    (layout.outbox / f".{request_id}.tmp").mkdir()
+    (layout.outbox / f".{request_id}.tmp" / "result.json").write_text("{}", encoding="utf-8")
+    if published:
+        (layout.outbox / request_id).mkdir()
+        (layout.outbox / request_id / "transcript.txt").write_text("published before the worker died\n", encoding="utf-8")
+
+
+def test_us2_3_midnight_job_audio_gone_after_midnight(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    clock.set("2026-03-02T14:10:00Z")
+    request_id = submit(layout, wav, clock, delete_audio="at_midnight")
+    run_worker(layout, clock)
+
+    clock.set("2026-03-02T14:59:00Z")
+    run_sweep(layout, clock)
+
+    assert (layout.audio / request_id / "audio.wav").is_file()
+    assert "deleted_at" not in assert_valid_response(layout, request_id)["audio"]
+
+    clock.set("2026-03-02T15:00:30Z")
+    run_sweep(layout, clock)
+
+    doc = assert_valid_response(layout, request_id)
+    assert doc["state"] == "done"
+    assert doc["audio"]["deleted_at"] == "2026-03-02T15:00:30Z"
+    assert not (layout.audio / request_id).exists()
+    assert load_audio(layout, request_id).deleted_by == "schedule"
+    assert (layout.outbox / request_id / "transcript.txt").is_file()
+    assert leftovers(layout.root) == []
+
+
+def test_us2_4_dead_worker_traces_cleared_by_sweep(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    dead = submit(layout, wav, clock, hints=["alpha"])
+    waiting = submit(layout, wav, clock)
+    plant_dead_worker_traces(layout, clock, dead, published=True)
+    clock.advance(60)
+
+    run_sweep(layout, clock)
+
+    doc = assert_valid_response(layout, dead)
+    assert doc["state"] == "failed"
+    assert doc["failure"] == {"reason": "interrupted", "detail": INTERRUPTED_DETAIL}
+    assert "deleted_at" in doc["audio"]
+    assert not (layout.outbox / dead).exists()
+    assert load_job(layout, dead).hints is None
+    assert load_job(layout, waiting).state == "queued"
+    assert [path for path in leftovers(layout.root) if dead in str(path)] == []
+    assert (layout.audio / waiting / "audio.wav").is_file()
+
+
+def test_sweep_leaves_a_running_job_alone_while_a_worker_holds_its_lock(
+    layout: Layout, wav: Path, clock: FakeClock
+) -> None:
+    request_id = submit(layout, wav, clock)
+    plant_dead_worker_traces(layout, clock, request_id, published=False)
+
+    with hold(layout.worker_lock):
+        run_sweep(layout, clock)
+
+    assert load_job(layout, request_id).state == "running"
+    assert (layout.work / request_id / "out" / "chunk.wav").is_file()
+    assert (layout.outbox / f".{request_id}.tmp").is_dir()
+
+
+def test_us2_5_queued_midnight_job_fails_when_audio_deleted(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    clock.set("2026-03-02T14:50:00Z")
+    request_id = submit(layout, wav, clock, delete_audio="at_midnight", hints=["alpha"])
+    clock.set("2026-03-02T15:00:30Z")
+
+    run_sweep(layout, clock)
+
+    doc = assert_valid_response(layout, request_id)
+    assert doc["state"] == "failed"
+    assert doc["failure"] == {"reason": "audio_deleted", "detail": AUDIO_DELETED_DETAIL, "cause": "midnight"}
+    assert doc["audio"]["deleted_at"] == "2026-03-02T15:00:30Z"
+    assert "result" not in doc
+    assert not (layout.outbox / request_id).exists()
+    assert leftovers(layout.root) == []
+
+
+def test_us2_7_unfetched_result_gone_after_24h(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    request_id = submit(layout, wav, clock)
+    run_worker(layout, clock)
+    accepted = clock.now()
+
+    clock.set("2026-03-03T00:57:59Z")
+    run_sweep(layout, clock)
+
+    assert (clock.now() - accepted) == timedelta(hours=23, minutes=57, seconds=59)
+    assert (layout.outbox / request_id / "transcript.txt").is_file()
+    assert (layout.outbox / f"{request_id}.json").is_file()
+    assert (layout.jobs / request_id / "job.json").is_file()
+    assert (layout.audio / f"{request_id}.json").is_file()
+
+    clock.set("2026-03-03T00:58:00Z")
+    run_sweep(layout, clock)
+
+    assert not (layout.outbox / request_id).exists()
+    assert not (layout.outbox / f"{request_id}.json").exists()
+    assert not (layout.jobs / request_id).exists()
+    assert not (layout.audio / f"{request_id}.json").exists()
+    assert leftovers(layout.root) == []
+
+
+def scenario_done(layout: Layout, wav: Path, clock: FakeClock, policy: str) -> str:
+    request_id = submit(layout, wav, clock, hints=["alpha"], delete_audio=policy)
+    run_worker(layout, clock)
+    return request_id
+
+
+def scenario_failed(layout: Layout, wav: Path, clock: FakeClock, policy: str) -> str:
+    request_id = submit(layout, wav, clock, hints=["alpha"], delete_audio=policy)
+    run_worker(layout, clock, "fail=engine_error")
+    return request_id
+
+
+def scenario_engine_died(layout: Layout, wav: Path, clock: FakeClock, policy: str) -> str:
+    request_id = submit(layout, wav, clock, hints=["alpha"], delete_audio=policy)
+    run_worker(layout, clock, "die")
+    return request_id
+
+
+def scenario_worker_killed(layout: Layout, wav: Path, clock: FakeClock, policy: str) -> str:
+    request_id = submit(layout, wav, clock, hints=["alpha"], delete_audio=policy)
+    plant_dead_worker_traces(layout, clock, request_id, published=False)
+    return request_id
+
+
+def scenario_died_after_publish(layout: Layout, wav: Path, clock: FakeClock, policy: str) -> str:
+    request_id = submit(layout, wav, clock, hints=["alpha"], delete_audio=policy)
+    plant_dead_worker_traces(layout, clock, request_id, published=True)
+    return request_id
+
+
+def scenario_intake_died_after_copy(layout: Layout, wav: Path, clock: FakeClock, policy: str) -> str:
+    request_id = new_id()
+    put_attachment(layout.inbox, f"{request_id}.audio.wav", wav)
+    put_body(layout.inbox, f"{request_id}.json", transcribe_body(request_id, delete_audio=policy))
+    (layout.audio / request_id).mkdir(mode=0o700)
+    shutil.copyfile(wav, layout.audio / request_id / "audio.wav")
+    return request_id
+
+
+@pytest.mark.parametrize("policy", ["after_job", "at_midnight"])
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        scenario_done,
+        scenario_failed,
+        scenario_engine_died,
+        scenario_worker_killed,
+        scenario_died_after_publish,
+        scenario_intake_died_after_copy,
+    ],
+    ids=["done", "failed", "engine_died", "worker_killed", "died_after_publish", "intake_died_after_copy"],
+)
+def test_sc003_deletion_matrix(layout: Layout, wav: Path, clock: FakeClock, scenario: Any, policy: str) -> None:
+    accepted = clock.now()
+    request_id = scenario(layout, wav, clock, policy)
+    orphan = scenario is scenario_intake_died_after_copy
+
+    if orphan:
+        set_to_ctime_plus(clock, layout.audio / request_id, 59)
+        run_sweep(layout, clock)
+        assert (layout.audio / request_id / "audio.wav").is_file()
+        set_to_ctime_plus(clock, layout.audio / request_id, 61)
+    elif policy == "at_midnight":
+        run_sweep(layout, clock)
+        clock.set("2026-03-02T15:00:30Z")
+    run_sweep(layout, clock)
+
+    assert leftovers(layout.root) == []
+    if orphan:
+        assert list(layout.inbox.iterdir()) == []
+        set_to_ctime_plus(clock, layout.audio, 23 * 60 + 59)
+    else:
+        assert assert_valid_response(layout, request_id)["state"] in ("done", "failed")
+        clock.set((accepted + timedelta(hours=23, minutes=59)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    run_sweep(layout, clock)
+
+    assert leftovers(layout.root) == []
+    for folder in (layout.jobs, layout.audio, layout.queue, layout.work, layout.inbox):
+        assert list(folder.iterdir()) == []
+    assert [path for path in layout.outbox.iterdir()] == []

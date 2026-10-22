@@ -208,6 +208,11 @@ def load_audio(layout: Layout, audio_id: str) -> Audio:
     return _audio_from_dict(json.loads((layout.audio / f"{audio_id}.json").read_text(encoding="utf-8")))
 
 
+def load_audios(layout: Layout) -> list[Audio]:
+    """Reads every audio record, ordered by ``audio_id``."""
+    return [load_audio(layout, path.stem) for path in sorted(layout.audio.glob("*.json"))]
+
+
 def next_seq(jobs: Iterable[Job]) -> int:
     """Returns the sequence number for the next accepted job: highest ``seq`` + 1, or 1."""
     return max((job.seq for job in jobs), default=0) + 1

@@ -252,7 +252,7 @@ description: "Task list for 001-server-transcription"
 
 ### Tests for User Story 2 (MANDATORY - write first) ⚠️
 
-- [ ] T035 [P] [US2] `tests/server/test_us2.py` — `stt.server.sweep` 이 없으므로 RED:
+- [X] T035 [P] [US2] `tests/server/test_us2.py` — `stt.server.sweep` 이 없으므로 RED:
   `test_us2_1_after_job_done_leaves_nothing`(녹음·작업 폴더·job 기록의 `hints` 없음);
   `test_us2_2_after_job_failed_leaves_nothing`(`fail=engine_error`);
   `test_us2_3_midnight_job_audio_gone_after_midnight`(23:10 KST 완료, 23:59 청소 → 남음, 00:00:30 청소 → 없음, 응답 `audio.deleted_at`);
@@ -274,20 +274,20 @@ description: "Task list for 001-server-transcription"
   `failed(audio_deleted)`, 녹음 없음 — R21-7);
   `test_sc003_deletion_matrix`(`after_job`/`at_midnight` × 정상/실패/강제 종료(`die`, 워커 강제 종료 흉내, **게시 rename 뒤 마무리 전 죽음**, **받기가
   첨부를 복사한 뒤 기록 전에 죽음**) — 정한 시각 직후와 +23h58m(+1분)에 `leftovers` 0, R21-2) — closes US2-1…US2-12, 경계 사례 8(워커 쪽), SC-003, SC-004, SC-005 — verify RED
-- [ ] T036 [P] [US2] `tests/server/test_edge_cases.py` 에 더한다 — RED:
+- [X] T036 [P] [US2] `tests/server/test_edge_cases.py` 에 더한다 — RED:
   `test_edge_2_orphan_attachment_removed_after_one_hour`(요청 없는 첨부와 `.json.tmp` — ctime +59분 남음, +61분 없음; mtime 은 오래됐지만 ctime 은
   새것인 첨부는 남음 — R21-10; 청소 로그에 파일 이름 없는 고정 문구 한 줄);
   `test_stale_temp_and_orphan_audio_removed_after_one_hour`(`outbox/.<id>.tmp/`·`jobs/<id>/.*.tmp`·기록 없는 `audio/<id>/` — ctime +59분 남음, +61분
   없음; 워커가 없으면 게시 중간 폴더는 청소가 바로 지움 — R21-2);
   `test_edge_3_schedule_holds_without_worker`(워커를 한 번도 돌리지 않아도 청소만으로 자정·24시간 삭제);
   `test_rejected_and_delete_responses_expire_after_24h`(기록 없는 응답은 응답의 `expires_at` 으로) — closes 경계 사례 2·3, supports FR-032, FR-033 — verify RED
-- [ ] T037 [P] [US2] `tests/server/test_server_cli.py` 에 `stt server sweep --root R` 을 더한다: 빈 루트 0, `sweep.lock` 을 남이 쥐면 75 — supports US2-3 — verify RED
-- [ ] T038 [P] [US2] `tests/server/test_logging.py` 에 더한다 — RED: 지우기 두 가지·청소(자정·24시간·죽은 워커·오래된 inbox 파일)를 돌린 뒤에도
+- [X] T037 [P] [US2] `tests/server/test_server_cli.py` 에 `stt server sweep --root R` 을 더한다: 빈 루트 0, `sweep.lock` 을 남이 쥐면 75 — supports US2-3 — verify RED
+- [X] T038 [P] [US2] `tests/server/test_logging.py` 에 더한다 — RED: 지우기 두 가지·청소(자정·24시간·죽은 워커·오래된 inbox 파일)를 돌린 뒤에도
   힌트·요청자·전사문·inbox 파일 이름 0번 — supports FR-037 — verify RED
 
 ### Implementation for User Story 2 (turn T035–T038 GREEN)
 
-- [ ] T039 [US2] `src/stt/server/lifecycle.py` 삭제 동작(모두 상태 잠금 아래): `finish` 를 넓힌다 — 끝 상태가 되면 `hints` 를 지우고, 정책이
+- [X] T039 [US2] `src/stt/server/lifecycle.py` 삭제 동작(모두 상태 잠금 아래): `finish` 를 넓힌다 — 끝 상태가 되면 `hints` 를 지우고, 정책이
   `{after_job: 이 job}` 이면 녹음 삭제; `delete_audio(layout, audio_id, cause, now)` — 녹음 파일 폴더만 삭제(기록은 남김), `deleted_at`·`deleted_by`,
   그 녹음을 쓰는 `queued`·`running` job 을 `finish(failed(audio_deleted, cause))`, 쓰는 모든 job 의 응답 갱신; `delete_result(layout, job, now)`;
   `delete_everything(layout, job, now)`(결과가 있었으면 `result_deleted_at` 도); `purge_expired(layout, now)` — data-model §6(결과·응답·job 기록,
@@ -303,7 +303,7 @@ description: "Task list for 001-server-transcription"
 - [X] T041 [US2] `src/stt/server/worker.py`: 매 `poll_s` 마다 상태 잠금 아래 job 이 아직 `running` 인지 봐서 아니면 `os.killpg(SIGKILL)`·작업 폴더 삭제·
   게시하지 않음; 시작할 때(`worker.lock` 을 쥔 뒤) `clear_dead_worker`; job 을 고를 때 그 녹음의 삭제 시각이 지났으면 시작하지 않고 그 원인으로
   `lifecycle.delete_audio`(R21-7) — turns `test_us2_1`, `_2`, `_4`, `_9`, `test_edge_8_queued_job_past_deadline_not_started` GREEN (T035) — closes US2-1, US2-2, US2-4, US2-9, 경계 사례 8(워커 쪽)
-- [ ] T042 [US2] `src/stt/server/sweep.py` `run_once(layout, now) -> None` — 정책 시각·`hard_deadline` 이 지난 녹음을 `delete_audio`(원인 `midnight`·
+- [X] T042 [US2] `src/stt/server/sweep.py` `run_once(layout, now) -> None` — 정책 시각·`hard_deadline` 이 지난 녹음을 `delete_audio`(원인 `midnight`·
   `retention_limit`), 그다음 `purge_expired`, `worker.lock` 을 `try_hold` 로 잡을 수 있으면(워커 없음) `clear_dead_worker`; `src/stt/server/cli.py` 에
   `stt server sweep [--root DIR]`(`sweep.lock`, 75) — turns `test_us2_3`, `_4`, `_5`, `_7`, `test_sc003_deletion_matrix`, T036, T037, T038 GREEN — closes US2-3, US2-4, US2-5, US2-7, 경계 사례 2·3, SC-003
 - [ ] T043 [US2] US2 확인: 전체 시험 통과. RED 해당 없음 — 확인 — closes US2-1…US2-12, 경계 사례 2·3, SC-003·SC-004·SC-005(가짜 엔진 기준)
