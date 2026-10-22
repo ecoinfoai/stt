@@ -225,7 +225,9 @@ def delete_result(layout: Layout, job: Job, now: datetime) -> Job:
     Returns:
         The saved job with ``result_deleted_at`` set.
     """
-    shutil.rmtree(layout.outbox / job.request_id)
+    result = layout.outbox / job.request_id
+    if result.exists():
+        shutil.rmtree(result)
     cleared = replace(job, result_deleted_at=now)
     save_job(layout, cleared)
     write_job_response(layout, cleared, now)

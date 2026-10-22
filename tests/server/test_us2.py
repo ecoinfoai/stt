@@ -218,6 +218,18 @@ def test_us2_6_result_delete_keeps_audio_until_midnight(layout: Layout, wav: Pat
     assert list(layout.inbox.iterdir()) == []
 
 
+def test_result_delete_retried_after_the_folder_went_completes(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    request_id = done_job(layout, wav, clock, delete_audio="at_midnight")
+    shutil.rmtree(layout.outbox / request_id)
+
+    delete_id = submit_delete(layout, clock, request_id)
+
+    answer(layout, delete_id, request_id, "result", "deleted")
+    assert load_job(layout, request_id).result_deleted_at == clock.now()
+    assert assert_valid_response(layout, request_id)["result"]["deleted_at"] == "2026-03-02T01:01:00Z"
+    assert list(layout.inbox.iterdir()) == []
+
+
 def test_result_delete_twice_reports_already_deleted(layout: Layout, wav: Path, clock: FakeClock) -> None:
     request_id = done_job(layout, wav, clock, delete_audio="at_midnight")
     first = submit_delete(layout, clock, request_id)
