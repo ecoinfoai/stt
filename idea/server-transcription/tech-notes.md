@@ -89,7 +89,8 @@ stt flake 가 고정한 nixpkgs(26.11.20260801)에는 같은 판이 있다: fast
 
 - 지금 개발 환경에서 돌아가는 휠 조합(torch 는 자체 CUDA 13 스택, ctranslate2 는 CUDA 12 빌드 + `nvidia-cublas-cu12`, cuDNN 공유 —
   `pyproject.toml` extra 주석)을 uv2nix(pyproject.nix 계열)로 묶는다. 소스 빌드가 없고 uv.lock 해시로 재현된다.
-- `[VERIFY]` 이 경로는 아직 빌드해 보지 않았다. **계획 단계 첫 과제**: 묶은 환경을 실제로 빌드하고 §5 의 60초 오프라인 시험을 통과시킨다.
+- ~~`[VERIFY]` 이 경로는 아직 빌드해 보지 않았다.~~ → 2026-10-22 계획 단계에서 시험 통과: 휠만으로 빌드되고 망 없이 GPU 화자 구분 전사가
+  끝났다(`specs/001-server-transcription/research.md` R1).
   확인할 것 — 휠의 공유 라이브러리 경로 고치기, 드라이버의 `libcuda`(`/run/opengl-driver/lib`), CUDA 12·13 두 스택이 한 환경에서 충돌하지 않는지.
 - 막히면: 서버에서 `uv sync --frozen` 으로 만든 환경을 systemd 가 실행한다. 선언적이지 않아 핸드오프 S3 와 geo-scout 선례에서 벗어나므로 대비책으로만 둔다.
 - NixOS 모듈은 stt 저장소에 둔다(geo-scout 의 `nix/module.nix`·`nix/package.nix`·`nix/vm-test.nix` 모양). stt 는 자기 nixpkgs 를 고정한다 —
