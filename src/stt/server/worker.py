@@ -59,7 +59,10 @@ def _prepare(layout: Layout, job: Job) -> Path:
 
 
 def _is_running(layout: Layout, request_id: str) -> bool:
+    """True while the job's record exists and says ``running``; a purged record counts as not running."""
     with hold(layout.state_lock):
+        if not (layout.jobs / request_id / "job.json").exists():
+            return False
         return load_job(layout, request_id).state == "running"
 
 
@@ -80,13 +83,24 @@ def _run_engine(
         env=env,
         start_new_session=True,
     )
-    while process.poll() is None:
-        if not _is_running(layout, request_id):
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
-            return False
-        time.sleep(poll_s)
-    return True
+    try:
+        while process.poll() is None:
+            if not _is_running(layout, request_id):
+                break
+            time.sleep(poll_s)
+        else:
+            return True
+    except BaseException:
+        _kill(process)
+        raise
+    _kill(process)
+    return False
+
+
+def _kill(process: subprocess.Popen[bytes]) -> None:
+    """Kills the engine's whole process group and reaps the engine."""
+    os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
 
 
 def _verdict(work_dir: Path) -> Failure | None:

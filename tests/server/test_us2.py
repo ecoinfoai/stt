@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import threading
 import time
@@ -11,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from stt.server import contract, intake, lifecycle
+from stt.server import contract, intake, lifecycle, worker
 from stt.server.layout import Layout, hold
 from stt.server.records import load_audio, load_job
 
@@ -251,12 +252,19 @@ def test_us2_8_delete_everything_on_stored_audio(layout: Layout, wav: Path, cloc
     answer(layout, later, failed, "result", "no_result")
 
 
+def pid_engine(tmp_path: Path) -> tuple[Path, list[str]]:
+    """Returns a pid file and a ``sleep=30`` fake engine command that writes its own pid there.
+
+    The launcher execs the fake engine, which keeps the pid; ``start_new_session`` makes it the process group id.
+    """
+    pid_file = tmp_path / "engine.pid"
+    launcher = "import os, sys; open(sys.argv[1], 'w').write(str(os.getpid())); os.execv(sys.argv[2], sys.argv[2:])"
+    return pid_file, [sys.executable, "-c", launcher, str(pid_file), sys.executable, str(FAKE_ENGINE), "--mode", "sleep=30"]
+
+
 def test_us2_9_delete_everything_stops_running_job(layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path) -> None:
     request_id = submit(layout, wav, clock, hints=["alpha"])
-    pid_file = tmp_path / "engine.pid"
-    # exec keeps the pid, so the file names the engine process, which leads its own process group.
-    launcher = "import os, sys; open(sys.argv[1], 'w').write(str(os.getpid())); os.execv(sys.argv[2], sys.argv[2:])"
-    engine_cmd = [sys.executable, "-c", launcher, str(pid_file), sys.executable, str(FAKE_ENGINE), "--mode", "sleep=30"]
+    pid_file, engine_cmd = pid_engine(tmp_path)
     errors: list[BaseException] = []
 
     def work() -> None:
@@ -391,3 +399,74 @@ def test_delete_everything_marks_the_result_only_for_a_done_job(layout: Layout, 
         assert job.deleted_at == clock.now()
         assert job.result_deleted_at is None
         assert "result" not in assert_valid_response(layout, request_id)
+
+
+def start_worker_thread(
+    layout: Layout, clock: FakeClock, engine_cmd: list[str], request_id: str
+) -> tuple[threading.Thread, list[BaseException]]:
+    errors: list[BaseException] = []
+
+    def work() -> None:
+        try:
+            run_worker(layout, clock, engine_cmd=engine_cmd, poll_s=0.05)
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=work)
+    thread.start()
+    partial = layout.work / request_id / "out" / "partial.txt"
+    started = time.monotonic()
+    while not partial.exists() and time.monotonic() - started < 10:
+        time.sleep(0.02)
+    assert partial.exists()
+    return thread, errors
+
+
+def assert_group_gone(group: int) -> None:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.02)
+    raise AssertionError("engine process group is still alive")
+
+
+def test_engine_stops_when_the_job_record_is_purged_mid_run(
+    layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path
+) -> None:
+    request_id = submit(layout, wav, clock)
+    pid_file, engine_cmd = pid_engine(tmp_path)
+    thread, errors = start_worker_thread(layout, clock, engine_cmd, request_id)
+    group = int(pid_file.read_text(encoding="utf-8"))
+
+    shutil.rmtree(layout.jobs / request_id)
+
+    assert_group_gone(group)
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert not errors
+    assert not (layout.work / request_id).exists()
+    assert not (layout.outbox / request_id).exists()
+
+
+def test_engine_is_killed_when_the_poll_loop_raises(
+    layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request_id = submit(layout, wav, clock)
+    pid_file, engine_cmd = pid_engine(tmp_path)
+    partial = layout.work / request_id / "out" / "partial.txt"
+
+    def broken(layout: Layout, request_id: str) -> bool:
+        if not partial.exists() or not pid_file.exists():
+            return True
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(worker, "_is_running", broken)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_worker(layout, clock, engine_cmd=engine_cmd, poll_s=0.05)
+
+    assert_group_gone(int(pid_file.read_text(encoding="utf-8")))
+    assert not (layout.work / request_id).exists()
