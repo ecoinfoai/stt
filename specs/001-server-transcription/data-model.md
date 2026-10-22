@@ -19,9 +19,10 @@
 
 배치와 권한은 [contracts/README.md](contracts/README.md) §2.
 
-**매일 정리**(R22, 2026-10-22 운영자 결정): 삭제는 「다 지우기」 요청과 매일 정리 둘뿐이다. `next_purge(t)` = `t` 보다 뒤인 첫
-`Asia/Seoul` 23:58:00(t 가 정확히 23:58:00 이면 다음 날 23:58). 모든 기한은 이 값이다 — job·응답의 `expires_at`, 녹음의 `delete_at`. 1분마다
-도는 청소가 기한이 지난 것을 지우므로 늦어도 23:59 무렵 끝나고, 어떤 자료도 처음 받은 때로부터 24시간을 넘지 않는다.
+**매일 정리**(R22, 2026-10-22 운영자 결정): 삭제는 「다 지우기」 요청과 매일 정리 둘뿐이다. `purge_time(t)` = `t` 의 `Asia/Seoul` 날짜의
+23:58:00. 모든 기한은 이 값이다 — job·응답의 `expires_at`, 녹음의 `delete_at`. 23:58~24:00 에 받은 것은 기한이 이미 지나 있어 다음 청소(1분 안)가
+지운다. 1분마다 도는 청소가 기한이 지난 것을 지우므로 늦어도 23:59 무렵 끝나고, 가장 오래 남는 것(00:00 에 받은 것)도 약 23시간 59분이다 —
+「받은 때 + 24시간」 이전이다(헌법 III). 「t 다음의 23:58」로 하면 23:58 직후에 받은 것이 24시간 + 청소 지연만큼 남는다(U27 리뷰).
 
 ## 2. Request — 호출하는 쪽이 쓰는 것
 
@@ -92,7 +93,7 @@ Job
   result_deleted_at                  time | null   (다 지우기가 있던 결과를 지운 때)
   deleted_at                         time | null   (다 지우기)
   duplicate_refused_at               time | null   (같은 request_id 가 다시 왔을 때)
-  expires_at     time = next_purge(accepted_at)   이때(1분 안에) job 의 모든 것(응답·결과·기록)이 사라진다
+  expires_at     time = purge_time(accepted_at)   이때(1분 안에) job 의 모든 것(응답·결과·기록)이 사라진다
 ```
 
 ### 3.1 상태 변화
@@ -137,7 +138,7 @@ Audio
   original_name    str          `<request_id>.audio.<ext>` — 전사록 머리글의 「원본」 칸
   owner            str          requested_by
   received_at      time         처음 받아들인 시각
-  delete_at        time = next_purge(received_at)
+  delete_at        time = purge_time(received_at)
   users            [request_id]  이 녹음을 쓰는 job 들
   deleted_at       time | null
   deleted_by       purge | request | null
@@ -149,7 +150,7 @@ Audio
 ## 5. 녹음 삭제 (FR-030·FR-031·FR-034, R22)
 
 - 녹음이 지워지는 때는 둘뿐이다: 그 녹음을 쓰는 어느 job 에든 「다 지우기」가 왔을 때(그 직후, `deleted_by = request`), 그리고 `delete_at`
-  (= `next_purge(received_at)`, 1분 안에, `deleted_by = purge`). 2차가 녹음을 가리켜도 `delete_at` 은 바뀌지 않는다.
+  (= `purge_time(received_at)`, 1분 안에, `deleted_by = purge`). 2차가 녹음을 가리켜도 `delete_at` 은 바뀌지 않는다.
 - 매일 정리 시각에 그 녹음을 쓰는 `queued`·`running` job 은 `failed(audio_deleted)` 가 된다(running 이면 엔진을 멈춘다). 같은 청소의 만료
   단계가 곧바로 그 job 째(응답·기록) 지우므로 호출하는 쪽에는 대개 응답이 사라진 것으로 보인다(FR-034).
 - 「다 지우기」 때 그 녹음을 쓰는 다른 job 은 실패가 아니라 `deleted` 가 된다(FR-005, US2-2).
@@ -169,13 +170,13 @@ Audio
 | job 의 `hints` | job 이 끝 상태가 되는 즉시(FR-030 의 「늦어도」를 앞당긴 것 — 엔진만 쓴다) |
 | 결과(`outbox/<id>/`) | 「다 지우기」 즉시, 아니면 `expires_at` |
 | 대기 표시(`queue/<seq>-<id>`) | job 이 `queued` 를 떠나는 즉시 |
-| 응답·job 기록 | `expires_at`(= `next_purge(accepted_at)`). 받기 단계에서 거절된 요청의 응답은 `next_purge(처리 시각)` |
+| 응답·job 기록 | `expires_at`(= `purge_time(accepted_at)`). 받기 단계에서 거절된 요청의 응답은 `purge_time(처리 시각)` |
 | 녹음 기록(`audio/<audio_id>.json`) | 그 녹음을 쓰는 마지막 job 의 `expires_at` |
 | 게시 중간 폴더(`outbox/.<id>.tmp/`)·원자적 쓰기의 임시 파일(`.*.tmp`)·기록 없는 녹음 폴더 | ctime 으로 1시간이 지나면 청소. 죽은 워커를 정리할 때는 게시 중간 폴더를 바로(R21-2) |
 | `interrupted` 가 된 job 의 `outbox/<id>/`(게시 rename 뒤 마무리 전에 워커가 죽은 경우) | 그 job 을 `interrupted` 로 만들 때 |
 | 엔진 작업 폴더(`work/<id>/`, 임시 WAV 포함) | 엔진이 끝나는 즉시. 강제 종료로 남은 것은 다음 워커 시작 때와 청소 단계(워커가 없을 때) |
 | inbox 의 남은 파일 | 받기 단계가 처리하면 즉시. 짝 없는 첨부·처리되지 못한 파일은 ctime 으로 1시간 뒤 청소(로그 한 줄, 파일 이름 없음) |
-| delete 요청의 응답 | `next_purge(처리 시각)` |
+| delete 요청의 응답 | `purge_time(처리 시각)` |
 
 ## 7. Result — 완료된 job 이 내는 것
 

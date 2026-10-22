@@ -371,10 +371,12 @@ lib.genAttrs (lib.filter (lib.hasPrefix "nvidia-") (lib.attrNames prev))
 하고, GPU 가 안 되면 안 되는 것」(명령줄 포함). 처리 시간 상한(R12)과 1차 전에 온 2차 받기(R13), 저장 위치(R14)는 그대로 확정.
 
 - **결정 — 삭제**: 지우기는 「다 지우기」 요청과 매일 정리 둘뿐이다. 요청의 `delete_audio`, delete 의 `scope`, 응답의 `audio.delete_policy`·
-  `audio.delete_after`·`failure.cause`, delete 답의 `no_result` 를 없앤다. 모든 기한은 `next_purge(t)` = t 보다 뒤인 첫 23:58 `Asia/Seoul` 이다
+  `audio.delete_after`·`failure.cause`, delete 답의 `no_result` 를 없앤다. 모든 기한은 `purge_time(t)` = t 의 `Asia/Seoul` 날짜의 23:58 이다
   (job·응답 `expires_at`, 녹음 `delete_at`). `RETENTION_DUE`(R21-1)는 없어진다.
-- **왜 23:58 인가**: 운영자의 「밤 12시 직전」. 정확히 00:00 이면 00:00 직후에 받은 자료가 다음 날 00:00 + 청소 지연(1분 안)까지 남아 24시간을
-  넘을 수 있다(헌법 III). 23:58 이면 청소가 늦어도 23:59 무렵 끝나 24시간 안이다. 23:58 뒤에 받은 작업은 다음 날 23:58 까지 남는다.
+- **왜 23:58 이고 「그날」인가**: 운영자의 「밤 12시 직전」과 「자정 이후에 맡기라」. 기한을 「t 다음의 정리 시각」으로 하면(00:00 이든 23:58
+  이든) 정리 시각 직후에 받은 자료가 정확히 24시간 + 청소 지연(1분 안)만큼 남아 헌법 III 을 어긴다(U27 리뷰가 23:58:00 에서 확인). 그래서 받은
+  날(KST)의 23:58 에 지운다: 00:00 에 받은 것이 가장 오래 남아 약 23시간 59분, 23:58~24:00 에 받은 것은 곧바로 지워진다(운영자 안내가 이 구간을
+  피하게 한다).
 - **「다 지우기」의 범위**: 대상 job 의 녹음을 쓰는 모든 job(`audio.users`, 같은 요청자)을 `deleted` 로 만든다 — 「음성과 회의록을 지운다」는
   뜻은 1차·2차를 가리지 않는다. 다른 job 을 `failed(audio_deleted)` 로 만들던 동작(R20-8 `deleted_on_request`)은 없어진다.
 - **job 이 끝나도 녹음을 지우지 않는다**: 「끝나면 바로」가 없으므로 `lifecycle.finish` 는 녹음을 지우지 않는다. 최종 리뷰 I2(after_job 녹음

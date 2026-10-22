@@ -500,8 +500,8 @@ description: "Task list for 001-server-transcription"
 
 ### 서버: 「다 지우기」와 매일 정리 (US2, US3)
 
-- [X] T079 [US2] 서버 시험을 새 규칙으로 바꾼다 — RED: `tests/server/test_deadlines.py`(`next_purge`: KST 23:57:59 → 그날 23:58, 23:58:00 →
-  다음 날 23:58, 23:58:01 → 다음 날, UTC 로 돌려줌; `RETENTION_DUE`·`next_midnight` 없음), `test_contract.py`(`delete_audio` 있는 transcribe·`scope`
+- [X] T079 [US2] 서버 시험을 새 규칙으로 바꾼다 — RED: `tests/server/test_deadlines.py`(`purge_time`(R22 개정): KST 00:00:00 → 그날 23:58, 23:57:59 → 그날 23:58,
+  23:58:00·23:59:59 → 그날 23:58(이미 지남), UTC 로 돌려줌, 어떤 t 에도 `purge_time(t) + 1분 < t + 24h`; `RETENTION_DUE`·`next_midnight` 없음), `test_contract.py`(`delete_audio` 있는 transcribe·`scope`
   있는 delete → `invalid_request`, 없는 것은 통과; 응답 `audio` 에 `delete_policy` 가 있으면·delete 답에 `scope`·`no_result` 가 있으면·`failure`
   에 `cause` 가 있으면 스키마 위반), `test_us2.py`(개정 US2-1…10 을 `test_us2_<n>_…` 로 — 2 는 1차·2차 둘 다 `deleted` 이고 녹음·두 결과 0개, 5 는
   완료·실패·대기·처리 중 job 이 23:58 직후 응답·기록·결과·녹음 0개, 6 은 23:58:30 에 받은 job 이 그날 정리 뒤 남고 다음 날 23:58 에 사라짐),
