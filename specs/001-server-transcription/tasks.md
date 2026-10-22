@@ -537,7 +537,7 @@ description: "Task list for 001-server-transcription"
 
 ### 확인
 
-- [ ] T084 언어 규칙(T074 와 같은 `rg`) 0건, `uv run python -m pytest -q` 전부 통과, 개정 spec 의 시나리오(US1 8 · US2 10 · US3 4 · US4 6 · US5 9 = 37개)
+- [X] T084 언어 규칙(T074 와 같은 `rg`) 0건, `uv run python -m pytest -q` 전부 통과, 개정 spec 의 시나리오(US1 8 · US2 10 · US3 4 · US4 6 · US5 9 = 37개)
   와 경계 사례 8개가 각각 시험 하나 이상에 대응(`rg -o 'def test_(us[1-5]_[0-9]+|edge_[1-8])_' tests`), Python 3.10 환경에서도 전부 통과,
   `nix flake check --no-build` 통과. RED 해당 없음 — 확인 — supports SC-012, SC-013
 
