@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ecoinfoai/stt/contracts/request.schema.json",
+  "title": "stt server request",
+  "description": "A request file the caller writes as requests/inbox/<request_id>.json (write <request_id>.json.tmp, then rename). Checks the schema cannot express are listed in contracts/README.md section 4 (file name equals request_id, attachment present, language known to the engine, audio length).",
+  "oneOf": [
+    { "$ref": "#/$defs/transcribe" },
+    { "$ref": "#/$defs/delete" }
+  ],
+  "$defs": {
+    "request_id": {
+      "description": "Lowercase UUID chosen by the caller; never reused.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "requested_by": {
+      "description": "Opaque requester identifier verified by the caller. Used only to compare owners; never logged.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:@-]{1,128}$"
+    },
+    "hint": {
+      "description": "One term; no control characters, no leading or trailing whitespace.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\s\\x00-\\x1f\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\s\\x00-\\x1f\\x7f])?$"
+    },
+    "transcribe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "requested_by",
+        "audio",
+        "language",
+        "diarize",
+        "delete_audio"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "kind": { "const": "transcribe" },
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "requested_by": { "$ref": "#/$defs/requested_by" },
+        "audio": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file"],
+              "properties": {
+                "file": {
+                  "description": "Attachment written next to the request file: <request_id>.audio.<ext>.",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.audio\\.(m4a|mp3|wav|flac|ogg|opus|aac|wma)$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["from_request"],
+              "properties": {
+                "from_request": {
+                  "description": "Reuse the recording of an earlier transcribe request by the same requester.",
+                  "$ref": "#/$defs/request_id"
+                }
+              }
+            }
+          ]
+        },
+        "language": {
+          "description": "Whisper language code (for example ko). 'auto' is not accepted.",
+          "type": "string",
+          "pattern": "^[a-z]{2,3}$"
+        },
+        "diarize": { "type": "boolean" },
+        "hints": {
+          "description": "Transcription glossary (2), used as engine hints in the given order.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/hint" }
+        },
+        "delete_audio": {
+          "description": "after_job: delete the recording right after this job ends. at_midnight: keep it until the next 00:00 Asia/Seoul. Never longer than 24 hours after it was first received.",
+          "enum": ["after_job", "at_midnight"]
+        }
+      }
+    },
+    "delete": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "requested_by",
+        "target",
+        "scope"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "kind": { "const": "delete" },
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "requested_by": { "$ref": "#/$defs/requested_by" },
+        "target": {
+          "description": "request_id of the transcribe request to delete from.",
+          "$ref": "#/$defs/request_id"
+        },
+        "scope": {
+          "description": "result: delete the job's result files only. everything: delete the recording, temporary audio, hint copy and result now.",
+          "enum": ["result", "everything"]
+        }
+      }
+    }
+  }
+}
