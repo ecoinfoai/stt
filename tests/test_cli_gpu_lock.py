@@ -344,3 +344,22 @@ def test_us4_cli_does_not_import_torch_to_release_memory(
 
     assert transcribe.main([str(media), "--device", "cuda"]) == 0
     assert "torch" not in sys.modules
+
+
+_WITHOUT_FCNTL = "import sys\nsys.modules['fcntl'] = None\n"
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        _WITHOUT_FCNTL + "import stt.cli\nraise SystemExit(stt.cli.main(['--help']))\n",
+        _WITHOUT_FCNTL
+        + "import runpy\nsys.argv = ['stt', 'transcribe', '--help']\nrunpy.run_module('stt', run_name='__main__')\n",
+    ],
+    ids=["stt-help", "python-m-stt-transcribe-help"],
+)
+def test_cli_imports_and_shows_help_without_fcntl(script: str) -> None:
+    finished = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120)
+
+    assert finished.returncode == 0, finished.stderr
+    assert "transcribe" in finished.stdout

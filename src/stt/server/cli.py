@@ -7,9 +7,10 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import TYPE_CHECKING, Callable, Sequence
 
-from stt.server.layout import Layout, try_hold
+if TYPE_CHECKING:
+    from stt.server.layout import Layout
 
 DEFAULT_ROOT = Path("/var/lib/stt")
 DEFAULT_MODELS = Path("/var/lib/stt-models")
@@ -113,7 +114,8 @@ def _sweep(args: argparse.Namespace, layout: Layout) -> int:
 
 
 # Stage modules load inside the stage functions: they need the optional `server`
-# extra (jsonschema), which the other `stt` commands must not require.
+# extra (jsonschema), which the other `stt` commands must not require. The layout
+# module loads inside `main` because it needs fcntl, which `stt` must not require.
 _STAGES: dict[str, tuple[Callable[[argparse.Namespace, Layout], int], Callable[[Layout], Path]]] = {
     "intake": (_intake, lambda layout: layout.intake_lock),
     "work": (_work, lambda layout: layout.worker_lock),
@@ -138,6 +140,8 @@ def main(argv: Sequence[str]) -> int:
         return stop.code if isinstance(stop.code, int) else EXIT_USAGE
     if args.command == "fetch-models":
         return _fetch_models(args)
+    from stt.server.layout import Layout, try_hold
+
     layout = Layout(args.root)
     layout.ensure_layout()
     stage, lock_path = _STAGES[args.command]
