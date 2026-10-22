@@ -259,7 +259,7 @@ def _euc_kr_tagged_wav(path: Path, seconds: float = 1.0) -> Path:
     """Writes a 16 kHz mono PCM WAV whose INAM tag holds EUC-KR bytes, which PyAV cannot decode as UTF-8."""
     rate = 16000
     data = bytes(2 * int(rate * seconds))
-    title = "한글".encode("euc-kr") + b"\x00"
+    title = b"\xc7\xd1\xb1\xdb" + b"\x00"
     inam = b"INAM" + struct.pack("<I", len(title)) + title
     inam += b"\x00" * (len(inam) % 2)
     info = b"INFO" + inam
