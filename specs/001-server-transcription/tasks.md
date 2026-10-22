@@ -143,12 +143,12 @@ description: "Task list for 001-server-transcription"
 
 ### Tests for User Story 1 (MANDATORY - write first) ⚠️
 
-- [ ] T017 [P] [US1] `tests/server/fake_engine.py`: `python fake_engine.py --mode MODE [--record FILE] <work_dir>`. RED 해당 없음 — 시험 도구.
+- [X] T017 [P] [US1] `tests/server/fake_engine.py`: `python fake_engine.py --mode MODE [--record FILE] <work_dir>`. RED 해당 없음 — 시험 도구.
   `work_dir/spec.json` 을 읽고 MODE 에 따라: `done` — `out/transcript.txt`(영어 한 줄)·`out/result.json`(spec 의 diarize·hints 를 반영해
   result 스키마를 통과하는 문서)·`outcome.json` `{"status": "done"}`; `fail=<reason>` — `{"status": "failed", "reason": ..., "detail": "Fake failure."}`;
   `sleep=<s>` — `out/partial.txt` 를 먼저 쓰고 s 초 잔 뒤 `done`; `die` — 판정 없이 종료 코드 1; `--record FILE` — 시작·끝 단조 시각과 받은 환경
   (`TMPDIR`·`HF_HOME`·`HF_HUB_OFFLINE`)을 한 줄씩 덧붙임. `result.json` 의 `request_id` 는 `spec.json` 의 것 — supports US1-1, US2-9, US4-3, US5-3
-- [ ] T018 [P] [US1] `tests/server/test_us1.py` — `stt.server.intake`·`stt.server.worker` 가 없으므로 RED:
+- [X] T018 [P] [US1] `tests/server/test_us1.py` — `stt.server.intake`·`stt.server.worker` 가 없으므로 RED:
   `test_us1_1_accepted_job_reports_queue_then_done` — 2초 WAV 를 맡기고 `intake.run_once(layout, now)` → outbox 응답 `queued`·`queue_position` 1,
   inbox 가 빔, 녹음이 `audio/<id>/audio.wav`, `queue/` 에 표시 하나; `run_worker(...)` → 응답 `done`, `outbox/<id>/transcript.txt`·`result.json`,
   `work/<id>/` 없음, **`queue/` 가 빔**(R20-1);
@@ -189,7 +189,7 @@ description: "Task list for 001-server-transcription"
 - [ ] T022 [P] [US1] `tests/server/test_server_cli.py` — RED: `stt server`(하위 명령 없음)·`stt server bogus` → 사용법을 stderr 에, 종료 2;
   `stt --help` 에 `server`; `stt server intake --root R` 이 다른 프로세스가 `intake.lock` 을 쥔 동안 종료 75, `work` 는 `worker.lock` 으로 75;
   빈 루트에서 둘 다 0 — supports US1-1 — verify RED
-- [ ] T023 [P] [US1] `tests/server/test_logging.py` — RED: 힌트 `"zzhintword"`·요청자 `"zzrequester"` 로 받기 → 워커(가짜 엔진) → 엔진(가짜 모델)을
+- [X] T023 [P] [US1] `tests/server/test_logging.py` — RED: 힌트 `"zzhintword"`·요청자 `"zzrequester"` 로 받기 → 워커(가짜 엔진) → 엔진(가짜 모델)을
   돌린 뒤 `capfd` 의 stdout·stderr 에 두 낱말과 전사문이 0번, `request_id` 와 상태 낱말은 있음 — supports FR-037 — verify RED
 - [X] T024 [P] [US1] `tests/server/test_models.py` — RED: `models.PINNED` 가 research R9 표의 저장소 다섯·커밋과 같음; `ref_mismatches(hf_home)` 이
   없는 저장소·다른 커밋을 모두 저장소 이름으로 돌려주고, 모두 맞으면 `[]` — supports US5-5(시작 점검), FR-012 — verify RED
@@ -216,7 +216,7 @@ description: "Task list for 001-server-transcription"
   갱신, inbox 의 요청·첨부 삭제. 거절은 §2.4 의 꼴로 답하고 **파일 이름 앞부분의** 첨부만 삭제. 중복은 기록이 있으면 기록에, 없으면 응답 파일에
   `duplicate_refused_at`. 이름이 UUID 가 아닌 파일을 버릴 때 고정 로그 한 줄. `from_request` 는 US3 전까지 `failed(invalid_request)`("from_request is not
   supported.")로, delete 요청은 US2 전까지 `refusal` 로 답한다. 로그는 `<request_id> <state>` 꼴 — turns T018(받기 부분), T019, T023(받기 부분) GREEN — closes US1-1, US1-7, US5-6, 경계 사례 1
-- [ ] T031 [US1] `src/stt/server/worker.py`: `run(layout, engine_cmd, now, poll_s=2.0) -> int`(줄이 빌 때까지 `run_one`), `run_one(...) -> bool` —
+- [X] T031 [US1] `src/stt/server/worker.py`: `run(layout, engine_cmd, now, poll_s=2.0) -> int`(줄이 빌 때까지 `run_one`), `run_one(...) -> bool` —
   상태 잠금 아래 seq 가 가장 작은 `queued` 를 `lifecycle.start`, `work/<id>/`(0700)에 `spec.json`(`request_id`, `audio_path`, `original_name`,
   `language`, `diarize`, `hints`, `duration_s`)을 쓰고 `engine_cmd + [work_dir]` 를 `start_new_session=True`·`stdin=DEVNULL`·`env` 에
   `TMPDIR=<work_dir>`·`HF_HOME=<models_dir>`·`HF_HUB_OFFLINE=1` 을 더해 띄움(`run(..., models_dir)`), `poll_s` 마다
