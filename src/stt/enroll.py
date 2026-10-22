@@ -151,13 +151,19 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """CLI 진입점: 등록 지도를 따라 목소리를 뽑아 사전에 쌓는다.
+    """CLI entry point: extract voices following the enroll map into the database.
+
+    With STT_GPU_LOCK set and the device 'cuda', the shared GPU lock is
+    held from before the pipeline load until all entries are done.
 
     Args:
-        argv: 테스트용 인자 목록(None이면 sys.argv 사용).
+        argv: Argument list for tests (sys.argv is used when None).
 
     Returns:
-        종료 코드(성공 0).
+        Exit code (0 on success).
+
+    Raises:
+        SystemExit: With code 2 when STT_GPU_LOCK names a missing file.
 
     Examples:
         >>> main(["--help"])  # doctest: +SKIP
@@ -166,34 +172,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     import tempfile
 
     from stt import diarize as dz
-    from stt.transcribe import detect_device
+    from stt.transcribe import detect_device, hold_gpu_lock
 
     args = parse_args(sys.argv[1:] if argv is None else argv)
     entries = load_enroll_map(args.map)
     device = detect_device(args.device)
     voices = dz.load_voice_db(args.db)
     print(f"등록 대상 {len(entries)}개 | 장치: {device}")
-    pipeline = dz.load_pipeline(device)
     added = 0
-    for index, entry in enumerate(entries, start=1):
-        if not entry.media.is_file():
-            raise FileNotFoundError(
-                f"미디어 없음: '{entry.media}'를 찾을 수 없습니다."
-            )
-        print(f"[{index}/{len(entries)}] {entry.media.name}")
-        with tempfile.TemporaryDirectory() as tmp:
-            wav = dz.to_wav(entry.media, Path(tmp) / "audio.wav")
-            labels, embeddings = dz.diarize_embeddings(pipeline, wav)
-        found = dict(zip(labels, embeddings))
-        for label, name in entry.speakers.items():
-            if label not in found:
-                raise ValueError(
-                    f"'{entry.media.name}'에 화자 '{label}'이 없습니다. "
-                    f"이 파일의 화자는 {sorted(found)}입니다."
+    with hold_gpu_lock(device):
+        pipeline = dz.load_pipeline(device)
+        for index, entry in enumerate(entries, start=1):
+            if not entry.media.is_file():
+                raise FileNotFoundError(
+                    f"미디어 없음: '{entry.media}'를 찾을 수 없습니다."
                 )
-            voices = dz.merge_voice(voices, name, found[label])
-            added += 1
-            print(f"  {dz.speaker_label(label)} → {name}")
+            print(f"[{index}/{len(entries)}] {entry.media.name}")
+            with tempfile.TemporaryDirectory() as tmp:
+                wav = dz.to_wav(entry.media, Path(tmp) / "audio.wav")
+                labels, embeddings = dz.diarize_embeddings(pipeline, wav)
+            found = dict(zip(labels, embeddings))
+            for label, name in entry.speakers.items():
+                if label not in found:
+                    raise ValueError(
+                        f"'{entry.media.name}'에 화자 '{label}'이 없습니다. "
+                        f"이 파일의 화자는 {sorted(found)}입니다."
+                    )
+                voices = dz.merge_voice(voices, name, found[label])
+                added += 1
+                print(f"  {dz.speaker_label(label)} → {name}")
     dz.save_voice_db(voices, args.db)
     print(f"등록 완료: {added}건 → {args.db} (이름 {len(voices)}명)")
     return 0

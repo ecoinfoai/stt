@@ -357,7 +357,7 @@ description: "Task list for 001-server-transcription"
 
 ### Tests for User Story 4 (MANDATORY - write first) ⚠️
 
-- [ ] T049 [P] [US4] `tests/test_cli_gpu_lock.py` — RED: 잠금 파일을 다른 프로세스가 1초 쥔 동안 `STT_GPU_LOCK` 을 두고
+- [X] T049 [P] [US4] `tests/test_cli_gpu_lock.py` — RED: 잠금 파일을 다른 프로세스가 1초 쥔 동안 `STT_GPU_LOCK` 을 두고
   `transcribe.main([media, "--device", "cuda"])`(가짜 모델) → stderr 에 `gpu_lock.WAIT_MESSAGE` 정확히 한 번, 모델 적재 시각 ≥ 풀린 시각, 종료 0
   (`test_us4_1_cli_waits_for_server_job`); 끝난 뒤 잠금이 풀려 있음; `STT_GPU_LOCK` 없음 → 출력이 잠금 기능 전과 같음, `--device cpu` 는 잠금 파일이
   없어도 잠그지 않고 돈다(`test_us4_4_cli_unchanged_without_lock`); `test_cli_runs_without_fcntl` — `sys.modules["fcntl"] = None`·`STT_GPU_LOCK` 없음에서
@@ -374,11 +374,11 @@ description: "Task list for 001-server-transcription"
 
 ### Implementation for User Story 4 (turn T049–T051 GREEN)
 
-- [ ] T052 [US4] `src/stt/transcribe.py` `main`: `STT_GPU_LOCK` 이 있을 때만 `stt.gpu_lock` 을 불러오고, 장치가 `cuda` 면 화자 파이프라인·모델 적재
+- [X] T052 [US4] `src/stt/transcribe.py` `main`: `STT_GPU_LOCK` 이 있을 때만 `stt.gpu_lock` 을 불러오고, 장치가 `cuda` 면 화자 파이프라인·모델 적재
   전에 `gpu_lock.acquire(path, on_wait=stderr 에 WAIT_MESSAGE)` 를 쥐고 `run_with_fallback` 이 끝날 때까지 유지; `MissingGpuLockError` 는 메시지를
   stderr 에 쓰고 종료 2 — `batch.run_groups` 의 `keep_going` 이 삼키지 않게 한다(예: `SystemExit(2)`). `main` 의 docstring 영어, 기존 출력 그대로 —
   turns `test_us4_1`, `test_us4_4`, `test_cli_runs_without_fcntl`, 없는 파일·batch 시험 GREEN (T049) — closes US4-1, US4-4
-- [ ] T053 [P] [US4] `src/stt/enroll.py` `main`: 같은 잠금(같은 늦은 불러오기)을 `load_pipeline` 전부터 끝까지 — turns T049 의 enroll 시험 GREEN — closes US4-1
+- [X] T053 [P] [US4] `src/stt/enroll.py` `main`: 같은 잠금(같은 늦은 불러오기)을 `load_pipeline` 전부터 끝까지 — turns T049 의 enroll 시험 GREEN — closes US4-1
 - [ ] T054 [P] [US4] `src/stt/diarize.py` `load_pipeline`: `device == "cuda"` 인데 torch 가 CUDA 를 못 보면 CPU 로 계속하되 cli.md §3 의 영어 경고를
   stderr 에 한 번(R17, 헌법 V) — turns T050 GREEN — closes US4-5
 - [ ] T055 [US4] `src/stt/server/worker.py`·`src/stt/server/cli.py`·`tests/server/conftest.py`: 워커에 `gpu_lock: Path` 인자(명령줄 `--gpu-lock FILE` 필수);

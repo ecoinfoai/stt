@@ -18,11 +18,13 @@ import gc
 import os
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING, Callable, Iterable, Protocol, Sequence, TypeAlias,
+    TYPE_CHECKING, Callable, Iterable, Iterator, Protocol, Sequence,
+    TypeAlias,
 )
 
 if TYPE_CHECKING:  # 무거운 import는 실행 시점으로 미룬다.
@@ -591,6 +593,40 @@ def detect_device(requested: str) -> str:
     return "cpu"
 
 
+@contextmanager
+def hold_gpu_lock(device: str) -> Iterator[None]:
+    """Holds the shared GPU lock while `device` is 'cuda' and STT_GPU_LOCK is set.
+
+    The lock module is imported only when the variable is set, so runs
+    without it (other machines, Windows) behave exactly as before. Waits
+    while another process holds the lock and tells the user once on stderr.
+
+    Args:
+        device: 'cuda' or 'cpu'.
+
+    Raises:
+        SystemExit: With code 2 when STT_GPU_LOCK names a missing file.
+            It is not an Exception, so 'stt batch --keep-going' stops too.
+    """
+    if "STT_GPU_LOCK" not in os.environ:
+        yield
+        return
+    from stt import gpu_lock
+
+    path = gpu_lock.lock_path_from_env(os.environ)
+    if path is None or device != "cuda":
+        yield
+        return
+    try:
+        with gpu_lock.acquire(
+            path, lambda: print(gpu_lock.WAIT_MESSAGE, file=sys.stderr)
+        ):
+            yield
+    except gpu_lock.MissingGpuLockError as error:
+        print(error, file=sys.stderr)
+        raise SystemExit(2) from None
+
+
 def resolve_model_chain(model_arg: str, device: str) -> tuple[str, ...]:
     """시도할 모델 이름 목록을 결정한다.
 
@@ -1136,13 +1172,20 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """CLI 진입점: 인자 검증 → 파일 수집 → 전사 → 저장.
+    """CLI entry point: validate arguments, collect files, transcribe, save.
+
+    With STT_GPU_LOCK set and the device 'cuda', the shared GPU lock is
+    held from before the speaker pipeline and model load until all files
+    are done.
 
     Args:
-        argv: 테스트용 인자 목록(None이면 sys.argv 사용).
+        argv: Argument list for tests (sys.argv is used when None).
 
     Returns:
-        종료 코드(성공 0).
+        Exit code (0 on success).
+
+    Raises:
+        SystemExit: With code 2 when STT_GPU_LOCK names a missing file.
 
     Examples:
         >>> main(["--help"])  # doctest: +SKIP
@@ -1175,12 +1218,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"대상 {len(pending)}개 | 장치: {device} | "
         f"모델 후보: {' → '.join(chain)}"
     )
-    pipeline = None
-    if args.diarize:
-        from stt import diarize as dz
+    with hold_gpu_lock(device):
+        pipeline = None
+        if args.diarize:
+            from stt import diarize as dz
 
-        print(f"  화자 분리 준비: {dz.PIPELINE_NAME}")
-        pipeline = dz.load_pipeline(device)
-    run_with_fallback(pending, chain, device, args, terms, pipeline)
+            print(f"  화자 분리 준비: {dz.PIPELINE_NAME}")
+            pipeline = dz.load_pipeline(device)
+        run_with_fallback(pending, chain, device, args, terms, pipeline)
     print("전체 완료.")
     return 0
