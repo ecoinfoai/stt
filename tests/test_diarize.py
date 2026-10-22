@@ -458,7 +458,7 @@ def test_us4_6_no_cuda_stops_without_cpu_fallback(
     assert captured.out == ""
 
 
-def test_us4_5_no_warning_when_cuda_is_available(
+def test_us4_6_pipeline_moves_to_cuda_when_available(
     fake_pyannote_cuda, monkeypatch, capsys
 ):
     from stt import diarize
