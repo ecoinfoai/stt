@@ -509,7 +509,7 @@ description: "Task list for 001-server-transcription"
   `test_intake.py`·`test_logging.py`·`conftest.py`·`inbox_helpers.py`(요청에서 `delete_audio`·`scope` 를 뺀다). 옛 규칙만 확인하던 시험
   (「끝나면 바로」·「결과 지우기」·`no_result`·`retention_limit`·`cause`·I2 after_job 복구)은 지운다 — 보고서에 지운 시험 이름을 적는다.
   SC-003 표(지우는 길 2 × 종료 3)를 시험 하나로 둔다 — closes US2-1…10, US3-1…4, 경계 사례 2·3·8, SC-003, SC-004, SC-005 — verify RED
-- [X] T080 [US2] 서버 구현 — `deadlines.next_purge`(23:58 `Asia/Seoul`, data-model §1) 로 모든 기한을 바꾸고 `RETENTION_DUE`·`next_midnight`
+- [X] T080 [US2] 서버 구현 — `deadlines.purge_time`(받은 날 23:58 `Asia/Seoul`, data-model §1) 로 모든 기한을 바꾸고 `RETENTION_DUE`·`next_midnight`
   을 없앤다; `records`(Job 의 `delete_audio`, Audio 의 `policy`·`hard_deadline` → `delete_at`, `deleted_by` ∈ {`purge`,`request`});
   `responses`(`audio` = `{delete_at, deleted_at?}`, delete 답에 `scope` 없음, `failure` 에 `cause` 없음); `lifecycle`(`finish` 가 녹음을 지우지
   않음, `delete_result` 없앰, 「다 지우기」가 `audio.users` 의 모든 job 을 `deleted` 로 — 대기 표시·힌트·결과·작업 폴더 정리, 처리 중이면 워커가
