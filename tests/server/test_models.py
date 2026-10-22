@@ -187,3 +187,22 @@ def test_fetch_retry_after_failure_downloads_again(tmp_path: Path) -> None:
 
     assert len(retry.calls) == len(models.PINNED)
     assert (tmp_path / ".complete").is_file()
+
+
+def test_fetch_repairs_the_cache_after_a_failed_upgrade_and_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    list_a = models.PINNED
+    list_b = (("Systran/faster-whisper-large-v3", "1" * 40),) + list_a[1:]
+    models.fetch(tmp_path, None, FakeDownload())
+
+    monkeypatch.setattr(models, "PINNED", list_b)
+    with pytest.raises(models.FetchError):
+        models.fetch(tmp_path, None, FakeDownload(fail_on=list_a[1][0]))
+
+    monkeypatch.setattr(models, "PINNED", list_a)
+    repair = FakeDownload()
+    models.fetch(tmp_path, None, repair)
+
+    assert len(repair.calls) == len(list_a)
+    assert models.ref_mismatches(tmp_path) == []

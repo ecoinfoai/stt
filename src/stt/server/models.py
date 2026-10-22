@@ -37,7 +37,9 @@ def fetch(models_dir: Path, token: str | None, download: Callable[..., object]) 
     After each download ``refs/main`` is written to the pinned commit, because huggingface_hub
     does not write it when downloading by commit hash. When every repository is done,
     ``<models_dir>/.complete`` is written atomically with one ``<repo> <commit>`` line per
-    ``PINNED`` entry. If ``.complete`` already holds exactly that list, nothing is downloaded.
+    ``PINNED`` entry. If ``.complete`` already holds exactly that list, nothing is downloaded;
+otherwise it is removed before downloading, so a failed run never leaves a list that no
+longer describes the rewritten ``refs/main`` files.
 
     Args:
         models_dir: The model folder (``HF_HOME``); created when missing.
@@ -55,6 +57,7 @@ def fetch(models_dir: Path, token: str | None, download: Callable[..., object]) 
             return
     except FileNotFoundError:
         pass
+    complete.unlink(missing_ok=True)
     for repo, commit in PINNED:
         try:
             download(repo_id=repo, revision=commit, cache_dir=str(models_dir / "hub"), token=token)
