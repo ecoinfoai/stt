@@ -112,14 +112,14 @@ description: "Task list for 001-server-transcription"
   `next_seq(jobs)` = 최대값 + 1(없으면 1); `queue_position(job, jobs)` — `queued` 가운데 seq 가 작은 것의 수 + 1, `running` 은 세지 않음, `queued` 가
   아니면 None; `queued_in_order(jobs)` — supports US1-7 — verify RED
 - [X] T012 `src/stt/server/records.py`: 위 기록 형식과 읽기·쓰기(`dataclasses.replace` 로 바꾼 사본을 저장) — turns T011 GREEN — supports US1-7
-- [ ] T013 [P] `tests/server/test_responses.py` — RED: `job_status(job, audio, jobs, now) -> dict` 가 상태마다 `contract.validate_response` 를
+- [X] T013 [P] `tests/server/test_responses.py` — RED: `job_status(job, audio, jobs, now) -> dict` 가 상태마다 `contract.validate_response` 를
   통과: `queued` 만 `queue_position`, `done` 은 `result.transcript == "<id>/transcript.txt"`·`result.data == "<id>/result.json"`, 결과를 지웠으면
   `result.deleted_at`, `failed` 는 `failure.reason`·`detail`(·`audio_deleted` 면 `cause`), `deleted` 는 `deleted.at`, 녹음 칸 `delete_policy`·
   `delete_after`(`after_job` 일 때만)·`delete_at`·`deleted_at`, `duplicate_refused_at`; `deleted` 응답은 결과가 있었으면 `result`(`deleted_at` 포함)·
   `started_at`·`finished_at` 을 남기고 `failure` 는 없음(R21-12); 받기에서 거절된 transcribe(`accepted_at` 없음)의 `rejected_status(request_id,
   reason, detail, now)`; `delete_outcome(request_id, target, scope, outcome, now)` 네 가지; `refusal(request_id, detail, now)`(`kind: invalid`);
   기록 없는 응답 세 꼴 모두 `duplicate_refused_at=None` 인자를 받음(R21-11) — 모든 문서가 response 스키마를 통과 — supports US1-8, US2-5, US3-5, US5-8 — verify RED
-- [ ] T014 `src/stt/server/responses.py`: 위 순수 함수들(response.schema.json 의 조건부 필수 칸을 따른다) — turns T013 GREEN — supports US1-8, US2-5, US3-5, US5-8
+- [X] T014 `src/stt/server/responses.py`: 위 순수 함수들(response.schema.json 의 조건부 필수 칸을 따른다) — turns T013 GREEN — supports US1-8, US2-5, US3-5, US5-8
 - [ ] T015 [P] `tests/test_gpu_lock.py` — RED: `gpu_lock.lock_path_from_env(environ) -> Path | None`; `gpu_lock.acquire(path, on_wait)`
   문맥 관리자 — 파일을 읽기 전용으로 열고 `LOCK_EX`, 다른 프로세스가 쥐고 있으면 `on_wait` 를 정확히 한 번 부르고 기다림, 나오면 풀림;
   `gpu_lock.try_acquire(path)` 는 쥐어져 있으면 None; 연 fd 는 상속되지 않음(`os.get_inheritable` False); 파일이 없으면 `MissingGpuLockError`
