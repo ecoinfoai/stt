@@ -576,6 +576,29 @@ def test_engine_stops_when_the_job_record_is_purged_mid_run(
     assert not (layout.outbox / request_id).exists()
 
 
+def test_worker_whose_engine_ended_just_before_the_purge_publishes_nothing(
+    layout: Layout, wav: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock.set("2026-03-02T14:50:00Z")
+    request_id = submit(layout, wav, clock)
+    run_engine = worker._run_engine
+
+    def engine_ends_then_sweep_runs(*args: Any, **kwargs: Any) -> str:
+        ending = run_engine(*args, **kwargs)
+        clock.set(AFTER_PURGE)
+        run_sweep(layout, clock)
+        return ending
+
+    monkeypatch.setattr(worker, "_run_engine", engine_ends_then_sweep_runs)
+
+    run_worker(layout, clock)
+
+    assert f"{request_id} stopped" in capsys.readouterr().out.splitlines()
+    assert not (layout.jobs / request_id).exists()
+    assert not (layout.outbox / request_id).exists()
+    assert_state_root_empty(layout)
+
+
 def test_engine_is_killed_when_the_poll_loop_raises(
     layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

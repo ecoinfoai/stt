@@ -161,8 +161,11 @@ def _publish(layout: Layout, work_dir: Path, request_id: str) -> None:
 
 
 def _settle(layout: Layout, job: Job, work_dir: Path, failure: Failure | None, now: Callable[[], datetime]) -> None:
-    """Publishes and finishes `job`, unless it is no longer ``running``."""
+    """Publishes and finishes `job`, unless it is no longer ``running`` or its record was purged."""
     with hold(layout.state_lock):
+        if not (layout.jobs / job.request_id / "job.json").exists():
+            _log(job.request_id, "stopped")
+            return
         current = load_job(layout, job.request_id)
         if current.state != "running":
             return
