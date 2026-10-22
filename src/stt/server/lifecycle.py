@@ -5,6 +5,7 @@ Every function here must be called with ``state.lock`` held by the caller.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -111,6 +112,22 @@ def _remove_audio(layout: Layout, audio: Audio, deleted_by: DeletedBy, now: date
     return removed
 
 
+def _remove_while_engine_may_write(folder: Path) -> None:
+    """Removes `folder`, tolerating a vanished folder or one a live engine refills meanwhile.
+
+    A still-running engine may write into its folder until the worker kills it, and the
+    worker removes the folder again after the kill, so a partial removal here is fine.
+    Any other error propagates.
+    """
+    try:
+        shutil.rmtree(folder)
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        if error.errno != errno.ENOTEMPTY:
+            raise
+
+
 def finish(layout: Layout, job: Job, state: EndState, now: datetime, failure: Failure | None = None) -> Job:
     """Moves a job to an end state; the only way a job reaches one.
 
@@ -133,10 +150,8 @@ def finish(layout: Layout, job: Job, state: EndState, now: datetime, failure: Fa
     finished = replace(job, state=state, finished_at=finished_at, failure=failure, hints=None)
     save_job(layout, finished)
     marker_path(layout, job).unlink(missing_ok=True)
-    # A still-running engine may write into its folder until the worker kills it; the
-    # worker removes the folder again after the kill, so a partial removal here is fine.
-    shutil.rmtree(layout.work / job.request_id, ignore_errors=True)
-    shutil.rmtree(layout.outbox / f".{job.request_id}.tmp", ignore_errors=True)
+    _remove_while_engine_may_write(layout.work / job.request_id)
+    _remove_while_engine_may_write(layout.outbox / f".{job.request_id}.tmp")
     write_job_response(layout, finished, now)
     rewrite_queued_responses(layout, now)
     return finished

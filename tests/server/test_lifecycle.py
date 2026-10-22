@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
@@ -111,6 +112,41 @@ def test_finish_removes_hints_and_keeps_the_recording(layout: Layout, tmp_path: 
     assert (layout.audio / first / "audio.wav").is_file()
     assert load_audio(layout, first).deleted_at is None
     assert "deleted_at" not in read_response(layout, second)["audio"]
+
+
+def rmtree_raising(error: OSError) -> object:
+    def rmtree(path: object, ignore_errors: bool = False, *args: object, **kwargs: object) -> None:
+        if not ignore_errors:
+            raise error
+
+    return rmtree
+
+
+def test_finish_lets_a_real_removal_error_propagate(
+    layout: Layout, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = FakeClock()
+    first, _, _ = accept_three(layout, tmp_path, clock)
+    monkeypatch.setattr(lifecycle.shutil, "rmtree", rmtree_raising(PermissionError(errno.EACCES, "denied")))
+
+    with hold(layout.state_lock), pytest.raises(PermissionError):
+        lifecycle.finish(layout, load_job(layout, first), "done", clock.now())
+
+
+@pytest.mark.parametrize(
+    "error", [FileNotFoundError(errno.ENOENT, "gone"), OSError(errno.ENOTEMPTY, "engine still writing")]
+)
+def test_finish_tolerates_what_a_live_engine_can_cause(
+    layout: Layout, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: OSError
+) -> None:
+    clock = FakeClock()
+    first, _, _ = accept_three(layout, tmp_path, clock)
+    monkeypatch.setattr(lifecycle.shutil, "rmtree", rmtree_raising(error))
+
+    with hold(layout.state_lock):
+        finished = lifecycle.finish(layout, load_job(layout, first), "done", clock.now())
+
+    assert finished.state == "done"
 
 
 def test_purge_audio_fails_waiting_users_and_keeps_the_record(layout: Layout, tmp_path: Path) -> None:
