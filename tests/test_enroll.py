@@ -64,3 +64,83 @@ class TestParseArgs:
         args = parse_args(["--map", "enroll.yaml"])
         assert args.db == Path("voices.json")
         assert args.device == "auto"
+
+    def test_parse_args_rejects_cpu_device(self, capsys):
+        with pytest.raises(SystemExit) as stopped:
+            parse_args(["--map", "enroll.yaml", "--device", "cpu"])
+        assert stopped.value.code == 2
+        assert "invalid choice" in capsys.readouterr().err
+
+
+class TestGpuOnlyMain:
+    """enroll stops with a reason when no GPU is usable (US4-6, SC-014)."""
+
+    NO_GPU = "No usable GPU was found; stt runs on the GPU only."
+    NO_CUDA = (
+        "Speaker diarization needs a GPU, but torch cannot use CUDA; "
+        "stt runs on the GPU only."
+    )
+
+    @staticmethod
+    def _arguments(tmp_path: Path) -> list[str]:
+        media = tmp_path / "talk.m4a"
+        media.touch()
+        enroll_map = tmp_path / "enroll.yaml"
+        enroll_map.write_text(
+            f"- media: {media}\n  speakers:\n    SPEAKER_00: Alice\n",
+            encoding="utf-8",
+        )
+        return ["--map", str(enroll_map), "--db", str(tmp_path / "voices.json")]
+
+    @staticmethod
+    def _ctranslate2_gpus(monkeypatch: pytest.MonkeyPatch, count: int) -> None:
+        import ctranslate2
+
+        monkeypatch.setattr(ctranslate2, "get_cuda_device_count", lambda: count)
+
+    @pytest.mark.parametrize("device", ["auto", "cuda"])
+    def test_main_without_cuda_device_stops(
+        self, tmp_path, monkeypatch, capsys, device
+    ):
+        from stt import diarize, enroll
+
+        self._ctranslate2_gpus(monkeypatch, 0)
+        monkeypatch.setattr(
+            diarize, "load_pipeline", lambda dev: pytest.fail("pipeline loaded")
+        )
+        with pytest.raises(SystemExit) as stopped:
+            enroll.main([*self._arguments(tmp_path), "--device", device])
+        assert stopped.value.code == 1
+        assert capsys.readouterr().err.strip() == self.NO_GPU
+        assert not (tmp_path / "voices.json").exists()
+
+    @pytest.mark.parametrize("device", ["auto", "cuda"])
+    def test_main_with_torch_without_cuda_stops(
+        self, tmp_path, monkeypatch, capsys, device
+    ):
+        import sys
+        import types
+        from types import SimpleNamespace
+
+        from stt import diarize, enroll
+
+        self._ctranslate2_gpus(monkeypatch, 1)
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        torch = types.ModuleType("torch")
+        torch.cuda = SimpleNamespace(is_available=lambda: False)
+        audio = types.ModuleType("pyannote.audio")
+        audio.Pipeline = SimpleNamespace(
+            from_pretrained=lambda *a, **k: pytest.fail("pipeline built")
+        )
+        monkeypatch.setitem(sys.modules, "torch", torch)
+        monkeypatch.setitem(sys.modules, "pyannote", types.ModuleType("pyannote"))
+        monkeypatch.setitem(sys.modules, "pyannote.audio", audio)
+        monkeypatch.setattr(
+            diarize, "diarize_embeddings",
+            lambda *a, **k: pytest.fail("diarized"),
+        )
+        with pytest.raises(SystemExit) as stopped:
+            enroll.main([*self._arguments(tmp_path), "--device", device])
+        assert stopped.value.code == 1
+        assert capsys.readouterr().err.strip() == self.NO_CUDA
+        assert not (tmp_path / "voices.json").exists()

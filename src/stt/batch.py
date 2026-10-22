@@ -83,17 +83,18 @@ def _nfc(text: str) -> str:
 
 
 def _merge_options(overrides: dict[str, Any], base: Options) -> Options:
-    """기본 옵션 위에 덮어쓸 옵션을 얹는다.
+    """Layers override options on top of base options.
 
     Args:
-        overrides: 덮어쓸 옵션(알 수 없는 키가 있으면 오류).
-        base: 바탕이 되는 옵션 사전.
+        overrides: Options to override (an unknown key is an error).
+        base: The options to start from.
 
     Returns:
-        병합된 새 옵션 사전.
+        A new, merged options dict.
 
     Raises:
-        ValueError: OPTION_DEFAULTS에 없는 키가 들어왔을 때.
+        ValueError: If a key is not in OPTION_DEFAULTS, or if `device` is
+            not one of transcribe.DEVICE_CHOICES (stt runs on the GPU only).
 
     Examples:
         >>> _merge_options({"beam": 1}, OPTION_DEFAULTS)["beam"]
@@ -106,7 +107,14 @@ def _merge_options(overrides: dict[str, Any], base: Options) -> Options:
             f"알 수 없는 옵션: {', '.join(unknown)}. "
             f"목록 파일에서 쓸 수 있는 옵션은 {allowed} 입니다."
         )
-    return {**base, **overrides}
+    merged = {**base, **overrides}
+    if merged["device"] not in transcribe.DEVICE_CHOICES:
+        choices = ", ".join(transcribe.DEVICE_CHOICES)
+        raise ValueError(
+            f"Invalid device: '{merged['device']}'. stt runs on the GPU "
+            f"only; device must be one of {choices}."
+        )
+    return merged
 
 
 def parse_txt_list(text: str) -> list[ListItem]:

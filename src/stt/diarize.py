@@ -17,12 +17,11 @@ from __future__ import annotations
 import json
 import math
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence, TypeAlias
 
-from stt.transcribe import format_timestamp
+from stt.transcribe import GpuUnavailableError, format_timestamp
 
 #: 문장이 끝났다고 보는 문자.
 _SENTENCE_ENDINGS: tuple[str, ...] = (".", "?", "!", "…")
@@ -39,10 +38,10 @@ DEFAULT_MIN_SECONDS: float = 1.5
 #: 등록된 목소리와 같은 사람으로 볼 최소 코사인 유사도.
 DEFAULT_VOICE_THRESHOLD: float = 0.75
 
-#: Warning written to stderr once when CUDA is requested but unusable.
-_CPU_FALLBACK_WARNING: str = (
-    "Speaker diarization is running on CPU because torch cannot use CUDA; "
-    "it will be much slower."
+#: Message of the error raised when torch cannot use CUDA.
+NO_CUDA_MESSAGE: str = (
+    "Speaker diarization needs a GPU, but torch cannot use CUDA; "
+    "stt runs on the GPU only."
 )
 
 #: 이름 → 화자 임베딩.
@@ -538,21 +537,22 @@ def load_pipeline(device: str):
     except when HF_HUB_OFFLINE is "1": the pipeline is then read from the
     local cache with token=None and no token is required.
 
-    If 'cuda' is requested but torch cannot use CUDA, the pipeline stays on
-    the CPU and a one-line warning is written to stderr.
+    The pipeline runs on the GPU only: if torch cannot use CUDA, loading
+    stops before the pipeline is built.
 
     Args:
-        device: 'cuda' or 'cpu'.
+        device: Device from detect_device(); always 'cuda'.
 
     Returns:
-        The loaded pyannote Pipeline instance.
+        The loaded pyannote Pipeline instance, moved to the GPU.
 
     Raises:
+        GpuUnavailableError: If torch cannot use CUDA (a RuntimeError).
         RuntimeError: If HF_TOKEN is missing (online mode) or pyannote.audio
             is not installed.
 
     Examples:
-        >>> load_pipeline("cpu")  # doctest: +SKIP
+        >>> load_pipeline("cuda")  # doctest: +SKIP
     """
     if os.environ.get("HF_HUB_OFFLINE") == "1":
         token = None
@@ -574,12 +574,10 @@ def load_pipeline(device: str):
             f"pyannote.audio 없음: {error}. --diarize를 쓰려면 "
             f"'uv sync --extra diarize'로 화자 분리 의존성을 설치하세요."
         ) from error
+    if not torch.cuda.is_available():
+        raise GpuUnavailableError(NO_CUDA_MESSAGE)
     pipeline = Pipeline.from_pretrained(PIPELINE_NAME, token=token)
-    if device == "cuda":
-        if torch.cuda.is_available():
-            pipeline.to(torch.device("cuda"))
-        else:
-            print(_CPU_FALLBACK_WARNING, file=sys.stderr)
+    pipeline.to(torch.device(device))
     return pipeline
 
 

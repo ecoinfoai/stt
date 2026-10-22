@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+from stt.transcribe import DEVICE_CHOICES
+
 
 @dataclass(frozen=True)
 class Entry:
@@ -119,13 +121,13 @@ def load_enroll_map(path: Path) -> list[Entry]:
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
-    """CLI 인자를 파싱한다.
+    """Parses the command-line arguments.
 
     Args:
-        argv: sys.argv[1:] 형태의 인자 목록.
+        argv: Argument list shaped like sys.argv[1:].
 
     Returns:
-        파싱된 argparse.Namespace.
+        The parsed argparse.Namespace.
 
     Examples:
         >>> parse_args(["--map", "enroll.yaml"]).device
@@ -144,8 +146,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="목소리 사전 JSON (기본: voices.json, 있으면 이어서 쌓는다)",
     )
     parser.add_argument(
-        "--device", default="auto", choices=["auto", "cuda", "cpu"],
-        help="실행 장치 (기본: auto)",
+        "--device", default="auto", choices=list(DEVICE_CHOICES),
+        help="실행 장치 — 둘 다 GPU (기본: auto)",
     )
     return parser.parse_args(list(argv))
 
@@ -153,7 +155,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point: extract voices following the enroll map into the database.
 
-    With STT_GPU_LOCK set and the device 'cuda', the shared GPU lock is
+    Runs on the GPU only. With STT_GPU_LOCK set, the shared GPU lock is
     held from before the pipeline load until all entries are done.
 
     Args:
@@ -163,7 +165,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         Exit code (0 on success).
 
     Raises:
-        SystemExit: With code 2 when STT_GPU_LOCK names a missing file.
+        SystemExit: With code 1 when no GPU can be used (the reason is on
+            stderr), or with code 2 when STT_GPU_LOCK names a missing file.
 
     Examples:
         >>> main(["--help"])  # doctest: +SKIP
@@ -172,16 +175,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     import tempfile
 
     from stt import diarize as dz
-    from stt.transcribe import detect_device, hold_gpu_lock
+    from stt.transcribe import detect_device, hold_gpu_lock, stop_without_gpu
 
     args = parse_args(sys.argv[1:] if argv is None else argv)
     entries = load_enroll_map(args.map)
-    device = detect_device(args.device)
+    with stop_without_gpu():
+        device = detect_device(args.device)
     voices = dz.load_voice_db(args.db)
     print(f"등록 대상 {len(entries)}개 | 장치: {device}")
     added = 0
-    with hold_gpu_lock(device):
-        pipeline = dz.load_pipeline(device)
+    with hold_gpu_lock():
+        with stop_without_gpu():
+            pipeline = dz.load_pipeline(device)
         for index, entry in enumerate(entries, start=1):
             if not entry.media.is_file():
                 raise FileNotFoundError(

@@ -42,6 +42,14 @@ class FakeModel:
         return segments, info
 
 
+@pytest.fixture(autouse=True)
+def one_cuda_device(monkeypatch) -> None:
+    """Makes the GPU-only device check see one CUDA device."""
+    import ctranslate2
+
+    monkeypatch.setattr(ctranslate2, "get_cuda_device_count", lambda: 1)
+
+
 @pytest.fixture()
 def media(tmp_path) -> Path:
     """빈 내용의 가짜 미디어 파일(확장자만 유효)."""
@@ -55,7 +63,7 @@ def test_main_writes_txt_with_header(tmp_path, media, monkeypatch):
     monkeypatch.setattr(
         transcribe, "load_model", lambda name, device: fake
     )
-    code = transcribe.main([str(media), "--device", "cpu"])
+    code = transcribe.main([str(media), "--device", "cuda"])
     assert code == 0
     out = (tmp_path / "강연.txt").read_text(encoding="utf-8")
     assert out.startswith("# 원본: 강연.m4a")
@@ -71,7 +79,7 @@ def test_main_passes_terms_as_hotwords(tmp_path, media, monkeypatch):
     terms = tmp_path / "terms.txt"
     terms.write_text("기업가정신\n헬스케어\n", encoding="utf-8")
     transcribe.main(
-        [str(media), "--device", "cpu", "--terms", str(terms)]
+        [str(media), "--device", "cuda", "--terms", str(terms)]
     )
     assert fake.calls[0]["hotwords"] == "기업가정신, 헬스케어"
     assert fake.calls[0]["language"] == "ko"
@@ -91,7 +99,7 @@ def test_main_reports_terms_budget_and_records_meta(
     terms = tmp_path / "terms.txt"
     terms.write_text("\n".join(long_terms) + "\n", encoding="utf-8")
     code = transcribe.main(
-        [str(media), "--device", "cpu", "--terms", str(terms)]
+        [str(media), "--device", "cuda", "--terms", str(terms)]
     )
     assert code == 0  # 경고만 하고 전사는 계속한다.
     captured = capsys.readouterr()
@@ -116,7 +124,7 @@ def test_main_without_terms_records_nothing_about_terms(
     monkeypatch.setattr(
         transcribe, "load_model", lambda name, device: FakeModel()
     )
-    transcribe.main([str(media), "--device", "cpu"])
+    transcribe.main([str(media), "--device", "cuda"])
     assert "반영" not in capsys.readouterr().out
     meta = yaml.safe_load(
         (tmp_path / "강연.meta.yaml").read_text(encoding="utf-8")
@@ -128,7 +136,7 @@ def test_main_writes_srt_when_requested(tmp_path, media, monkeypatch):
     monkeypatch.setattr(
         transcribe, "load_model", lambda name, device: FakeModel()
     )
-    transcribe.main([str(media), "--device", "cpu", "--srt"])
+    transcribe.main([str(media), "--device", "cuda", "--srt"])
     srt = (tmp_path / "강연.srt").read_text(encoding="utf-8")
     assert "00:00:00,000 --> 00:00:03,000" in srt
 
@@ -137,8 +145,8 @@ def test_main_skips_existing_output(tmp_path, media, monkeypatch, capsys):
     monkeypatch.setattr(
         transcribe, "load_model", lambda name, device: FakeModel()
     )
-    transcribe.main([str(media), "--device", "cpu"])
-    code = transcribe.main([str(media), "--device", "cpu"])
+    transcribe.main([str(media), "--device", "cuda"])
+    code = transcribe.main([str(media), "--device", "cuda"])
     assert code == 0
     assert "건너뜀" in capsys.readouterr().out
 
@@ -150,7 +158,7 @@ def test_main_writes_meta_yaml(tmp_path, media, monkeypatch):
     monkeypatch.setattr(
         transcribe, "load_model", lambda name, device: FakeModel()
     )
-    transcribe.main([str(media), "--device", "cpu", "--model", "small"])
+    transcribe.main([str(media), "--device", "cuda", "--model", "small"])
     meta_file = tmp_path / "강연.meta.yaml"
     meta = yaml.safe_load(meta_file.read_text(encoding="utf-8"))
     assert meta["model"] == "faster-whisper small"
@@ -178,7 +186,7 @@ def test_main_meta_uses_info_json(tmp_path, media, monkeypatch):
     monkeypatch.setattr(
         transcribe, "load_model", lambda name, device: FakeModel()
     )
-    transcribe.main([str(media), "--device", "cpu"])
+    transcribe.main([str(media), "--device", "cuda"])
     meta = yaml.safe_load(
         (tmp_path / "강연.meta.yaml").read_text(encoding="utf-8")
     )
@@ -193,7 +201,7 @@ def test_main_no_meta_option(tmp_path, media, monkeypatch):
     monkeypatch.setattr(
         transcribe, "load_model", lambda name, device: FakeModel()
     )
-    transcribe.main([str(media), "--device", "cpu", "--no-meta"])
+    transcribe.main([str(media), "--device", "cuda", "--no-meta"])
     assert not (tmp_path / "강연.meta.yaml").exists()
 
 
@@ -202,9 +210,9 @@ def test_fallback_moves_to_smaller_model(tmp_path, media, monkeypatch):
     monkeypatch.setattr(
         transcribe, "load_model", lambda name, device: models[name]
     )
-    args = transcribe.parse_args([str(media), "--device", "cpu"])
+    args = transcribe.parse_args([str(media), "--device", "cuda"])
     transcribe.run_with_fallback(
-        [media], ("big", "small"), "cpu", args, None
+        [media], ("big", "small"), "cuda", args, None
     )
     assert (tmp_path / "강연.txt").exists()
     assert len(models["big"].calls) == 1
@@ -217,10 +225,10 @@ def test_fallback_exhausted_raises(tmp_path, media, monkeypatch):
         "load_model",
         lambda name, device: FakeModel(fail_oom=True),
     )
-    args = transcribe.parse_args([str(media), "--device", "cpu"])
+    args = transcribe.parse_args([str(media), "--device", "cuda"])
     with pytest.raises(RuntimeError, match="모델 체인"):
         transcribe.run_with_fallback(
-            [media], ("big",), "cpu", args, None
+            [media], ("big",), "cuda", args, None
         )
 
 
@@ -234,10 +242,10 @@ def test_dll_error_gets_guidance(tmp_path, media, monkeypatch):
     monkeypatch.setattr(
         transcribe, "load_model", lambda name, device: DllModel()
     )
-    args = transcribe.parse_args([str(media), "--device", "cpu"])
+    args = transcribe.parse_args([str(media), "--device", "cuda"])
     with pytest.raises(RuntimeError, match="INSTALL.md"):
         transcribe.run_with_fallback(
-            [media], ("big",), "cpu", args, None
+            [media], ("big",), "cuda", args, None
         )
 
 
@@ -249,8 +257,8 @@ def test_non_oom_runtime_error_propagates(tmp_path, media, monkeypatch):
     monkeypatch.setattr(
         transcribe, "load_model", lambda name, device: BrokenModel()
     )
-    args = transcribe.parse_args([str(media), "--device", "cpu"])
+    args = transcribe.parse_args([str(media), "--device", "cuda"])
     with pytest.raises(RuntimeError, match="invalid model"):
         transcribe.run_with_fallback(
-            [media], ("big", "small"), "cpu", args, None
+            [media], ("big", "small"), "cuda", args, None
         )

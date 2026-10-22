@@ -330,3 +330,39 @@ class TestParseArgs:
         assert args.base_dir == Path("data")
         assert args.dry_run is False
         assert args.keep_going is False
+
+
+class TestGpuOnlyDevice:
+    """The `device` setting accepts only the two GPU values (US4-5)."""
+
+    @pytest.mark.parametrize("device", ["auto", "cuda"])
+    def test_device_setting_accepts_gpu_values(self, device):
+        text = f"defaults:\n  device: {device}\nitems:\n  - A\n"
+        assert batch.parse_yaml_list(text)[0].options["device"] == device
+
+    def test_device_default_is_auto(self):
+        assert batch.OPTION_DEFAULTS["device"] == "auto"
+
+    def test_defaults_device_cpu_is_rejected(self):
+        text = "defaults:\n  device: cpu\nitems:\n  - A\n"
+        with pytest.raises(ValueError, match="GPU only"):
+            batch.parse_yaml_list(text)
+
+    def test_item_device_cpu_is_rejected(self):
+        text = "items:\n  - title: A\n    device: cpu\n"
+        with pytest.raises(ValueError, match="'cpu'"):
+            batch.parse_yaml_list(text)
+
+    def test_main_rejects_cpu_device_before_running(self, tmp_path, monkeypatch):
+        _touch(tmp_path, "A.m4a")
+        list_file = tmp_path / "list.yaml"
+        list_file.write_text(
+            "defaults:\n  device: cpu\nitems:\n  - A\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            batch.transcribe, "main", lambda argv: pytest.fail("ran")
+        )
+        with pytest.raises(ValueError, match="GPU only"):
+            batch.main([
+                "--list", str(list_file), "--base-dir", str(tmp_path),
+            ])

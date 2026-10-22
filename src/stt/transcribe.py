@@ -55,7 +55,12 @@ DEFAULT_VOICE_THRESHOLD: float = 0.75
 
 #: 자동 모드에서 시도하는 모델 순서(앞이 실패하면 뒤로 폴백).
 GPU_MODEL_CHAIN: tuple[str, ...] = ("large-v3", "large-v3-turbo", "small")
-CPU_DEFAULT_MODEL: str = "small"
+
+#: Values accepted for --device; both mean the GPU (stt never runs on the CPU).
+DEVICE_CHOICES: tuple[str, ...] = ("auto", "cuda")
+
+#: Message written to stderr when no CUDA device can be used.
+NO_GPU_MESSAGE: str = "No usable GPU was found; stt runs on the GPU only."
 
 _SENTENCE_ENDINGS: tuple[str, ...] = (".", "?", "!", "…")
 _OOM_MARKERS: tuple[str, ...] = ("out of memory", "failed to allocate")
@@ -554,43 +559,55 @@ def render_srt(segments: Sequence[SegmentLike]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
-def detect_device(requested: str) -> str:
-    """실행 장치를 결정한다('auto'면 CUDA 유무로 판단).
+class GpuUnavailableError(RuntimeError):
+    """Raised when a GPU is required but none can be used."""
 
-    'auto'가 GPU 없이 CPU로 정해지면 stderr에 경고를 낸다. 호출하는
-    쪽(transcribe, enroll)마다 빠뜨리지 않도록 여기서 한 번만 낸다.
+
+def detect_device(requested: str) -> str:
+    """Checks that a CUDA device exists and returns the device to run on.
+
+    Both 'auto' and 'cuda' mean the GPU; there is no CPU path.
 
     Args:
-        requested: 'auto', 'cuda', 'cpu' 중 하나.
+        requested: 'auto' or 'cuda'.
 
     Returns:
-        'cuda' 또는 'cpu'.
+        Always 'cuda'.
 
     Raises:
-        ValueError: requested가 허용 값이 아닐 때.
+        ValueError: If requested is not an allowed value.
+        GpuUnavailableError: If ctranslate2 sees no CUDA device.
 
     Examples:
-        >>> detect_device("cpu")
-        'cpu'
+        >>> detect_device("cpu")  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ValueError: ...
     """
-    if requested not in ("auto", "cuda", "cpu"):
+    if requested not in DEVICE_CHOICES:
         raise ValueError(
-            f"잘못된 device: '{requested}'. "
-            f"'auto', 'cuda', 'cpu' 중 하나여야 합니다."
+            f"Invalid device: '{requested}'. "
+            f"Must be one of {', '.join(DEVICE_CHOICES)}."
         )
-    if requested != "auto":
-        return requested
     import ctranslate2
 
-    if ctranslate2.get_cuda_device_count() > 0:
-        return "cuda"
-    print(
-        "[경고] GPU를 찾지 못해 CPU로 실행합니다. GPU보다 훨씬 "
-        "느립니다. GPU가 있어야 하는 작업이면 '--device cuda'로 "
-        "지정하세요(GPU가 없으면 CPU로 넘어가지 않고 오류로 멈춥니다).",
-        file=sys.stderr,
-    )
-    return "cpu"
+    if ctranslate2.get_cuda_device_count() == 0:
+        raise GpuUnavailableError(NO_GPU_MESSAGE)
+    return "cuda"
+
+
+@contextmanager
+def stop_without_gpu() -> Iterator[None]:
+    """Turns GpuUnavailableError into its message on stderr and exit code 1.
+
+    Raises:
+        SystemExit: With code 1 when the body raises GpuUnavailableError.
+            It is not an Exception, so 'stt batch --keep-going' stops too.
+    """
+    try:
+        yield
+    except GpuUnavailableError as error:
+        print(error, file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 def release_cached_gpu_memory() -> None:
@@ -607,8 +624,8 @@ def release_cached_gpu_memory() -> None:
 
 
 @contextmanager
-def hold_gpu_lock(device: str) -> Iterator[None]:
-    """Holds the shared GPU lock while `device` is 'cuda' and STT_GPU_LOCK is set.
+def hold_gpu_lock() -> Iterator[None]:
+    """Holds the shared GPU lock while STT_GPU_LOCK is set.
 
     The lock module is imported only when the variable is set, so runs
     without it (other machines, Windows) behave exactly as before. Waits
@@ -616,9 +633,6 @@ def hold_gpu_lock(device: str) -> Iterator[None]:
     Before the lock is released, cached PyTorch GPU memory is returned so
     the next lock holder does not share the GPU with this idle process;
     callers must drop their own GPU objects (such as the pipeline) first.
-
-    Args:
-        device: 'cuda' or 'cpu'.
 
     Raises:
         SystemExit: With code 2 when STT_GPU_LOCK names a missing file.
@@ -630,7 +644,7 @@ def hold_gpu_lock(device: str) -> Iterator[None]:
     from stt import gpu_lock
 
     path = gpu_lock.lock_path_from_env(os.environ)
-    if path is None or device != "cuda":
+    if path is None:
         yield
         return
     try:
@@ -646,55 +660,48 @@ def hold_gpu_lock(device: str) -> Iterator[None]:
         raise SystemExit(2) from None
 
 
-def resolve_model_chain(model_arg: str, device: str) -> tuple[str, ...]:
-    """시도할 모델 이름 목록을 결정한다.
+def resolve_model_chain(model_arg: str) -> tuple[str, ...]:
+    """Decides the list of model names to try.
 
-    'auto'면 GPU에서는 large-v3부터 폴백 체인을, CPU에서는 small을
-    쓴다. 특정 모델을 지정하면 그 모델만 시도한다.
+    'auto' starts at large-v3 and falls back through GPU_MODEL_CHAIN when
+    GPU memory runs out; a named model is the only one tried.
 
     Args:
-        model_arg: 'auto' 또는 Whisper 모델 이름.
-        device: 'cuda' 또는 'cpu'.
+        model_arg: 'auto' or a Whisper model name.
 
     Returns:
-        시도 순서대로 정렬된 모델 이름 튜플.
+        Model names in the order to try.
 
     Examples:
-        >>> resolve_model_chain("auto", "cpu")
-        ('small',)
-        >>> resolve_model_chain("medium", "cuda")
+        >>> resolve_model_chain("medium")
         ('medium',)
     """
     if model_arg != "auto":
         return (model_arg,)
-    if device == "cuda":
-        return GPU_MODEL_CHAIN
-    return (CPU_DEFAULT_MODEL,)
+    return GPU_MODEL_CHAIN
 
 
 def load_model(model_name: str, device: str) -> "WhisperModel":
-    """faster-whisper 모델을 적재한다(첫 실행 시 자동 다운로드).
+    """Loads a faster-whisper model (downloaded on first use).
 
     Args:
-        model_name: Whisper 모델 이름(예: 'large-v3').
-        device: 'cuda' 또는 'cpu'.
+        model_name: Whisper model name (e.g. 'large-v3').
+        device: Device from detect_device(); always 'cuda'.
 
     Returns:
-        적재된 WhisperModel 인스턴스.
+        The loaded WhisperModel instance.
 
     Examples:
-        >>> load_model("small", "cpu")  # doctest: +SKIP
+        >>> load_model("large-v3", "cuda")  # doctest: +SKIP
     """
     from faster_whisper import WhisperModel
 
-    compute = "int8_float16" if device == "cuda" else "int8"
-    threads = os.cpu_count() or 4
+    compute = "int8_float16"
     print(f"  모델 적재: {model_name} ({device}, {compute})")
     return WhisperModel(
         model_name,
         device=device,
         compute_type=compute,
-        cpu_threads=threads,
     )
 
 
@@ -996,16 +1003,16 @@ def process_one(
 
 
 def dll_guidance(error: RuntimeError) -> str:
-    """CUDA DLL 오류에 붙일 안내 문구를 만든다.
+    """Builds the guidance appended to a CUDA DLL error.
 
-    DLL을 넣어야 할 실제 폴더 경로를 함께 알려준다. venv를 새로
-    만들면 그 안에 넣어 둔 DLL도 사라지므로 그 점도 짚는다.
+    Names the folder the DLLs must go into, and notes that a freshly
+    created venv loses DLLs placed inside it.
 
     Args:
-        error: 원본 RuntimeError.
+        error: The original RuntimeError.
 
     Returns:
-        원본 메시지에 안내를 덧붙인 문자열.
+        The original message followed by the guidance.
 
     Examples:
         >>> "INSTALL.md" in dll_guidance(RuntimeError("cublas"))
@@ -1017,8 +1024,7 @@ def dll_guidance(error: RuntimeError) -> str:
         f"합니다:\n"
         f"   {Path(sys.executable).parent}\n"
         f"'uv sync'로 venv를 새로 만들면 넣어 둔 DLL도 함께 사라지니 "
-        f"다시 복사하세요. INSTALL.md 1-4장 참고. 급하면 "
-        f"--device cpu로 실행할 수 있습니다."
+        f"다시 복사하세요. INSTALL.md 1-4장 참고."
     )
 
 
@@ -1030,26 +1036,26 @@ def run_with_fallback(
     terms: str | None,
     pipeline=None,
 ) -> None:
-    """모델 폴백 체인을 따라 남은 파일들을 모두 처리한다.
+    """Processes all remaining files, following the model fallback chain.
 
-    GPU 메모리 부족(RuntimeError)이 나면 모델을 내리고 체인의
-    다음(더 작은) 모델로 이어서 처리한다.
-    용어 파일을 쓰면 모델을 적재할 때마다 그 모델의 토크나이저로
-    hotwords 반영 결과를 알리고 메타데이터에 남긴다.
+    On a GPU out-of-memory RuntimeError the model is released and the next
+    (smaller) model in the chain continues. With a terms file, each loaded
+    model's tokenizer reports how many hotwords were applied and the result
+    goes into the metadata.
 
     Args:
-        pending: 아직 처리하지 않은 미디어 파일 목록(소모됨).
-        chain: 시도할 모델 이름 순서.
-        device: 'cuda' 또는 'cpu'.
-        args: 파싱된 CLI 인자.
-        terms: hotwords 용어 문자열 또는 None.
-        pipeline: --diarize일 때 쓸 화자 분리 파이프라인.
+        pending: Media files not yet processed (consumed).
+        chain: Model names in the order to try.
+        device: Device from detect_device(); always 'cuda'.
+        args: Parsed CLI arguments.
+        terms: Hotwords string or None.
+        pipeline: Diarization pipeline when --diarize is given.
 
     Raises:
-        RuntimeError: 모든 모델을 시도해도 처리하지 못했을 때.
+        RuntimeError: If no model in the chain could process the files.
 
     Examples:
-        >>> run_with_fallback([], ("small",), "cpu", ns, None)
+        >>> run_with_fallback([], ("small",), "cuda", ns, None)
         ...  # doctest: +SKIP
     """
     total = len(pending)
@@ -1092,18 +1098,18 @@ def run_with_fallback(
             gc.collect()
     raise RuntimeError(
         f"모델 체인 {chain}을 모두 시도했지만 VRAM이 부족합니다. "
-        f"--model small 또는 --device cpu로 다시 실행해 보세요."
+        f"--model small로 다시 실행해 보세요."
     )
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
-    """CLI 인자를 파싱한다.
+    """Parses the command-line arguments.
 
     Args:
-        argv: sys.argv[1:] 형태의 인자 목록.
+        argv: Argument list shaped like sys.argv[1:].
 
     Returns:
-        파싱된 argparse.Namespace.
+        The parsed argparse.Namespace.
 
     Examples:
         >>> parse_args(["a.mp4"]).language
@@ -1125,8 +1131,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="auto | large-v3 | large-v3-turbo | medium | small ...",
     )
     parser.add_argument(
-        "--device", default="auto", choices=["auto", "cuda", "cpu"],
-        help="실행 장치 (기본: auto)",
+        "--device", default="auto", choices=list(DEVICE_CHOICES),
+        help="실행 장치 — 둘 다 GPU (기본: auto)",
     )
     parser.add_argument(
         "--language", default="ko",
@@ -1197,7 +1203,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point: validate arguments, collect files, transcribe, save.
 
-    With STT_GPU_LOCK set and the device 'cuda', the shared GPU lock is
+    Runs on the GPU only. With STT_GPU_LOCK set, the shared GPU lock is
     held from before the speaker pipeline and model load until all files
     are done.
 
@@ -1208,7 +1214,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         Exit code (0 on success).
 
     Raises:
-        SystemExit: With code 2 when STT_GPU_LOCK names a missing file.
+        SystemExit: With code 1 when no GPU can be used (the reason is on
+            stderr), or with code 2 when STT_GPU_LOCK names a missing file.
 
     Examples:
         >>> main(["--help"])  # doctest: +SKIP
@@ -1225,8 +1232,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.output_dir.mkdir(parents=True, exist_ok=True)
     media_files = discover_media(args.paths)
     terms = load_terms(args.terms) if args.terms is not None else None
-    device = detect_device(args.device)
-    chain = resolve_model_chain(args.model, device)
+    with stop_without_gpu():
+        device = detect_device(args.device)
+    chain = resolve_model_chain(args.model)
     pending: list[Path] = []
     for media in media_files:
         txt_path = output_path_for(media, args.output_dir, ".txt")
@@ -1241,13 +1249,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"대상 {len(pending)}개 | 장치: {device} | "
         f"모델 후보: {' → '.join(chain)}"
     )
-    with hold_gpu_lock(device):
+    with hold_gpu_lock():
         pipeline = None
         if args.diarize:
             from stt import diarize as dz
 
             print(f"  화자 분리 준비: {dz.PIPELINE_NAME}")
-            pipeline = dz.load_pipeline(device)
+            with stop_without_gpu():
+                pipeline = dz.load_pipeline(device)
         run_with_fallback(pending, chain, device, args, terms, pipeline)
         del pipeline
     print("전체 완료.")

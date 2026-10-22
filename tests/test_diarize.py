@@ -352,7 +352,7 @@ class _FakePipeline:
         return cls()
 
     def to(self, device) -> None:
-        raise AssertionError("cpu must not move the pipeline")
+        return None
 
 
 @pytest.fixture()
@@ -363,7 +363,8 @@ def fake_pyannote(monkeypatch):
 
     _FakePipeline.calls = []
     torch = types.ModuleType("torch")
-    torch.cuda = SimpleNamespace(is_available=lambda: False)
+    torch.cuda = SimpleNamespace(is_available=lambda: True)
+    torch.device = lambda name: SimpleNamespace(type=name)
     audio = types.ModuleType("pyannote.audio")
     audio.Pipeline = _FakePipeline
     monkeypatch.setitem(sys.modules, "torch", torch)
@@ -378,7 +379,7 @@ def test_edge_6_offline_pipeline_needs_no_token(fake_pyannote, monkeypatch):
 
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.delenv("HF_TOKEN", raising=False)
-    diarize.load_pipeline("cpu")
+    diarize.load_pipeline("cuda")
     assert fake_pyannote.calls == [(diarize.PIPELINE_NAME, None)]
 
 
@@ -394,7 +395,7 @@ def test_load_pipeline_online_still_requires_token(
         monkeypatch.setenv("HF_HUB_OFFLINE", offline)
     monkeypatch.delenv("HF_TOKEN", raising=False)
     with pytest.raises(RuntimeError, match="HF_TOKEN"):
-        diarize.load_pipeline("cpu")
+        diarize.load_pipeline("cuda")
     assert fake_pyannote.calls == []
 
 
@@ -403,13 +404,13 @@ def test_load_pipeline_online_passes_token(fake_pyannote, monkeypatch):
 
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     monkeypatch.setenv("HF_TOKEN", "fake-token")
-    diarize.load_pipeline("cpu")
+    diarize.load_pipeline("cuda")
     assert fake_pyannote.calls == [(diarize.PIPELINE_NAME, "fake-token")]
 
 
-CPU_FALLBACK_WARNING = (
-    "Speaker diarization is running on CPU because torch cannot use CUDA; "
-    "it will be much slower."
+NO_CUDA_MESSAGE = (
+    "Speaker diarization needs a GPU, but torch cannot use CUDA; "
+    "stt runs on the GPU only."
 )
 
 
@@ -439,20 +440,21 @@ def fake_pyannote_cuda(monkeypatch, fake_pyannote):
     return set_cuda
 
 
-def test_us4_5_cpu_fallback_warns_once(
+def test_us4_5_no_cuda_stops_without_cpu_fallback(
     fake_pyannote_cuda, monkeypatch, capsys
 ):
-    """A CUDA request on a CPU-only torch continues and warns once."""
+    """A CUDA-less torch stops load_pipeline; no CPU pipeline, no warning."""
     from stt import diarize
 
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     fake_pyannote_cuda(False)
-    pipeline = diarize.load_pipeline("cuda")
+    with pytest.raises(RuntimeError) as stopped:
+        diarize.load_pipeline("cuda")
     captured = capsys.readouterr()
-    assert isinstance(pipeline, _MovablePipeline)
+    assert str(stopped.value) == NO_CUDA_MESSAGE
+    assert _MovablePipeline.calls == []
     assert _MovablePipeline.moved_to == []
-    assert captured.err.count(CPU_FALLBACK_WARNING) == 1
-    assert captured.err.strip() == CPU_FALLBACK_WARNING
+    assert captured.err == ""
     assert captured.out == ""
 
 
@@ -466,20 +468,5 @@ def test_us4_5_no_warning_when_cuda_is_available(
     diarize.load_pipeline("cuda")
     captured = capsys.readouterr()
     assert _MovablePipeline.moved_to == ["cuda"]
-    assert captured.err == ""
-    assert captured.out == ""
-
-
-@pytest.mark.parametrize("cuda_available", [False, True])
-def test_us4_5_no_warning_for_explicit_cpu(
-    fake_pyannote_cuda, monkeypatch, capsys, cuda_available
-):
-    from stt import diarize
-
-    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
-    fake_pyannote_cuda(cuda_available)
-    diarize.load_pipeline("cpu")
-    captured = capsys.readouterr()
-    assert _MovablePipeline.moved_to == []
     assert captured.err == ""
     assert captured.out == ""

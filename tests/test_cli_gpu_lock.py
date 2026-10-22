@@ -46,6 +46,14 @@ class Holder:
         return released
 
 
+@pytest.fixture(autouse=True)
+def one_cuda_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Makes the GPU-only device check see one CUDA device."""
+    import ctranslate2
+
+    monkeypatch.setattr(ctranslate2, "get_cuda_device_count", lambda: 1)
+
+
 @pytest.fixture
 def lock_file(tmp_path: Path) -> Path:
     path = tmp_path / "gpu.lock"
@@ -169,23 +177,44 @@ def test_us4_1_enroll_waits_for_server_job(
 
 
 def test_us4_4_cli_unchanged_without_lock(
-    tmp_path: Path, media: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+    tmp_path: Path,
+    media: Path,
+    lock_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
 ) -> None:
     monkeypatch.setattr(transcribe, "load_model", lambda name, device: FakeModel())
     monkeypatch.delenv("STT_GPU_LOCK", raising=False)
-    assert transcribe.main([str(media), "--device", "cpu"]) == 0
+    assert transcribe.main([str(media), "--device", "cuda"]) == 0
     plain = capsys.readouterr()
     plain_text = (tmp_path / "talk.txt").read_text(encoding="utf-8")
     (tmp_path / "talk.txt").unlink()
 
-    missing = tmp_path / "absent.lock"
-    monkeypatch.setenv("STT_GPU_LOCK", str(missing))
-    assert transcribe.main([str(media), "--device", "cpu"]) == 0
-    cpu = capsys.readouterr()
+    monkeypatch.setenv("STT_GPU_LOCK", str(lock_file))
+    assert transcribe.main([str(media), "--device", "cuda"]) == 0
+    locked = capsys.readouterr()
 
-    assert cpu.out == plain.out
-    assert cpu.err == plain.err == ""
+    assert locked.out == plain.out
+    assert locked.err == plain.err == ""
     assert (tmp_path / "talk.txt").read_text(encoding="utf-8") == plain_text
+
+
+def test_us4_6_lock_is_taken_with_device_auto(
+    media: Path,
+    lock_file: Path,
+    holder: Holder,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+) -> None:
+    monkeypatch.setenv("STT_GPU_LOCK", str(lock_file))
+    recorder = LoadRecorder(lock_file)
+    monkeypatch.setattr(transcribe, "load_model", recorder)
+
+    assert transcribe.main([str(media), "--device", "auto"]) == 0
+
+    assert capsys.readouterr().err.count(gpu_lock.WAIT_MESSAGE) == 1
+    assert recorder.times[0] >= holder.released_at()
+    assert recorder.lock_busy_during_load == [True]
 
 
 def test_empty_gpu_lock_variable_means_no_lock(

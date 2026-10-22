@@ -278,54 +278,155 @@ class TestParseArgsVoiceDb:
         assert parse_args(["a.mp4"]).voice_threshold == pytest.approx(0.75)
 
 
+NO_GPU_MESSAGE = "No usable GPU was found; stt runs on the GPU only."
+
+
+def _gpu_count(monkeypatch, count: int) -> None:
+    import ctranslate2
+
+    monkeypatch.setattr(ctranslate2, "get_cuda_device_count", lambda: count)
+
+
 class TestDetectDevice:
-    """Tests for detect_device and its CPU-fallback warning."""
+    """Tests for detect_device, which only ever returns the GPU."""
+
+    @pytest.mark.parametrize("requested", ["auto", "cuda"])
+    def test_detect_device_with_gpu_returns_cuda_silently(
+        self, monkeypatch, capsys, requested
+    ):
+        _gpu_count(monkeypatch, 1)
+        assert detect_device(requested) == "cuda"
+        assert capsys.readouterr().err == ""
+
+    @pytest.mark.parametrize("requested", ["auto", "cuda"])
+    def test_detect_device_without_gpu_stops_with_reason(
+        self, monkeypatch, capsys, requested
+    ):
+        _gpu_count(monkeypatch, 0)
+        with pytest.raises(RuntimeError) as stopped:
+            detect_device(requested)
+        assert str(stopped.value) == NO_GPU_MESSAGE
+        assert capsys.readouterr().err == ""
+
+    @pytest.mark.parametrize("requested", ["cpu", "tpu"])
+    def test_detect_device_rejects_other_values(self, monkeypatch, requested):
+        _gpu_count(monkeypatch, 1)
+        with pytest.raises(ValueError):
+            detect_device(requested)
+
+
+class TestGpuOnlyCommandLine:
+    """The command line never runs on the CPU (US4-5, US4-6, SC-014)."""
 
     @staticmethod
-    def _gpu_count(monkeypatch, count: int) -> None:
-        import ctranslate2
+    def _media(tmp_path):
+        media = tmp_path / "talk.m4a"
+        media.touch()
+        return media
 
+    def test_parse_args_rejects_cpu_device(self, capsys):
+        with pytest.raises(SystemExit) as stopped:
+            parse_args(["a.mp4", "--device", "cpu"])
+        assert stopped.value.code == 2
+        assert "invalid choice" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("device", ["auto", "cuda"])
+    def test_parse_args_accepts_gpu_devices(self, device):
+        assert parse_args(["a.mp4", "--device", device]).device == device
+
+    @pytest.mark.parametrize("device", ["auto", "cuda"])
+    def test_main_without_gpu_stops_before_loading_a_model(
+        self, tmp_path, monkeypatch, capsys, device
+    ):
+        from stt import transcribe
+
+        _gpu_count(monkeypatch, 0)
+        loaded: list[str] = []
         monkeypatch.setattr(
-            ctranslate2, "get_cuda_device_count", lambda: count
+            transcribe, "load_model", lambda name, dev: loaded.append(name)
+        )
+        with pytest.raises(SystemExit) as stopped:
+            transcribe.main([str(self._media(tmp_path)), "--device", device])
+        assert stopped.value.code == 1
+        captured = capsys.readouterr()
+        assert captured.err.strip() == NO_GPU_MESSAGE
+        assert "장치:" not in captured.out
+        assert loaded == []
+        assert not (tmp_path / "talk.txt").exists()
+
+    def test_main_diarize_with_torch_without_cuda_stops(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        import sys
+        import types
+
+        from stt import transcribe
+
+        _gpu_count(monkeypatch, 1)
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        torch = types.ModuleType("torch")
+        torch.cuda = SimpleNamespace(is_available=lambda: False)
+        audio = types.ModuleType("pyannote.audio")
+        audio.Pipeline = SimpleNamespace(
+            from_pretrained=lambda *a, **k: pytest.fail("pipeline built")
+        )
+        monkeypatch.setitem(sys.modules, "torch", torch)
+        monkeypatch.setitem(sys.modules, "pyannote", types.ModuleType("pyannote"))
+        monkeypatch.setitem(sys.modules, "pyannote.audio", audio)
+        monkeypatch.setattr(
+            transcribe, "load_model", lambda name, dev: pytest.fail("model loaded")
+        )
+        with pytest.raises(SystemExit) as stopped:
+            transcribe.main([str(self._media(tmp_path)), "--diarize"])
+        assert stopped.value.code == 1
+        assert capsys.readouterr().err.strip() == (
+            "Speaker diarization needs a GPU, but torch cannot use CUDA; "
+            "stt runs on the GPU only."
         )
 
-    def test_detect_device_auto_without_gpu_warns_on_stderr(
-        self, monkeypatch, capsys
+    def test_main_prints_no_cpu_warning_or_cpu_hint(
+        self, tmp_path, monkeypatch, capsys
     ):
-        self._gpu_count(monkeypatch, 0)
-        assert detect_device("auto") == "cpu"
+        from stt import transcribe
+
+        _gpu_count(monkeypatch, 0)
+        with pytest.raises(SystemExit):
+            transcribe.main([str(self._media(tmp_path))])
         captured = capsys.readouterr()
-        assert "GPU를 찾지 못" in captured.err
-        assert "CPU" in captured.err
-        assert "느립니다" in captured.err
-        assert "--device cuda" in captured.err
-        assert captured.out == ""
+        assert "CPU" not in captured.err + captured.out
+        assert "--device cpu" not in captured.err + captured.out
 
-    def test_detect_device_auto_with_gpu_is_silent(
-        self, monkeypatch, capsys
+    def test_auto_model_chain_is_the_gpu_chain(self):
+        from stt import transcribe
+
+        assert transcribe.resolve_model_chain("auto") == transcribe.GPU_MODEL_CHAIN
+        assert transcribe.resolve_model_chain("medium") == ("medium",)
+        assert not hasattr(transcribe, "CPU_DEFAULT_MODEL")
+
+    def test_out_of_memory_hint_does_not_suggest_the_cpu(
+        self, tmp_path, monkeypatch
     ):
-        self._gpu_count(monkeypatch, 1)
-        assert detect_device("auto") == "cuda"
-        captured = capsys.readouterr()
-        assert captured.err == ""
+        from stt import transcribe
+        from tests.test_cli_integration import FakeModel
 
-    def test_detect_device_explicit_cpu_is_silent(
-        self, monkeypatch, capsys
-    ):
-        self._gpu_count(monkeypatch, 0)
-        assert detect_device("cpu") == "cpu"
-        assert capsys.readouterr().err == ""
+        monkeypatch.setattr(
+            transcribe, "load_model",
+            lambda name, device: FakeModel(fail_oom=True),
+        )
+        media = self._media(tmp_path)
+        args = transcribe.parse_args([str(media), "--device", "cuda"])
+        with pytest.raises(RuntimeError) as stopped:
+            transcribe.run_with_fallback(
+                [media], ("big", "small"), "cuda", args, None
+            )
+        assert "--device cpu" not in str(stopped.value)
+        assert "--model small" in str(stopped.value)
 
-    def test_detect_device_explicit_cuda_is_silent(
-        self, monkeypatch, capsys
-    ):
-        self._gpu_count(monkeypatch, 0)
-        assert detect_device("cuda") == "cuda"
-        assert capsys.readouterr().err == ""
+    def test_dll_guidance_does_not_suggest_the_cpu(self):
+        from stt import transcribe
 
-    def test_detect_device_invalid_raises(self):
-        with pytest.raises(ValueError):
-            detect_device("tpu")
+        assert "--device cpu" not in transcribe.dll_guidance(RuntimeError("cublas"))
+        assert "INSTALL.md" in transcribe.dll_guidance(RuntimeError("cublas"))
 
 
 def char_encode(text: str) -> list[int]:
