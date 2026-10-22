@@ -157,7 +157,7 @@ description: "Task list for 001-server-transcription"
   `request_id`(R21-5·13); `test_engine_crash_without_verdict_is_engine_error`(`die` → `failed(engine_error)`, 고정 문장);
   `test_us1_8_every_response_and_result_validates` — queued·running(`sleep` 모드를 스레드로 돌리며 관찰, 이때 그 job 의 대기 표시 없음)·done·failed
   응답과 result.json 이 스키마 통과 — closes US1-1, US1-7, US1-8, supports FR-015, FR-022 — verify RED
-- [ ] T019 [P] [US1] `tests/server/test_us5.py`(US5-6)와 `tests/server/test_edge_cases.py`(경계 사례 1·받기 안전) — RED:
+- [X] T019 [P] [US1] `tests/server/test_us5.py`(US5-6)와 `tests/server/test_edge_cases.py`(경계 사례 1·받기 안전) — RED:
   `test_us5_6_invalid_request_refused_with_reason` — 스키마 위반(빠진 칸·모르는 값·빈 `hints`) → `refusal`, detail 이 틀린 칸을 가리킴;
   스키마는 맞고 `request_id` 와 파일 이름 불일치·첨부 없음·모르는 언어(`"xx"`) → `failed(invalid_request)` job 상태(`accepted_at` 없음); 응답의
   `request_id` 는 파일 이름; 첨부와 요청이 inbox 에서 사라짐; job 기록 없음; 본문의 `audio.file` 이 다른 요청의 첨부를 가리켜도 그 첨부는 남음
@@ -205,10 +205,10 @@ description: "Task list for 001-server-transcription"
   docstring 영어, 기존 토큰 오류 문구는 그대로 — turns `test_edge_6_offline_pipeline_needs_no_token` GREEN (T021) — supports 경계 사례 6
 - [X] T028 [P] [US1] `src/stt/server/models.py`: `PINNED: tuple[tuple[str, str], ...]`(R9 표), `ref_mismatches(hf_home: Path) -> list[str]`
   (`hub/models--<org>--<name>/refs/main` 을 읽어 비교) — turns T024 GREEN — supports US5-5, FR-012
-- [ ] T029 [US1] `src/stt/server/lifecycle.py`(R20-9): `start(layout, job, now)` — `queued` → `running`, 대기 표시 삭제, 응답 갱신;
+- [X] T029 [US1] `src/stt/server/lifecycle.py`(R20-9): `start(layout, job, now)` — `queued` → `running`, 대기 표시 삭제, 응답 갱신;
   `finish(layout, job, state, now, failure=None)` — 끝 상태로 가는 **유일한 길**: 상태·`finished_at`·`failure`, 대기 표시 삭제, 남은 `queued` 응답의
   순서 갱신. 모두 상태 잠금 아래에서 부른다 — turns T018 의 대기 표시 단언 GREEN (워커와 함께) — closes US1-1, US1-7
-- [ ] T030 [US1] `src/stt/server/intake.py`: `run_once(layout, now) -> None` — `inbox/*.json` 을 (mtime, 이름) 순으로 처리하고 **본 것은 모두 없앤다**.
+- [X] T030 [US1] `src/stt/server/intake.py`: `run_once(layout, now) -> None` — `inbox/*.json` 을 (mtime, 이름) 순으로 처리하고 **본 것은 모두 없앤다**.
   data-model §2.4 의 차례: 이름 → 중복 → `read_request_bytes`(안전·크기·UTF-8 JSON, 실패는 `refusal`) → `validate_request`(`refusal`) → `request_id`
   일치·`open_attachment`(안전)·언어 → `probe_duration(path) -> float`(PyAV, 컨테이너 길이가 없으면 패킷을 훑어 더함 — R4; 길이 상한·해독 실패 분류는
   US5) → 받아들임. 받아들임: 첨부를 `audio/<id>/audio.<ext>`(0600)로 복사(상태 잠금 밖), 상태 잠금 아래 `Audio` 기록 `audio/<id>.json`(정책 `{after_job: R}` 또는
