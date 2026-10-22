@@ -69,6 +69,15 @@ def wait_for_state(layout: Layout, request_id: str, state: str) -> dict[str, Any
     raise AssertionError(f"job never reached {state}")
 
 
+def wait_for_file(path: Path) -> None:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        time.sleep(0.02)
+    raise AssertionError("file never appeared")
+
+
 def run_in_thread(layout: Layout, clock: FakeClock, mode: str) -> tuple[threading.Thread, list[BaseException]]:
     errors: list[BaseException] = []
 
@@ -173,6 +182,8 @@ def test_running_job_has_spec_in_private_work_folder_and_no_marker(
 
     running = wait_for_state(layout, request_id, "running")
     work_dir = layout.work / request_id
+    # The fake engine writes partial.txt only after reading the complete spec.json.
+    wait_for_file(work_dir / "out" / "partial.txt")
     spec = json.loads((work_dir / "spec.json").read_text(encoding="utf-8"))
     mode = stat.S_IMODE(work_dir.stat().st_mode)
     markers = [path.name for path in layout.queue.iterdir()]
