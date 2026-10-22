@@ -1,4 +1,4 @@
-"""Sweep stage: deletes what is due, expires old records and clears a dead worker's traces.
+"""Sweep stage: runs the daily purge, expires old records and clears a dead worker's traces.
 
 The caller holds ``sweep.lock``. ``state.lock`` is held here for the whole run; a run is short.
 """
@@ -17,13 +17,10 @@ def _log(request_id: str, state: str) -> None:
     print(f"{request_id} {state}", flush=True)
 
 
-def _delete_due_audio(layout: Layout, now: datetime) -> None:
+def _purge_due_audio(layout: Layout, now: datetime) -> None:
     for audio in load_audios(layout):
-        if lifecycle.delete_audio_of_ended_job(layout, audio, now):
-            continue
-        cause = lifecycle.due_cause(audio, now)
-        if cause is not None:
-            for failed in lifecycle.delete_audio(layout, audio.audio_id, cause, now):
+        if lifecycle.is_due(audio, now):
+            for failed in lifecycle.purge_audio(layout, audio.audio_id, now):
                 _log(failed.request_id, "failed audio_deleted")
 
 
@@ -42,10 +39,9 @@ def run_once(layout: Layout, now: Callable[[], datetime]) -> None:
 
     First, when no worker is alive, cleans up after a dead one, so a job it left
     ``running`` ends as ``interrupted`` with its published result removed even if its
-    recording is also due. Then deletes ``after_job`` recordings whose job already
-    ended and recordings whose scheduled time or hard deadline has passed (failing
-    the jobs still waiting for them), and last removes expired responses, results
-    and records and stale leftovers.
+    recording is also due. Then deletes the recordings whose daily purge has come
+    (failing the jobs still waiting for them), and last removes expired responses,
+    results and records and stale leftovers.
 
     Args:
         layout: The state root.
@@ -54,5 +50,5 @@ def run_once(layout: Layout, now: Callable[[], datetime]) -> None:
     moment = now()
     with hold(layout.state_lock):
         _clear_dead_worker(layout, moment)
-        _delete_due_audio(layout, moment)
+        _purge_due_audio(layout, moment)
         lifecycle.purge_expired(layout, moment)

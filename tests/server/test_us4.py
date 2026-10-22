@@ -193,7 +193,7 @@ def test_delete_while_waiting_for_gpu(
     thread, errors = start_worker(layout, clock, lock_file, recording_engine("done", record))
     time.sleep(0.2)
 
-    write_delete_request(layout.inbox, request_id=new_id(), requested_by="professor-a", target=request_id, scope="everything")
+    write_delete_request(layout.inbox, request_id=new_id(), requested_by="professor-a", target=request_id)
     intake.run_once(layout, clock.now)
     join(thread, errors)
 

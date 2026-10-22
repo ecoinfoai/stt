@@ -1,4 +1,4 @@
-"""Edge case tests: duplicate request ids and unsafe inbox files."""
+"""Edge case tests: duplicate request ids, unsafe inbox files, leftovers and the daily purge."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from stt.server import contract, intake, lifecycle
 from stt.server.layout import Layout, hold
 from stt.server.records import load_job
 
-from .conftest import FakeClock, leftovers, make_wav, new_id, run_sweep, run_worker, run_worker_once, set_to_ctime_plus, write_delete_request
+from .conftest import FakeClock, leftovers, leftovers_besides_recordings, make_wav, new_id, run_sweep, run_worker, run_worker_once, set_to_ctime_plus, write_delete_request
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, put_bytes, read_response, transcribe_body
 
 
@@ -321,52 +321,49 @@ def test_staging_folder_is_removed_at_once_when_no_worker_runs(layout: Layout) -
     assert not staging.exists()
 
 
-def test_edge_3_schedule_holds_without_worker(
+def _submit(layout: Layout, wav: Path, clock: FakeClock, **changes: object) -> str:
+    request_id = new_id()
+    put_attachment(layout.inbox, f"{request_id}.audio.wav", wav)
+    put_body(layout.inbox, f"{request_id}.json", transcribe_body(request_id, **changes))
+    intake.run_once(layout, clock.now)
+    return request_id
+
+
+def test_edge_3_daily_purge_holds_without_worker(
     layout: Layout, wav: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
     clock = FakeClock()
-    midnight = new_id()
-    put_attachment(layout.inbox, f"{midnight}.audio.wav", wav)
-    put_body(layout.inbox, f"{midnight}.json", transcribe_body(midnight, delete_audio="at_midnight", hints=["alpha"]))
-    intake.run_once(layout, clock.now)
-    clock.set("2026-03-02T01:01:00Z")
-    limit = new_id()
-    put_attachment(layout.inbox, f"{limit}.audio.wav", wav)
-    put_body(layout.inbox, f"{limit}.json", transcribe_body(limit, delete_audio="after_job", hints=["alpha"]))
-    intake.run_once(layout, clock.now)
-
-    clock.set("2026-03-02T15:00:30Z")
-    run_sweep(layout, clock)
-
-    first = read_response(layout, midnight)
-    assert first["state"] == "failed"
-    assert first["failure"]["reason"] == "audio_deleted"
-    assert first["failure"]["cause"] == "midnight"
-    assert first["audio"]["deleted_at"] == "2026-03-02T15:00:30Z"
-    assert not (layout.audio / midnight).exists()
-    assert read_response(layout, limit)["state"] == "queued"
-    assert (layout.audio / limit / "audio.wav").is_file()
-
-    clock.set("2026-03-03T00:58:30Z")
-    run_sweep(layout, clock)
-
-    assert not (layout.outbox / f"{midnight}.json").exists()
-    assert not (layout.jobs / midnight).exists()
-    assert read_response(layout, limit)["state"] == "queued"
-    assert (layout.audio / limit / "audio.wav").is_file()
+    morning = _submit(layout, wav, clock, hints=["alpha"])
+    clock.set("2026-03-02T14:57:00Z")
+    evening = _submit(layout, wav, clock, hints=["alpha"])
+    clock.set("2026-03-02T14:58:10Z")
+    late = _submit(layout, wav, clock, hints=["alpha"])
     capfd.readouterr()
 
-    clock.set("2026-03-03T00:59:00Z")
+    clock.set("2026-03-02T14:58:30Z")
     run_sweep(layout, clock)
 
-    assert f"{limit} failed audio_deleted" in capfd.readouterr().out
-    assert list(layout.outbox.iterdir()) == []
-    assert list(layout.jobs.iterdir()) == []
-    assert list(layout.audio.iterdir()) == []
+    output = capfd.readouterr().out
+    for request_id in (morning, evening):
+        assert f"{request_id} failed audio_deleted" in output
+        assert not (layout.outbox / f"{request_id}.json").exists()
+        assert not (layout.jobs / request_id).exists()
+        assert not (layout.audio / request_id).exists()
+        assert not (layout.audio / f"{request_id}.json").exists()
+    assert read_response(layout, late)["state"] == "queued"
+    assert read_response(layout, late)["queue_position"] == 1
+    assert (layout.audio / late / "audio.wav").is_file()
+
+    clock.set("2026-03-03T14:58:30Z")
+    run_sweep(layout, clock)
+
+    assert f"{late} failed audio_deleted" in capfd.readouterr().out
+    for folder in (layout.outbox, layout.jobs, layout.audio, layout.queue):
+        assert list(folder.iterdir()) == []
     assert leftovers(layout.root) == []
 
 
-def test_rejected_and_delete_responses_expire_after_24h(layout: Layout, wav: Path) -> None:
+def test_rejected_refused_and_delete_responses_expire_at_the_daily_purge(layout: Layout, wav: Path) -> None:
     clock = FakeClock()
     rejected = new_id()
     put_attachment(layout.inbox, f"{rejected}.audio.wav", wav)
@@ -377,43 +374,42 @@ def test_rejected_and_delete_responses_expire_after_24h(layout: Layout, wav: Pat
     put_bytes(layout.inbox / f"{refused}.json", b"{")
     intake.run_once(layout, clock.now)
     clock.advance(30)
-    done = new_id()
-    put_attachment(layout.inbox, f"{done}.audio.wav", wav)
-    put_body(layout.inbox, f"{done}.json", transcribe_body(done, delete_audio="at_midnight"))
-    intake.run_once(layout, clock.now)
+    done = _submit(layout, wav, clock)
     run_worker(layout, clock)
     clock.advance(30)
     answer_id = new_id()
-    write_delete_request(layout.inbox, request_id=answer_id, requested_by="professor-a", target=done, scope="result")
+    write_delete_request(layout.inbox, request_id=answer_id, requested_by="professor-a", target=done)
     intake.run_once(layout, clock.now)
-    answered = read_response(layout, answer_id)
-    assert answered["kind"] == "delete"
-    expiry = {
-        rejected: "2026-03-03T00:58:00Z",
-        refused: "2026-03-03T00:58:30Z",
-        answer_id: "2026-03-03T00:59:30Z",
-    }
-    assert {name: read_response(layout, name)["expires_at"] for name in expiry} == expiry
+    assert read_response(layout, answer_id)["kind"] == "delete"
+    clock.set("2026-03-02T14:58:20Z")
+    after = new_id()
+    put_bytes(layout.inbox / f"{after}.json", b"{")
+    intake.run_once(layout, clock.now)
+    names = (rejected, refused, answer_id)
+    assert {name: read_response(layout, name)["expires_at"] for name in names} == dict.fromkeys(
+        names, "2026-03-02T14:58:00Z"
+    )
+    assert read_response(layout, after)["expires_at"] == "2026-03-03T14:58:00Z"
 
-    for name, expires_at in expiry.items():
-        clock.set(expires_at)
-        clock.advance(-1)
-        run_sweep(layout, clock)
-        assert (layout.outbox / f"{name}.json").is_file()
-        clock.advance(1)
-        run_sweep(layout, clock)
-        assert not (layout.outbox / f"{name}.json").exists()
+    clock.set("2026-03-02T14:57:59Z")
+    run_sweep(layout, clock)
+    assert all((layout.outbox / f"{name}.json").is_file() for name in names)
+
+    clock.set("2026-03-02T14:58:00Z")
+    run_sweep(layout, clock)
+    assert not any((layout.outbox / f"{name}.json").exists() for name in names)
+    assert (layout.outbox / f"{after}.json").is_file()
 
 
 def test_edge_7_second_pass_on_pending_first_runs_after_it(layout: Layout, wav: Path) -> None:
     clock = FakeClock()
     first = new_id()
     put_attachment(layout.inbox, f"{first}.audio.wav", wav)
-    put_body(layout.inbox, f"{first}.json", transcribe_body(first, delete_audio="at_midnight"))
+    put_body(layout.inbox, f"{first}.json", transcribe_body(first))
     intake.run_once(layout, clock.now)
     assert read_response(layout, first)["state"] == "queued"
     second = new_id()
-    body = transcribe_body(second, audio={"from_request": first}, delete_audio="after_job")
+    body = transcribe_body(second, audio={"from_request": first})
     put_body(layout.inbox, f"{second}.json", body)
 
     intake.run_once(layout, clock.now)
@@ -428,8 +424,8 @@ def test_edge_7_second_pass_on_pending_first_runs_after_it(layout: Layout, wav: 
     assert (layout.audio / first / "audio.wav").is_file()
     assert run_worker_once(layout, clock)
     assert read_response(layout, second)["state"] == "done"
-    assert not (layout.audio / first).exists()
-    assert leftovers(layout.root) == []
+    assert (layout.audio / first / "audio.wav").is_file()
+    assert leftovers_besides_recordings(layout.root) == []
 
 
 def _nested(depth: int) -> object:

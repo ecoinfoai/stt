@@ -13,7 +13,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from stt.server import deadlines
 from stt.server.deadlines import parse_time
 from stt.server.layout import Layout, atomic_write_text, is_request_name
 from stt.server.records import (
@@ -23,7 +22,6 @@ from stt.server.records import (
     Job,
     load_audio,
     load_audios,
-    load_job,
     load_jobs,
     queued_in_order,
     save_audio,
@@ -35,19 +33,13 @@ _RESPONSE_MODE = 0o640
 _MARKER_MODE = 0o600
 
 EndState = Literal["done", "failed", "deleted"]
-_END_STATES: tuple[EndState, ...] = ("done", "failed", "deleted")
 
-_AUDIO_DELETED_DETAIL = "The recording was deleted before the job finished."
+_AUDIO_DELETED = Failure("audio_deleted", "The recording was deleted before the job finished.")
 _STALE_AFTER = timedelta(hours=1)
 _LOG_INBOX = "removed an inbox file older than one hour"
 _LOG_TEMP = "removed a stale temporary file or folder"
 _LOG_AUDIO_FOLDER = "removed a recording folder without a record"
 _INTERRUPTED = Failure("interrupted", "The worker stopped before the job finished.")
-_DELETED_BY: dict[str, DeletedBy] = {
-    "midnight": "schedule",
-    "retention_limit": "schedule",
-    "deleted_on_request": "request",
-}
 
 
 def write_response(layout: Layout, doc: dict[str, Any]) -> None:
@@ -96,23 +88,9 @@ def start(layout: Layout, job: Job, now: datetime) -> Job:
     return started
 
 
-def due_cause(audio: Audio, now: datetime) -> str | None:
-    """Returns why `audio` is already due for deletion at `now`, or None if it is not.
-
-    Args:
-        audio: The recording's record.
-        now: The current time.
-
-    Returns:
-        ``midnight`` once the policy time has passed (and is not later than the hard
-        deadline), ``retention_limit`` once the hard deadline has passed first;
-        None for a recording that is already deleted.
-    """
-    if audio.deleted_at is not None or now < deadlines.audio_delete_at(audio.policy, audio.hard_deadline):
-        return None
-    if "at" in audio.policy and audio.policy["at"] <= audio.hard_deadline:
-        return "midnight"
-    return "retention_limit"
+def is_due(audio: Audio, now: datetime) -> bool:
+    """Returns whether the daily purge must delete `audio` at `now`: its ``delete_at`` has come and it still exists."""
+    return audio.deleted_at is None and now >= audio.delete_at
 
 
 def write_users_responses(layout: Layout, audio: Audio, now: datetime) -> None:
@@ -136,8 +114,8 @@ def _remove_audio(layout: Layout, audio: Audio, deleted_by: DeletedBy, now: date
 def finish(layout: Layout, job: Job, state: EndState, now: datetime, failure: Failure | None = None) -> Job:
     """Moves a job to an end state; the only way a job reaches one.
 
-    Also removes the job's hints, and deletes its recording when the recording's
-    policy is ``after_job`` for this very job. A job that already ended (``done`` or
+    Also removes the job's hints and queue marker. The recording stays: only a delete
+    request or the daily purge deletes it. A job that already ended (``done`` or
     ``failed``, on its way to ``deleted``) keeps its ``finished_at``.
 
     Args:
@@ -154,108 +132,56 @@ def finish(layout: Layout, job: Job, state: EndState, now: datetime, failure: Fa
     finished = replace(job, state=state, finished_at=finished_at, failure=failure, hints=None)
     save_job(layout, finished)
     marker_path(layout, job).unlink(missing_ok=True)
-    audio = load_audio(layout, job.audio_id)
-    if audio.deleted_at is None and dict(audio.policy) == {"after_job": job.request_id}:
-        _remove_audio(layout, audio, "after_job", now)
-    else:
-        write_job_response(layout, finished, now)
+    write_job_response(layout, finished, now)
     rewrite_queued_responses(layout, now)
     return finished
 
 
-def delete_audio_of_ended_job(layout: Layout, audio: Audio, now: datetime) -> bool:
-    """Deletes an ``after_job`` recording that its job left behind by stopping inside `finish`.
-
-    Args:
-        layout: The state root.
-        audio: The recording's record.
-        now: Deletion time.
-
-    Returns:
-        True if the recording was deleted: it was not yet deleted, its policy is
-        ``after_job`` and that job's record is in an end state or gone.
-    """
-    if audio.deleted_at is not None or "after_job" not in audio.policy:
-        return False
-    request_id = str(audio.policy["after_job"])
-    if (layout.jobs / request_id / "job.json").exists() and load_job(layout, request_id).state not in _END_STATES:
-        return False
-    _remove_audio(layout, audio, "after_job", now)
-    return True
-
-
-def delete_audio(layout: Layout, audio_id: str, cause: str, now: datetime, keep: str | None = None) -> list[Job]:
-    """Deletes a recording and fails the jobs still waiting for it.
+def purge_audio(layout: Layout, audio_id: str, now: datetime) -> list[Job]:
+    """Deletes a recording at its daily purge and fails the jobs still waiting for it.
 
     Only the file folder goes; the audio record stays so responses can report
     ``deleted_at``. A ``running`` job is failed here too; stopping its engine is
-    the worker's business. A recording that is already deleted is left alone.
+    the worker's business.
 
     Args:
         layout: The state root.
-        audio_id: The recording to delete.
-        cause: ``midnight``, ``retention_limit`` or ``deleted_on_request``.
+        audio_id: The recording to delete, not yet deleted.
         now: Deletion time.
-        keep: Request id of a user the caller ends itself, which is not failed here.
 
     Returns:
         The jobs that were failed with ``audio_deleted``.
     """
-    audio = load_audio(layout, audio_id)
-    if audio.deleted_at is not None:
-        return []
-    audio = _remove_audio(layout, audio, _DELETED_BY[cause], now)
-    failure = Failure("audio_deleted", _AUDIO_DELETED_DETAIL, cause)
+    audio = _remove_audio(layout, load_audio(layout, audio_id), "purge", now)
     waiting = [
-        job
-        for job in load_jobs(layout)
-        if job.request_id in audio.users and job.request_id != keep and job.state in ("queued", "running")
+        job for job in load_jobs(layout) if job.request_id in audio.users and job.state in ("queued", "running")
     ]
-    return [finish(layout, job, "failed", now, failure) for job in waiting]
+    return [finish(layout, job, "failed", now, _AUDIO_DELETED) for job in waiting]
 
 
-def delete_result(layout: Layout, job: Job, now: datetime) -> Job:
-    """Deletes the published result of a ``done`` job; the recording follows its own schedule.
+def delete_everything(layout: Layout, job: Job, now: datetime) -> None:
+    """Answers a delete request: removes `job`'s recording and ends every job that uses it as ``deleted``.
 
-    Args:
-        layout: The state root.
-        job: The ``done`` job whose result has not been deleted.
-        now: Deletion time.
-
-    Returns:
-        The saved job with ``result_deleted_at`` set.
-    """
-    result = layout.outbox / job.request_id
-    if result.exists():
-        shutil.rmtree(result)
-    cleared = replace(job, result_deleted_at=now)
-    save_job(layout, cleared)
-    write_job_response(layout, cleared, now)
-    return cleared
-
-
-def delete_everything(layout: Layout, job: Job, now: datetime) -> Job:
-    """Ends a job as ``deleted`` and removes its recording, result and hints.
-
-    Other queued or running users of the same recording fail with
-    ``audio_deleted`` first. A running job's engine is stopped by the worker,
-    which sees the job is no longer ``running``.
+    Each such job loses its result and hints; ``result_deleted_at`` is set where a
+    result existed. A running job's engine is stopped by the worker, which sees the
+    job is no longer ``running``. A recording the daily purge already deleted keeps
+    its purge marks.
 
     Args:
         layout: The state root.
-        job: The job in any state but ``deleted``.
+        job: The target job, in any state but ``deleted``.
         now: Deletion time.
-
-    Returns:
-        The saved ``deleted`` job.
     """
-    delete_audio(layout, job.audio_id, "deleted_on_request", now, keep=job.request_id)
-    result = layout.outbox / job.request_id
-    if result.exists():
-        shutil.rmtree(result)
-    had_result = job.state == "done" and job.result_deleted_at is None
-    marked = replace(job, deleted_at=now, result_deleted_at=now if had_result else job.result_deleted_at)
-    return finish(layout, marked, "deleted", now)
+    audio = load_audio(layout, job.audio_id)
+    if audio.deleted_at is None:
+        audio = _remove_audio(layout, audio, "request", now)
+    for user in load_jobs(layout):
+        if user.request_id in audio.users:
+            result = layout.outbox / user.request_id
+            if result.exists():
+                shutil.rmtree(result)
+            marked = replace(user, deleted_at=now, result_deleted_at=now if user.state == "done" else None)
+            finish(layout, marked, "deleted", now)
 
 
 def clear_dead_worker(layout: Layout, now: datetime) -> list[Job]:

@@ -48,10 +48,9 @@ def make_job(seq: int = 1, state: str = "queued", request_id: str = REQUEST_ID, 
         language="ko",
         diarize=True,
         hints=("alpha", "beta"),
-        delete_audio="after_job",
         duration_s=61.5,
         state=state,
-        expires_at=deadlines.expires_at(RECEIVED),
+        expires_at=deadlines.next_purge(RECEIVED),
     )
     return dataclasses.replace(job, **changes)
 
@@ -62,8 +61,7 @@ def make_audio(**changes: object) -> Audio:
         original_name=f"{REQUEST_ID}.audio.wav",
         owner="professor-a",
         received_at=RECEIVED,
-        hard_deadline=deadlines.hard_deadline(RECEIVED),
-        policy={"after_job": REQUEST_ID},
+        delete_at=deadlines.next_purge(RECEIVED),
         users=(REQUEST_ID,),
     )
     return dataclasses.replace(audio, **changes)
@@ -86,7 +84,7 @@ class TestJobRoundTrip:
             hints=None,
             started_at=later,
             finished_at=later + timedelta(seconds=30),
-            failure=Failure(reason="audio_deleted", detail="The audio was deleted.", cause="midnight"),
+            failure=Failure(reason="audio_deleted", detail="The audio was deleted."),
             result_deleted_at=later + timedelta(hours=1),
             deleted_at=later + timedelta(hours=2),
             duplicate_refused_at=later + timedelta(hours=3),
@@ -94,7 +92,7 @@ class TestJobRoundTrip:
         save_job(layout, job)
         assert load_job(layout, REQUEST_ID) == job
 
-    def test_failure_without_cause_omits_the_key(self, layout: Layout) -> None:
+    def test_failure_is_stored_as_reason_and_detail(self, layout: Layout) -> None:
         job = make_job(state="failed", failure=Failure(reason="engine_failed", detail="The engine failed."))
         save_job(layout, job)
         raw = json.loads((layout.jobs / REQUEST_ID / "job.json").read_text(encoding="utf-8"))
@@ -105,8 +103,9 @@ class TestJobRoundTrip:
         save_job(layout, make_job())
         raw = json.loads((layout.jobs / REQUEST_ID / "job.json").read_text(encoding="utf-8"))
         assert raw["accepted_at"] == deadlines.format_time(RECEIVED)
-        assert raw["expires_at"] == deadlines.format_time(deadlines.expires_at(RECEIVED))
+        assert raw["expires_at"] == "2026-03-02T14:58:00Z"
         assert raw["started_at"] is None
+        assert "delete_audio" not in raw
 
     def test_loaded_times_are_utc_aware(self, layout: Layout) -> None:
         save_job(layout, make_job())
@@ -171,29 +170,23 @@ class TestJobFiles:
 
 
 class TestAudioRoundTrip:
-    def test_after_job_policy_survives(self, layout: Layout) -> None:
+    def test_audio_survives(self, layout: Layout) -> None:
         audio = make_audio()
         save_audio(layout, audio)
         assert load_audio(layout, REQUEST_ID) == audio
 
-    def test_at_policy_survives_as_datetime(self, layout: Layout) -> None:
-        midnight = deadlines.next_midnight(RECEIVED)
-        audio = make_audio(policy={"at": midnight})
-        save_audio(layout, audio)
-        loaded = load_audio(layout, REQUEST_ID)
-        assert loaded == audio
-        assert deadlines.audio_delete_at(loaded.policy, loaded.hard_deadline) == midnight
-
-    def test_deleted_fields_survive(self, layout: Layout) -> None:
-        audio = make_audio(deleted_at=RECEIVED + timedelta(hours=1), deleted_by="after_job")
+    @pytest.mark.parametrize("deleted_by", ["purge", "request"])
+    def test_deleted_fields_survive(self, layout: Layout, deleted_by: str) -> None:
+        audio = make_audio(deleted_at=RECEIVED + timedelta(hours=1), deleted_by=deleted_by)
         save_audio(layout, audio)
         assert load_audio(layout, REQUEST_ID) == audio
 
     def test_times_are_stored_as_contract_strings(self, layout: Layout) -> None:
-        midnight = deadlines.next_midnight(RECEIVED)
-        save_audio(layout, make_audio(policy={"at": midnight}))
+        save_audio(layout, make_audio())
         raw = json.loads((layout.audio / f"{REQUEST_ID}.json").read_text(encoding="utf-8"))
-        assert raw["policy"] == {"at": deadlines.format_time(midnight)}
+        assert raw["delete_at"] == "2026-03-02T14:58:00Z"
+        assert "policy" not in raw
+        assert "hard_deadline" not in raw
         assert raw["received_at"] == deadlines.format_time(RECEIVED)
         assert raw["users"] == [REQUEST_ID]
         assert raw["deleted_at"] is None

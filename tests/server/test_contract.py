@@ -33,7 +33,6 @@ def transcribe_request(**overrides: Any) -> dict[str, Any]:
         "audio": {"file": f"{RID}.audio.m4a"},
         "language": "ko",
         "diarize": False,
-        "delete_audio": "after_job",
     }
     for key, value in overrides.items():
         if value is None:
@@ -51,7 +50,6 @@ def delete_request(**overrides: Any) -> dict[str, Any]:
         "request_id": OTHER_RID,
         "requested_by": "owui-user-42",
         "target": RID,
-        "scope": "result",
     }
     for key, value in overrides.items():
         if value is None:
@@ -104,10 +102,9 @@ def test_valid_requests_pass() -> None:
             audio={"from_request": OTHER_RID},
             hints=["Yersinia enterocolitica", "hepatitis B"],
             diarize=True,
-            delete_audio="at_midnight",
         )
     ) is None
-    assert contract.validate_request(delete_request(scope="everything")) is None
+    assert contract.validate_request(delete_request()) is None
 
 
 LONG_RID = RID.upper()
@@ -140,10 +137,14 @@ INVALID_REQUESTS = [
     ("long_hint", transcribe_request(hints=["x" * 101]), "hints: value is too long"),
     ("too_many_hints", transcribe_request(hints=[f"t{i}" for i in range(201)]), "hints: too many items"),
     ("empty_hint", transcribe_request(hints=[""]), "hints: value is too short"),
-    ("delete_audio_never", transcribe_request(delete_audio="never"), "delete_audio: value is not allowed"),
+    (
+        "transcribe_with_delete_audio",
+        transcribe_request(delete_audio="any"),
+        "request: unknown field is not allowed",
+    ),
     ("diarize_string", transcribe_request(diarize="yes"), "diarize: value has the wrong type"),
     ("unknown_field", {**transcribe_request(), "extra": 1}, "request: unknown field is not allowed"),
-    ("delete_scope_all", delete_request(scope="all"), "scope: value is not allowed"),
+    ("delete_with_scope", delete_request(scope="everything"), "request: unknown field is not allowed"),
     ("delete_target_missing", delete_request(target=None), "target: field is required"),
     ("kind_missing", transcribe_request(kind=None), "kind: field is required"),
     ("kind_unknown", transcribe_request(kind="purge"), "kind: value is not allowed"),
@@ -203,30 +204,86 @@ def valid_failed_response(**failure: Any) -> dict[str, Any]:
         "state": "failed",
         "updated_at": "2026-03-02T01:00:00Z",
         "finished_at": "2026-03-02T01:00:00Z",
-        "expires_at": "2026-03-03T00:58:00Z",
+        "expires_at": "2026-03-02T14:58:00Z",
         "failure": failure,
     }
 
 
-def test_failure_cause_rules() -> None:
+def test_failure_without_cause_is_valid_for_every_reason() -> None:
     from stt.server import contract
 
-    with_cause = valid_failed_response(
-        reason="audio_deleted", detail="The recording was deleted.", cause="midnight"
-    )
-    assert contract.validate_response(with_cause) is None
+    for reason in ("audio_deleted", "engine_error"):
+        assert contract.validate_response(valid_failed_response(reason=reason, detail="The job failed.")) is None
 
-    without_cause = copy.deepcopy(with_cause)
-    del without_cause["failure"]["cause"]
-    assert contract.validate_response(without_cause) is not None
 
-    other_with_cause = valid_failed_response(
-        reason="engine_error", detail="The engine failed.", cause="midnight"
-    )
-    assert contract.validate_response(other_with_cause) is not None
+@pytest.mark.parametrize("reason", ["audio_deleted", "engine_error"])
+def test_failure_with_a_cause_violates_the_schema(reason: str) -> None:
+    from stt.server import contract
 
-    other = valid_failed_response(reason="engine_error", detail="The engine failed.")
-    assert contract.validate_response(other) is None
+    doc = valid_failed_response(reason=reason, detail="The job failed.", cause="any")
+    assert contract.validate_response(doc) is not None
+
+
+def valid_queued_response(**audio: Any) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "kind": "transcribe",
+        "request_id": RID,
+        "state": "queued",
+        "queue_position": 1,
+        "accepted_at": "2026-03-02T01:00:00Z",
+        "updated_at": "2026-03-02T01:00:00Z",
+        "expires_at": "2026-03-02T14:58:00Z",
+        "audio": {"delete_at": "2026-03-02T14:58:00Z", **audio},
+    }
+
+
+def test_audio_block_is_delete_at_and_optional_deleted_at() -> None:
+    from stt.server import contract
+
+    assert contract.validate_response(valid_queued_response()) is None
+    assert contract.validate_response(valid_queued_response(deleted_at="2026-03-02T02:00:00Z")) is None
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"delete_policy": "any"}, {"delete_policy": "any", "delete_after": OTHER_RID}],
+    ids=["delete_policy", "delete_after"],
+)
+def test_audio_block_with_a_policy_violates_the_schema(extra: dict[str, str]) -> None:
+    from stt.server import contract
+
+    assert contract.validate_response(valid_queued_response(**extra)) is not None
+
+
+def delete_answer(**changes: Any) -> dict[str, Any]:
+    doc: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "delete",
+        "request_id": OTHER_RID,
+        "target": RID,
+        "outcome": "deleted",
+        "processed_at": "2026-03-02T01:00:00Z",
+        "expires_at": "2026-03-02T14:58:00Z",
+    }
+    doc.update(changes)
+    return doc
+
+
+@pytest.mark.parametrize("outcome", ["deleted", "already_deleted", "refused"])
+def test_delete_answer_outcomes_are_valid(outcome: str) -> None:
+    from stt.server import contract
+
+    assert contract.validate_response(delete_answer(outcome=outcome)) is None
+
+
+@pytest.mark.parametrize(
+    "changes", [{"scope": "everything"}, {"outcome": "no_result"}], ids=["scope", "no_result"]
+)
+def test_delete_answer_with_scope_or_no_result_violates_the_schema(changes: dict[str, str]) -> None:
+    from stt.server import contract
+
+    assert contract.validate_response(delete_answer(**changes)) is not None
 
 
 def test_validate_result() -> None:

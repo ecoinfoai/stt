@@ -28,7 +28,6 @@ def transcribe_body(request_id: str, **changes: Any) -> dict[str, Any]:
         "audio": {"file": f"{request_id}.audio.wav"},
         "language": "ko",
         "diarize": False,
-        "delete_audio": "after_job",
     }
     body.update(changes)
     return body

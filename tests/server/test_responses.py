@@ -19,7 +19,6 @@ ACCEPTED = datetime(2026, 3, 2, 1, 0, 0, tzinfo=timezone.utc)
 STARTED = ACCEPTED + timedelta(minutes=2)
 FINISHED = ACCEPTED + timedelta(minutes=9)
 NOW = ACCEPTED + timedelta(minutes=10)
-MIDNIGHT = datetime(2026, 3, 2, 15, 0, 0, tzinfo=timezone.utc)
 FAILURE_DETAIL = "The recording could not be decoded."
 
 
@@ -33,10 +32,9 @@ def make_job(state: str = "queued", seq: int = 1, request_id: str = REQUEST_ID, 
         language="ko",
         diarize=True,
         hints=None,
-        delete_audio="after_job",
         duration_s=61.5,
         state=state,
-        expires_at=deadlines.expires_at(ACCEPTED),
+        expires_at=deadlines.next_purge(ACCEPTED),
     )
     return dataclasses.replace(job, **changes)
 
@@ -47,8 +45,7 @@ def make_audio(**changes: object) -> Audio:
         original_name=f"{REQUEST_ID}.audio.wav",
         owner="professor-a",
         received_at=ACCEPTED,
-        hard_deadline=deadlines.hard_deadline(ACCEPTED),
-        policy={"after_job": REQUEST_ID},
+        delete_at=deadlines.next_purge(ACCEPTED),
         users=(REQUEST_ID,),
     )
     return dataclasses.replace(audio, **changes)
@@ -75,7 +72,7 @@ class TestQueued:
         assert doc["queue_position"] == 2
         assert doc["accepted_at"] == "2026-03-02T01:00:00Z"
         assert doc["updated_at"] == "2026-03-02T01:10:00Z"
-        assert doc["expires_at"] == "2026-03-03T00:58:00Z"
+        assert doc["expires_at"] == "2026-03-02T14:58:00Z"
         for absent in ("started_at", "finished_at", "result", "failure", "deleted", "duplicate_refused_at"):
             assert absent not in doc
 
@@ -107,13 +104,6 @@ class TestDone:
         assert doc["finished_at"] == "2026-03-02T01:09:00Z"
         assert "queue_position" not in doc
 
-    def test_deleted_result_adds_result_deleted_at(self) -> None:
-        job = done_job(result_deleted_at=NOW)
-        doc = valid(job_status(job, make_audio(), [job], NOW))
-        assert doc["state"] == "done"
-        assert doc["result"]["deleted_at"] == "2026-03-02T01:10:00Z"
-        assert doc["result"]["transcript"] == f"{REQUEST_ID}/transcript.txt"
-
 
 class TestFailed:
     def test_failed_job_carries_reason_and_detail(self) -> None:
@@ -124,11 +114,11 @@ class TestFailed:
         assert doc["finished_at"] == "2026-03-02T01:09:00Z"
         assert "result" not in doc
 
-    def test_audio_deleted_failure_carries_cause(self) -> None:
-        failure = Failure("audio_deleted", FAILURE_DETAIL, cause="midnight")
+    def test_audio_deleted_failure_has_reason_and_detail_only(self) -> None:
+        failure = Failure("audio_deleted", FAILURE_DETAIL)
         job = make_job("failed", finished_at=FINISHED, failure=failure)
-        doc = valid(job_status(job, make_audio(deleted_at=FINISHED), [job], NOW))
-        assert doc["failure"] == {"reason": "audio_deleted", "detail": FAILURE_DETAIL, "cause": "midnight"}
+        doc = valid(job_status(job, make_audio(deleted_at=FINISHED, deleted_by="purge"), [job], NOW))
+        assert doc["failure"] == {"reason": "audio_deleted", "detail": FAILURE_DETAIL}
         assert "started_at" not in doc
 
 
@@ -165,35 +155,17 @@ class TestDeleted:
 
 
 class TestAudioBlock:
-    def test_after_job_policy_names_the_deciding_request(self) -> None:
+    def test_audio_block_is_the_recording_delete_time(self) -> None:
         job = make_job("queued")
-        audio = make_audio(policy={"after_job": OTHER_ID})
-        doc = valid(job_status(job, audio, [job], NOW))
-        assert doc["audio"] == {
-            "delete_policy": "after_job",
-            "delete_after": OTHER_ID,
-            "delete_at": "2026-03-03T00:58:00Z",
-        }
+        doc = valid(job_status(job, make_audio(), [job], NOW))
+        assert doc["audio"] == {"delete_at": "2026-03-02T14:58:00Z"}
 
-    def test_at_midnight_policy_has_no_delete_after(self) -> None:
-        job = make_job("queued", delete_audio="at_midnight")
-        audio = make_audio(policy={"at": MIDNIGHT})
-        doc = valid(job_status(job, audio, [job], NOW))
-        assert doc["audio"] == {"delete_policy": "at_midnight", "delete_at": "2026-03-02T15:00:00Z"}
-
-    def test_delete_at_is_capped_by_the_hard_deadline(self) -> None:
-        job = make_job("queued", delete_audio="at_midnight")
-        late = ACCEPTED + timedelta(days=3)
-        audio = make_audio(policy={"at": late})
-        doc = valid(job_status(job, audio, [job], NOW))
-        assert doc["audio"]["delete_at"] == "2026-03-03T00:58:00Z"
-
-    def test_deleted_audio_adds_deleted_at(self) -> None:
+    @pytest.mark.parametrize("deleted_by", ["purge", "request"])
+    def test_deleted_audio_adds_deleted_at(self, deleted_by: str) -> None:
         job = done_job()
-        audio = make_audio(deleted_at=FINISHED, deleted_by="after_job")
+        audio = make_audio(deleted_at=FINISHED, deleted_by=deleted_by)
         doc = valid(job_status(job, audio, [job], NOW))
-        assert doc["audio"]["deleted_at"] == "2026-03-02T01:09:00Z"
-        assert "deleted_by" not in doc["audio"]
+        assert doc["audio"] == {"delete_at": "2026-03-02T14:58:00Z", "deleted_at": "2026-03-02T01:09:00Z"}
 
 
 class TestDuplicate:
@@ -211,7 +183,7 @@ class TestRejectedStatus:
         assert doc["failure"] == {"reason": "unreadable_audio", "detail": FAILURE_DETAIL}
         assert doc["finished_at"] == "2026-03-02T01:10:00Z"
         assert doc["updated_at"] == "2026-03-02T01:10:00Z"
-        assert doc["expires_at"] == "2026-03-03T01:08:00Z"
+        assert doc["expires_at"] == "2026-03-02T14:58:00Z"
         for absent in ("accepted_at", "started_at", "audio", "result", "queue_position", "duplicate_refused_at"):
             assert absent not in doc
 
@@ -226,28 +198,26 @@ class TestRejectedStatus:
 
 
 class TestDeleteOutcome:
-    @pytest.mark.parametrize("outcome", ["deleted", "already_deleted", "no_result", "refused"])
-    @pytest.mark.parametrize("scope", ["result", "everything"])
-    def test_every_outcome_and_scope_is_valid(self, outcome: str, scope: str) -> None:
-        doc = valid(delete_outcome(OTHER_ID, REQUEST_ID, scope, outcome, NOW))
+    @pytest.mark.parametrize("outcome", ["deleted", "already_deleted", "refused"])
+    def test_every_outcome_is_valid(self, outcome: str) -> None:
+        doc = valid(delete_outcome(OTHER_ID, REQUEST_ID, outcome, NOW))
         assert doc == {
             "schema_version": 1,
             "kind": "delete",
             "request_id": OTHER_ID,
             "target": REQUEST_ID,
-            "scope": scope,
             "outcome": outcome,
             "processed_at": "2026-03-02T01:10:00Z",
-            "expires_at": "2026-03-03T01:08:00Z",
+            "expires_at": "2026-03-02T14:58:00Z",
         }
 
     def test_delete_outcome_accepts_duplicate_refused_at(self) -> None:
         later = NOW + timedelta(minutes=1)
-        doc = valid(delete_outcome(OTHER_ID, REQUEST_ID, "result", "deleted", NOW, duplicate_refused_at=later))
+        doc = valid(delete_outcome(OTHER_ID, REQUEST_ID, "deleted", NOW, duplicate_refused_at=later))
         assert doc["duplicate_refused_at"] == "2026-03-02T01:11:00Z"
 
     def test_none_duplicate_leaves_the_field_out(self) -> None:
-        doc = delete_outcome(OTHER_ID, REQUEST_ID, "result", "deleted", NOW, duplicate_refused_at=None)
+        doc = delete_outcome(OTHER_ID, REQUEST_ID, "deleted", NOW, duplicate_refused_at=None)
         assert "duplicate_refused_at" not in doc
 
 
@@ -260,7 +230,7 @@ class TestRefusal:
             "request_id": REQUEST_ID,
             "failure": {"reason": "invalid_request", "detail": "kind: must be transcribe or delete"},
             "processed_at": "2026-03-02T01:10:00Z",
-            "expires_at": "2026-03-03T01:08:00Z",
+            "expires_at": "2026-03-02T14:58:00Z",
         }
 
     def test_refusal_accepts_duplicate_refused_at(self) -> None:

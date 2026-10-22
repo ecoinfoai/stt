@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/ecoinfoai/stt/contracts/response.schema.json",
   "title": "stt server response",
-  "description": "What stt writes as requests/outbox/<request_id>.json, replaced atomically. A transcribe request gets a job status; a delete request gets a delete outcome; a request stt cannot use gets a refusal (contracts/README.md section 4). The file and any result disappear within one minute after expires_at, which is 23 h 58 min after acceptance so that deletion always completes within 24 hours.",
+  "description": "What stt writes as requests/outbox/<request_id>.json, replaced atomically. A transcribe request gets a job status; a delete request gets a delete outcome; a request stt cannot use gets a refusal (contracts/README.md section 4). The file and any result disappear within one minute after expires_at, which is the first 23:58 Asia/Seoul after acceptance (the daily purge), so nothing stays longer than 24 hours.",
   "oneOf": [
     { "$ref": "#/$defs/job_status" },
     { "$ref": "#/$defs/delete_outcome" },
@@ -39,19 +39,12 @@
           ]
         },
         "detail": {
-          "description": "One English sentence for operators. It never repeats request values; for invalid_request it names the offending field. Callers map reason (and cause) to their own user-facing text.",
+          "description": "One English sentence for operators. It never repeats request values; for invalid_request it names the offending field. Callers map reason to their own user-facing text.",
           "type": "string",
           "minLength": 1,
           "maxLength": 500
-        },
-        "cause": {
-          "description": "Why the recording was deleted before this job finished. Present only with reason audio_deleted.",
-          "enum": ["midnight", "retention_limit", "deleted_on_request"]
         }
-      },
-      "if": { "properties": { "reason": { "const": "audio_deleted" } } },
-      "then": { "required": ["cause"] },
-      "else": { "not": { "required": ["cause"] } }
+      }
     },
     "job_status": {
       "type": "object",
@@ -83,22 +76,14 @@
           "description": "The recording this job uses (shared with other jobs that point at it).",
           "type": "object",
           "additionalProperties": false,
-          "required": ["delete_policy", "delete_at"],
+          "required": ["delete_at"],
           "properties": {
-            "delete_policy": { "enum": ["after_job", "at_midnight"] },
-            "delete_after": {
-              "description": "With after_job: the request whose end deletes the recording.",
-              "$ref": "#/$defs/request_id"
-            },
             "delete_at": {
-              "description": "Time the recording is due for deletion; it is gone within one minute after it. For the 24-hour cap this is 23 h 58 min after the recording was first received.",
+              "description": "The daily purge that deletes the recording unless a delete request comes first: the first 23:58 Asia/Seoul after it was first received. It is gone within one minute after it.",
               "$ref": "#/$defs/time"
             },
             "deleted_at": { "$ref": "#/$defs/time" }
-          },
-          "if": { "properties": { "delete_policy": { "const": "after_job" } } },
-          "then": { "required": ["delete_after"] },
-          "else": { "not": { "required": ["delete_after"] } }
+          }
         },
         "result": {
           "type": "object",
@@ -120,7 +105,7 @@
         },
         "failure": { "$ref": "#/$defs/failure" },
         "deleted": {
-          "description": "Set by a delete request with scope everything.",
+          "description": "Set by a delete request for this job or for another job that uses the same recording.",
           "type": "object",
           "additionalProperties": false,
           "required": ["at"],
@@ -165,7 +150,6 @@
         "kind",
         "request_id",
         "target",
-        "scope",
         "outcome",
         "processed_at",
         "expires_at"
@@ -175,10 +159,9 @@
         "kind": { "const": "delete" },
         "request_id": { "$ref": "#/$defs/request_id" },
         "target": { "$ref": "#/$defs/request_id" },
-        "scope": { "enum": ["result", "everything"] },
         "outcome": {
           "description": "refused covers both an unknown target and another requester's target, so existence is not revealed.",
-          "enum": ["deleted", "already_deleted", "no_result", "refused"]
+          "enum": ["deleted", "already_deleted", "refused"]
         },
         "processed_at": { "$ref": "#/$defs/time" },
         "expires_at": { "$ref": "#/$defs/time" },

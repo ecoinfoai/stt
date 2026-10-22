@@ -14,7 +14,7 @@ from stt.server import contract, deadlines, intake
 from stt.server.layout import Layout
 from stt.server.records import load_job
 
-from .conftest import FakeClock, leftovers, make_wav, new_id, run_worker
+from .conftest import FakeClock, leftovers_besides_recordings, make_wav, new_id, run_worker
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, put_bytes, read_response, transcribe_body
 from .test_us2 import assert_group_gone, pid_engine
 
@@ -33,8 +33,8 @@ def _drop_language(body: dict[str, Any]) -> None:
     del body["language"]
 
 
-def _unknown_delete_audio(body: dict[str, Any]) -> None:
-    body["delete_audio"] = "never"
+def _unknown_kind(body: dict[str, Any]) -> None:
+    body["kind"] = "purge"
 
 
 def _empty_hints(body: dict[str, Any]) -> None:
@@ -45,7 +45,7 @@ def _empty_hints(body: dict[str, Any]) -> None:
     ("mutate", "detail"),
     [
         (_drop_language, "language: field is required"),
-        (_unknown_delete_audio, "delete_audio: value is not allowed"),
+        (_unknown_kind, "kind: value is not allowed"),
         (_empty_hints, "hints: too few items"),
     ],
     ids=["missing_field", "unknown_value", "empty_hints"],
@@ -234,7 +234,8 @@ def test_us5_3_timeout_stops_engine_without_result(layout: Layout, wav: Path, tm
     assert_group_gone(int(pid_file.read_text(encoding="utf-8")))
     assert not (layout.outbox / request_id).exists()
     assert not (layout.work / request_id).exists()
-    assert leftovers(layout.root) == []
+    assert leftovers_besides_recordings(layout.root) == []
+    assert (layout.audio / request_id / "audio.wav").is_file()
 
 
 def test_us5_9_short_recording_gets_five_minute_floor(layout: Layout, tmp_path: Path) -> None:

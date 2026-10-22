@@ -500,7 +500,7 @@ description: "Task list for 001-server-transcription"
 
 ### 서버: 「다 지우기」와 매일 정리 (US2, US3)
 
-- [ ] T079 [US2] 서버 시험을 새 규칙으로 바꾼다 — RED: `tests/server/test_deadlines.py`(`next_purge`: KST 23:57:59 → 그날 23:58, 23:58:00 →
+- [X] T079 [US2] 서버 시험을 새 규칙으로 바꾼다 — RED: `tests/server/test_deadlines.py`(`next_purge`: KST 23:57:59 → 그날 23:58, 23:58:00 →
   다음 날 23:58, 23:58:01 → 다음 날, UTC 로 돌려줌; `RETENTION_DUE`·`next_midnight` 없음), `test_contract.py`(`delete_audio` 있는 transcribe·`scope`
   있는 delete → `invalid_request`, 없는 것은 통과; 응답 `audio` 에 `delete_policy` 가 있으면·delete 답에 `scope`·`no_result` 가 있으면·`failure`
   에 `cause` 가 있으면 스키마 위반), `test_us2.py`(개정 US2-1…10 을 `test_us2_<n>_…` 로 — 2 는 1차·2차 둘 다 `deleted` 이고 녹음·두 결과 0개, 5 는
@@ -509,7 +509,7 @@ description: "Task list for 001-server-transcription"
   `test_intake.py`·`test_logging.py`·`conftest.py`·`inbox_helpers.py`(요청에서 `delete_audio`·`scope` 를 뺀다). 옛 규칙만 확인하던 시험
   (「끝나면 바로」·「결과 지우기」·`no_result`·`retention_limit`·`cause`·I2 after_job 복구)은 지운다 — 보고서에 지운 시험 이름을 적는다.
   SC-003 표(지우는 길 2 × 종료 3)를 시험 하나로 둔다 — closes US2-1…10, US3-1…4, 경계 사례 2·3·8, SC-003, SC-004, SC-005 — verify RED
-- [ ] T080 [US2] 서버 구현 — `deadlines.next_purge`(23:58 `Asia/Seoul`, data-model §1) 로 모든 기한을 바꾸고 `RETENTION_DUE`·`next_midnight`
+- [X] T080 [US2] 서버 구현 — `deadlines.next_purge`(23:58 `Asia/Seoul`, data-model §1) 로 모든 기한을 바꾸고 `RETENTION_DUE`·`next_midnight`
   을 없앤다; `records`(Job 의 `delete_audio`, Audio 의 `policy`·`hard_deadline` → `delete_at`, `deleted_by` ∈ {`purge`,`request`});
   `responses`(`audio` = `{delete_at, deleted_at?}`, delete 답에 `scope` 없음, `failure` 에 `cause` 없음); `lifecycle`(`finish` 가 녹음을 지우지
   않음, `delete_result` 없앰, 「다 지우기」가 `audio.users` 의 모든 job 을 `deleted` 로 — 대기 표시·힌트·결과·작업 폴더 정리, 처리 중이면 워커가

@@ -164,23 +164,16 @@ def _delete_outcome(layout: Layout, body: dict[str, Any], now: datetime) -> str:
     job = load_job(layout, body["target"]) if target.exists() else None
     if job is None or job.requested_by != body["requested_by"]:
         return "refused"
-    if body["scope"] == "everything":
-        if job.state == "deleted":
-            return "already_deleted"
-        lifecycle.delete_everything(layout, job, now)
-        return "deleted"
-    if job.result_deleted_at is not None:
+    if job.state == "deleted":
         return "already_deleted"
-    if job.state != "done":
-        return "no_result"
-    lifecycle.delete_result(layout, job, now)
+    lifecycle.delete_everything(layout, job, now)
     return "deleted"
 
 
 def _process_delete(layout: Layout, request_id: str, body: dict[str, Any], now: datetime) -> None:
     with hold(layout.state_lock):
         outcome = _delete_outcome(layout, body, now)
-        lifecycle.write_response(layout, delete_outcome(request_id, body["target"], body["scope"], outcome, now))
+        lifecycle.write_response(layout, delete_outcome(request_id, body["target"], outcome, now))
     _log(request_id, f"delete {outcome}")
 
 
@@ -192,13 +185,6 @@ def _copy_attachment(source: BinaryIO, folder: Path, extension: str) -> Path:
         os.fchmod(handle.fileno(), _AUDIO_FILE_MODE)
         shutil.copyfileobj(source, handle)
     return target
-
-
-def _policy(body: dict[str, Any], now: datetime) -> dict[str, str | datetime]:
-    """Returns the recording policy that the request `body`, accepted at `now`, asks for."""
-    if body["delete_audio"] == "after_job":
-        return {"after_job": body["request_id"]}
-    return {"at": deadlines.next_midnight(now)}
 
 
 def _copy_and_probe(source: BinaryIO, folder: Path, extension: str) -> float:
@@ -240,10 +226,9 @@ def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetim
             language=body["language"],
             diarize=body["diarize"],
             hints=None if hints is None else tuple(hints),
-            delete_audio=body["delete_audio"],
             duration_s=duration_s,
             state="queued",
-            expires_at=deadlines.expires_at(now),
+            expires_at=deadlines.next_purge(now),
         )
         save_audio(
             layout,
@@ -252,8 +237,7 @@ def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetim
                 original_name=attachment_name,
                 owner=body["requested_by"],
                 received_at=now,
-                hard_deadline=deadlines.hard_deadline(now),
-                policy=_policy(body, now),
+                delete_at=deadlines.next_purge(now),
                 users=(request_id,),
             ),
         )
@@ -266,7 +250,7 @@ def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetim
 def _usable_source(layout: Layout, body: dict[str, Any], now: datetime) -> Job | None:
     """Returns the earlier job whose recording the request may reuse, or None; the state lock is held.
 
-    A recording whose delete time has passed is deleted here first, without waiting for the sweep.
+    A recording whose daily purge has come is deleted here first, without waiting for the sweep.
     """
     source_id = body["audio"]["from_request"]
     if not (layout.jobs / source_id / "job.json").exists():
@@ -275,16 +259,15 @@ def _usable_source(layout: Layout, body: dict[str, Any], now: datetime) -> Job |
     if source.requested_by != body["requested_by"]:
         return None
     audio = load_audio(layout, source.audio_id)
-    cause = lifecycle.due_cause(audio, now)
-    if cause is not None:
-        for failed in lifecycle.delete_audio(layout, audio.audio_id, cause, now):
+    if lifecycle.is_due(audio, now):
+        for failed in lifecycle.purge_audio(layout, audio.audio_id, now):
             _log(failed.request_id, "failed audio_deleted")
         return None
     return source if audio.deleted_at is None else None
 
 
 def _accept_second_pass(layout: Layout, body: dict[str, Any], source: Job, now: datetime) -> None:
-    """Queues a job on the source's recording and hands the recording's policy to this request; the state lock is held."""
+    """Queues a job on the source's recording, which keeps its delete time; the state lock is held."""
     request_id: str = body["request_id"]
     hints = body.get("hints")
     job = Job(
@@ -296,17 +279,14 @@ def _accept_second_pass(layout: Layout, body: dict[str, Any], source: Job, now: 
         language=body["language"],
         diarize=body["diarize"],
         hints=None if hints is None else tuple(hints),
-        delete_audio=body["delete_audio"],
         duration_s=source.duration_s,
         state="queued",
-        expires_at=deadlines.expires_at(now),
+        expires_at=deadlines.next_purge(now),
     )
     audio = load_audio(layout, source.audio_id)
-    audio = replace(audio, policy=_policy(body, now), users=(*audio.users, request_id))
-    save_audio(layout, audio)
+    save_audio(layout, replace(audio, users=(*audio.users, request_id)))
     save_job(layout, job)
     lifecycle.create_marker(layout, job)
-    lifecycle.write_users_responses(layout, audio, now)
     lifecycle.rewrite_queued_responses(layout, now)
     _log(request_id, "queued")
 

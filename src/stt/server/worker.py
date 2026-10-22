@@ -198,11 +198,10 @@ def _pick(layout: Layout, at: datetime) -> Job | None:
 
 
 def _fail_if_due(layout: Layout, job: Job, at: datetime) -> bool:
-    """Fails the users of `job`'s recording with ``audio_deleted`` if it is due; True if it was."""
-    cause = lifecycle.due_cause(load_audio(layout, job.audio_id), at)
-    if cause is None:
+    """Purges `job`'s recording if its daily purge has come, failing its waiting users; True if it was due."""
+    if not lifecycle.is_due(load_audio(layout, job.audio_id), at):
         return False
-    for failed in lifecycle.delete_audio(layout, job.audio_id, cause, at):
+    for failed in lifecycle.purge_audio(layout, job.audio_id, at):
         _log(failed.request_id, "failed audio_deleted")
     return True
 

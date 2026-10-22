@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from stt.server import contract, deadlines, intake
+from stt.server import contract, intake
 from stt.server.layout import Layout
 from stt.server.records import load_audio, load_job
 
@@ -17,8 +17,8 @@ from .conftest import FAKE_ENGINE, FakeClock, leftovers, make_wav, new_id, run_s
 from .inbox_helpers import make_layout, put_attachment, put_body, read_response, transcribe_body
 
 SOURCE_UNAVAILABLE = "The source recording is not available."
-AUDIO_DELETED_DETAIL = "The recording was deleted before the job finished."
 TIME_KEYS = ("finished_at", "updated_at", "expires_at")
+AFTER_PURGE = "2026-03-02T14:58:30Z"
 
 
 @pytest.fixture
@@ -86,8 +86,9 @@ def spec_copying_engine(tmp_path: Path, destination: Path) -> list[str]:
 
 
 def test_us3_1_second_pass_reuses_first_audio(layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path) -> None:
-    first = submit(layout, wav, clock, delete_audio="at_midnight")
+    first = submit(layout, wav, clock)
     run_worker(layout, clock)
+    assert (layout.outbox / first / "transcript.txt").read_bytes()
     clock.advance(60)
     second = submit_second(layout, clock, first, hints=["alpha"], diarize=True)
     seen = tmp_path / "spec.json"
@@ -107,78 +108,37 @@ def test_us3_1_second_pass_reuses_first_audio(layout: Layout, wav: Path, clock: 
     job = load_job(layout, second)
     assert job.audio_id == first
     assert job.duration_s == load_job(layout, first).duration_s
-
-
-def test_second_pass_switches_policy_and_rewrites_every_users_response(
-    layout: Layout, wav: Path, clock: FakeClock
-) -> None:
-    first = submit(layout, wav, clock, delete_audio="at_midnight")
-    run_worker(layout, clock)
-    before = assert_valid_response(layout, first)
-    assert before["audio"]["delete_policy"] == "at_midnight"
-    clock.advance(60)
-
-    second = submit_second(layout, clock, first, delete_audio="after_job")
-
     audio = load_audio(layout, first)
-    assert audio.policy == {"after_job": second}
     assert audio.users == (first, second)
-    assert audio.received_at == load_job(layout, first).accepted_at
-    hard = deadlines.format_time(audio.hard_deadline)
-    for request_id in (first, second):
-        shown = assert_valid_response(layout, request_id)["audio"]
-        assert shown == {"delete_policy": "after_job", "delete_at": hard, "delete_after": second}
-    assert read_response(layout, first)["updated_at"] == "2026-03-02T01:01:00Z"
+    assert audio.deleted_at is None
+    assert doc["audio"] == assert_valid_response(layout, first)["audio"] == {"delete_at": "2026-03-02T14:58:00Z"}
+    assert doc["expires_at"] == "2026-03-02T14:58:00Z"
 
 
-def test_second_pass_with_midnight_policy_sets_the_next_midnight(layout: Layout, wav: Path, clock: FakeClock) -> None:
-    first = submit(layout, wav, clock, delete_audio="after_job")
-    clock.set("2026-03-02T14:59:00Z")
-
-    second = submit_second(layout, clock, first, delete_audio="at_midnight")
-
-    assert load_audio(layout, first).policy == {"at": deadlines.next_midnight(clock.now())}
-    assert assert_valid_response(layout, second)["audio"] == {
-        "delete_policy": "at_midnight",
-        "delete_at": "2026-03-02T15:00:00Z",
-    }
-    assert assert_valid_response(layout, first)["audio"]["delete_at"] == "2026-03-02T15:00:00Z"
-
-
-def test_us3_2_after_job_second_pass_deletes_shared_audio(layout: Layout, wav: Path, clock: FakeClock) -> None:
-    first = submit(layout, wav, clock, delete_audio="at_midnight")
-    run_worker(layout, clock)
-    clock.advance(60)
-    second = submit_second(layout, clock, first, delete_audio="after_job")
-    clock.advance(60)
-
-    run_worker(layout, clock)
-
-    assert assert_valid_response(layout, second)["state"] == "done"
-    assert not (layout.audio / first).exists()
-    assert leftovers(layout.root) == []
-    assert assert_valid_response(layout, second)["audio"]["deleted_at"] == "2026-03-02T01:02:00Z"
-    assert assert_valid_response(layout, first)["audio"]["deleted_at"] == "2026-03-02T01:02:00Z"
-    assert load_audio(layout, first).deleted_by == "after_job"
-
-
-def test_first_job_ending_does_not_delete_audio_taken_over_by_a_second_pass(
-    layout: Layout, wav: Path, clock: FakeClock
-) -> None:
-    first = submit(layout, wav, clock, delete_audio="after_job")
-    second = submit_second(layout, clock, first, delete_audio="after_job")
+def test_first_and_second_pass_ending_keep_the_shared_recording(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    first = submit(layout, wav, clock)
+    second = submit_second(layout, clock, first)
 
     assert run_worker(layout, clock) == 0
 
     assert assert_valid_response(layout, first)["state"] == "done"
     assert assert_valid_response(layout, second)["state"] == "done"
-    assert not (layout.audio / first).exists()
-    assert load_audio(layout, first).deleted_by == "after_job"
+    assert (layout.audio / first / "audio.wav").is_file()
+    assert load_audio(layout, first).deleted_at is None
 
 
-def test_us3_3_deleted_source_refused(layout: Layout, wav: Path, clock: FakeClock, capfd: pytest.CaptureFixture[str]) -> None:
-    first = submit(layout, wav, clock, delete_audio="after_job")
+@pytest.mark.parametrize("deleted_by", ["request", "purge"])
+def test_us3_2_deleted_source_refused(
+    layout: Layout, wav: Path, clock: FakeClock, capfd: pytest.CaptureFixture[str], deleted_by: str
+) -> None:
+    first = submit(layout, wav, clock)
     run_worker(layout, clock)
+    if deleted_by == "request":
+        write_delete_request(layout.inbox, request_id=new_id(), requested_by="professor-a", target=first)
+        intake.run_once(layout, clock.now)
+    else:
+        clock.set(AFTER_PURGE)
+        run_sweep(layout, clock)
     assert not (layout.audio / first).exists()
     capfd.readouterr()
 
@@ -190,8 +150,8 @@ def test_us3_3_deleted_source_refused(layout: Layout, wav: Path, clock: FakeCloc
     assert leftovers(layout.root) == []
 
 
-def test_us3_4_other_requester_source_refused_without_disclosure(layout: Layout, wav: Path, clock: FakeClock) -> None:
-    first = submit(layout, wav, clock, delete_audio="at_midnight", requested_by="professor-a")
+def test_us3_3_other_requester_source_refused_without_disclosure(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    first = submit(layout, wav, clock, requested_by="professor-a")
     run_worker(layout, clock)
     clock.advance(60)
 
@@ -206,33 +166,10 @@ def test_us3_4_other_requester_source_refused_without_disclosure(layout: Layout,
     assert shown[foreign] == shown[missing]
     audio = load_audio(layout, first)
     assert audio.users == (first,)
-    assert audio.policy == {"at": deadlines.next_midnight(load_job(layout, first).accepted_at)}
     assert (layout.audio / first / "audio.wav").is_file()
-    assert read_response(layout, first)["audio"]["delete_policy"] == "at_midnight"
 
 
-def test_us3_5_hard_deadline_fails_waiting_second_pass(layout: Layout, wav: Path) -> None:
-    clock = FakeClock("2026-03-02T15:10:00Z")
-    first = submit(layout, wav, clock, delete_audio="at_midnight")
-    run_worker(layout, clock)
-    clock.advance(20 * 3600)
-    second = submit_second(layout, clock, first, delete_audio="after_job")
-    assert assert_valid_response(layout, second)["state"] == "queued"
-    clock.set("2026-03-03T15:08:00Z")
-
-    run_sweep(layout, clock)
-
-    assert clock.now() == load_audio(layout, first).received_at + deadlines.RETENTION_DUE
-    assert not (layout.audio / first).exists()
-    doc = assert_valid_response(layout, second)
-    assert doc["state"] == "failed"
-    assert doc["failure"] == {"reason": "audio_deleted", "detail": AUDIO_DELETED_DETAIL, "cause": "retention_limit"}
-    assert doc["audio"]["delete_at"] == "2026-03-03T15:08:00Z"
-    assert doc["audio"]["deleted_at"] == "2026-03-03T15:08:00Z"
-    assert leftovers(layout.root) == []
-
-
-def test_us3_6_unknown_source_refused(layout: Layout, clock: FakeClock) -> None:
+def test_us3_4_unknown_source_refused(layout: Layout, clock: FakeClock) -> None:
     second = submit_second(layout, clock, new_id())
 
     assert_source_unavailable(layout, second)
@@ -247,47 +184,50 @@ def test_unsupported_language_is_reported_before_the_source_is_checked(layout: L
     assert doc["failure"]["detail"].startswith("language:")
 
 
-def test_delete_everything_fails_other_users_of_audio(layout: Layout, wav: Path, clock: FakeClock) -> None:
-    first = submit(layout, wav, clock, delete_audio="at_midnight")
-    second = submit_second(layout, clock, first, delete_audio="at_midnight")
+def test_delete_request_on_the_first_pass_deletes_a_waiting_second_pass(
+    layout: Layout, wav: Path, clock: FakeClock
+) -> None:
+    first = submit(layout, wav, clock)
+    second = submit_second(layout, clock, first, hints=["alpha"])
     clock.advance(60)
     delete_id = new_id()
-    write_delete_request(layout.inbox, request_id=delete_id, requested_by="professor-a", target=first, scope="everything")
+    write_delete_request(layout.inbox, request_id=delete_id, requested_by="professor-a", target=first)
 
     intake.run_once(layout, clock.now)
 
     assert assert_valid_response(layout, delete_id)["outcome"] == "deleted"
-    waiting = assert_valid_response(layout, second)
-    assert waiting["state"] == "failed"
-    assert waiting["failure"] == {
-        "reason": "audio_deleted",
-        "detail": AUDIO_DELETED_DETAIL,
-        "cause": "deleted_on_request",
-    }
-    assert assert_valid_response(layout, first)["state"] == "deleted"
+    for request_id in (first, second):
+        doc = assert_valid_response(layout, request_id)
+        assert doc["state"] == "deleted"
+        assert doc["deleted"] == {"at": "2026-03-02T01:01:00Z"}
+        assert "failure" not in doc
     assert not (layout.audio / first).exists()
+    assert list(layout.queue.iterdir()) == []
     assert leftovers(layout.root) == []
 
 
 @pytest.mark.parametrize("first_runs", [False, True], ids=["first_queued", "first_done"])
-def test_edge_8_second_pass_after_deadline_before_sweep_refused(
+def test_edge_8_second_pass_after_the_purge_time_before_the_sweep_refused(
     layout: Layout, wav: Path, clock: FakeClock, first_runs: bool
 ) -> None:
-    first = submit(layout, wav, clock, delete_audio="at_midnight")
+    first = submit(layout, wav, clock)
     if first_runs:
         run_worker(layout, clock)
-    clock.set("2026-03-02T15:00:30Z")
+    clock.set(AFTER_PURGE)
 
     second = submit_second(layout, clock, first)
 
     assert_source_unavailable(layout, second)
     assert not (layout.audio / first).exists()
     audio = load_audio(layout, first)
-    assert (audio.deleted_at, audio.deleted_by) == (clock.now(), "schedule")
+    assert (audio.deleted_at, audio.deleted_by) == (clock.now(), "purge")
     doc = assert_valid_response(layout, first)
-    assert doc["audio"]["deleted_at"] == "2026-03-02T15:00:30Z"
+    assert doc["audio"]["deleted_at"] == AFTER_PURGE
     if first_runs:
         assert doc["state"] == "done"
     else:
-        assert doc["failure"] == {"reason": "audio_deleted", "detail": AUDIO_DELETED_DETAIL, "cause": "midnight"}
+        assert doc["failure"] == {
+            "reason": "audio_deleted",
+            "detail": "The recording was deleted before the job finished.",
+        }
     assert leftovers(layout.root) == []

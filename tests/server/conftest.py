@@ -125,7 +125,6 @@ def write_transcribe_request(
     language: str = "ko",
     diarize: bool = False,
     hints: list[str] | None = None,
-    delete_audio: str = "after_job",
     mode: int = 0o640,
 ) -> Path:
     """Hands over a transcribe request the way the contract prescribes.
@@ -142,7 +141,6 @@ def write_transcribe_request(
         language: Language code.
         diarize: Whether to separate speakers.
         hints: Optional glossary terms, written in the given order.
-        delete_audio: ``after_job`` or ``at_midnight``.
         mode: File mode of the request and the attachment.
 
     Returns:
@@ -165,7 +163,6 @@ def write_transcribe_request(
         "audio": audio,
         "language": language,
         "diarize": diarize,
-        "delete_audio": delete_audio,
     }
     if hints is not None:
         body["hints"] = hints
@@ -178,17 +175,15 @@ def write_delete_request(
     request_id: str,
     requested_by: str,
     target: str,
-    scope: str = "result",
     mode: int = 0o640,
 ) -> Path:
-    """Hands over a delete request (``.json.tmp``, then rename).
+    """Hands over a delete request, which deletes everything (``.json.tmp``, then rename).
 
     Args:
         inbox: The inbox directory.
         request_id: Lowercase UUID of this delete request.
         requested_by: Opaque requester marker.
-        target: ``request_id`` of the transcribe request to delete from.
-        scope: ``result`` or ``everything``.
+        target: ``request_id`` of the transcribe request whose recording and jobs go.
         mode: File mode of the request.
 
     Returns:
@@ -200,7 +195,6 @@ def write_delete_request(
         "request_id": request_id,
         "requested_by": requested_by,
         "target": target,
-        "scope": scope,
     }
     return _publish_request(inbox, request_id, body, mode)
 
@@ -236,6 +230,19 @@ def leftovers(root: Path) -> list[Path]:
             if isinstance(data, dict) and data.get("hints") is not None:
                 found.add(record)
     return sorted(found)
+
+
+def leftovers_besides_recordings(root: Path) -> list[Path]:
+    """Lists the leftovers outside ``audio/``; a recording stays until a delete request or the daily purge.
+
+    Args:
+        root: The state root directory.
+
+    Returns:
+        Sorted paths of the leftovers not under ``audio/``.
+    """
+    audio = root / "audio"
+    return [path for path in leftovers(root) if audio not in path.parents]
 
 
 def _engine_cmd(mode: str) -> list[str]:

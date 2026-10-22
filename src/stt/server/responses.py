@@ -17,19 +17,11 @@ _SCHEMA_VERSION = 1
 
 
 def _failure(failure: Failure) -> dict[str, str]:
-    doc = {"reason": failure.reason, "detail": failure.detail}
-    if failure.cause is not None:
-        doc["cause"] = failure.cause
-    return doc
+    return {"reason": failure.reason, "detail": failure.detail}
 
 
 def _audio(audio: Audio) -> dict[str, str]:
-    doc = {
-        "delete_policy": "after_job" if "after_job" in audio.policy else "at_midnight",
-        "delete_at": format_time(deadlines.audio_delete_at(audio.policy, audio.hard_deadline)),
-    }
-    if "after_job" in audio.policy:
-        doc["delete_after"] = str(audio.policy["after_job"])
+    doc = {"delete_at": format_time(audio.delete_at)}
     if audio.deleted_at is not None:
         doc["deleted_at"] = format_time(audio.deleted_at)
     return doc
@@ -99,7 +91,7 @@ def rejected_status(
         "state": "failed",
         "finished_at": format_time(now),
         "updated_at": format_time(now),
-        "expires_at": format_time(deadlines.expires_at(now)),
+        "expires_at": format_time(deadlines.next_purge(now)),
         "failure": {"reason": reason, "detail": detail},
     }
     return _with_duplicate(doc, duplicate_refused_at)
@@ -108,7 +100,6 @@ def rejected_status(
 def delete_outcome(
     request_id: str,
     target: str,
-    scope: str,
     outcome: str,
     now: datetime,
     duplicate_refused_at: datetime | None = None,
@@ -119,10 +110,9 @@ def delete_outcome(
         "kind": "delete",
         "request_id": request_id,
         "target": target,
-        "scope": scope,
         "outcome": outcome,
         "processed_at": format_time(now),
-        "expires_at": format_time(deadlines.expires_at(now)),
+        "expires_at": format_time(deadlines.next_purge(now)),
     }
     return _with_duplicate(doc, duplicate_refused_at)
 
@@ -140,6 +130,6 @@ def refusal(
         "request_id": request_id,
         "failure": {"reason": "invalid_request", "detail": detail},
         "processed_at": format_time(now),
-        "expires_at": format_time(deadlines.expires_at(now)),
+        "expires_at": format_time(deadlines.next_purge(now)),
     }
     return _with_duplicate(doc, duplicate_refused_at)

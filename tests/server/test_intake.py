@@ -5,13 +5,12 @@ from __future__ import annotations
 import errno
 import os
 import stat
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 from stt.server import contract, intake
-from stt.server.deadlines import next_midnight
+from stt.server.deadlines import next_purge
 from stt.server.layout import Layout
 from stt.server.records import load_audio, load_job, load_jobs
 
@@ -53,14 +52,13 @@ def test_accept_writes_records_marker_response_and_copies_attachment(
     assert job.hints == ("term one", "term two")
     assert job.diarize is True
     assert job.duration_s == pytest.approx(2.0, abs=0.05)
-    assert job.expires_at == clock.now() + timedelta(hours=23, minutes=58)
+    assert job.expires_at == next_purge(clock.now())
     audio = load_audio(layout, request_id)
-    assert audio.policy == {"after_job": request_id}
+    assert audio.delete_at == next_purge(clock.now())
     assert audio.users == (request_id,)
     assert audio.original_name == f"{request_id}.audio.wav"
     assert audio.owner == "professor-a"
     assert audio.received_at == clock.now()
-    assert audio.hard_deadline == clock.now() + timedelta(hours=23, minutes=58)
     copy = layout.audio / request_id / "audio.wav"
     assert copy.read_bytes() == wav.read_bytes()
     assert stat.S_IMODE(copy.stat().st_mode) == 0o600
@@ -75,17 +73,22 @@ def test_accept_writes_records_marker_response_and_copies_attachment(
     assert capfd.readouterr().out.splitlines() == [f"{request_id} queued"]
 
 
-def test_accept_at_midnight_policy_uses_next_seoul_midnight(layout: Layout, wav: Path) -> None:
-    clock = FakeClock("2026-03-02T14:30:00Z")
-    request_id = submit(layout, wav, delete_audio="at_midnight")
+@pytest.mark.parametrize(
+    ("accepted", "purge"),
+    [("2026-03-02T14:57:59Z", "2026-03-02T14:58:00Z"), ("2026-03-02T14:58:00Z", "2026-03-03T14:58:00Z")],
+    ids=["before_23_58_kst", "at_23_58_kst"],
+)
+def test_accept_sets_the_next_daily_purge_for_job_and_recording(
+    layout: Layout, wav: Path, accepted: str, purge: str
+) -> None:
+    clock = FakeClock(accepted)
+    request_id = submit(layout, wav)
 
     intake.run_once(layout, clock.now)
 
-    audio = load_audio(layout, request_id)
-    assert audio.policy == {"at": next_midnight(clock.now())}
     response = read_response(layout, request_id)
-    assert response["audio"]["delete_policy"] == "at_midnight"
-    assert response["audio"]["delete_at"] == "2026-03-02T15:00:00Z"
+    assert response["expires_at"] == purge
+    assert response["audio"] == {"delete_at": purge}
 
 
 def test_accepted_jobs_get_increasing_positions_in_mtime_order(layout: Layout, wav: Path) -> None:

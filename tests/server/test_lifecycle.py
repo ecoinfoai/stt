@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -89,78 +90,56 @@ def test_finish_failed_from_queued_removes_marker_and_reports_failure(layout: La
     assert read_response(layout, third)["queue_position"] == 2
 
 
-def share_audio(layout: Layout, owner_id: str, other_id: str, policy: dict[str, str]) -> None:
-    """Makes `other_id` use the recording of `owner_id` under `policy`."""
+def share_audio(layout: Layout, owner_id: str, other_id: str) -> None:
+    """Makes `other_id` use the recording of `owner_id`, as a second pass does."""
     audio = load_audio(layout, owner_id)
-    save_audio(layout, replace(audio, users=(owner_id, other_id), policy=policy))
+    save_audio(layout, replace(audio, users=(owner_id, other_id)))
     save_job(layout, replace(load_job(layout, other_id), audio_id=owner_id))
 
 
-def test_finish_removes_hints_and_keeps_audio_of_another_policy(layout: Layout, tmp_path: Path) -> None:
+def test_finish_removes_hints_and_keeps_the_recording(layout: Layout, tmp_path: Path) -> None:
     clock = FakeClock()
     first, second, _ = accept_three(layout, tmp_path, clock)
     save_job(layout, replace(load_job(layout, first), hints=("alpha",)))
-    share_audio(layout, first, second, {"after_job": second})
+    share_audio(layout, first, second)
 
     with hold(layout.state_lock):
-        lifecycle.finish(layout, load_job(layout, first), "done", clock.now())
+        for request_id in (first, second):
+            lifecycle.finish(layout, load_job(layout, request_id), "done", clock.now())
 
     assert load_job(layout, first).hints is None
     assert (layout.audio / first / "audio.wav").is_file()
     assert load_audio(layout, first).deleted_at is None
+    assert "deleted_at" not in read_response(layout, second)["audio"]
 
 
-def test_finish_of_the_policy_job_deletes_audio_and_refreshes_other_users(layout: Layout, tmp_path: Path) -> None:
-    clock = FakeClock()
-    first, second, _ = accept_three(layout, tmp_path, clock)
-    share_audio(layout, first, second, {"after_job": second})
-    with hold(layout.state_lock):
-        for request_id in (first, second):
-            lifecycle.start(layout, load_job(layout, request_id), clock.now())
-        lifecycle.finish(layout, load_job(layout, first), "done", clock.now())
-        clock.advance(30)
-        lifecycle.finish(layout, load_job(layout, second), "done", clock.now())
-
-    audio = load_audio(layout, first)
-    assert not (layout.audio / first).exists()
-    assert audio.deleted_by == "after_job"
-    assert audio.deleted_at == clock.now()
-    for request_id in (first, second):
-        response = read_response(layout, request_id)
-        assert contract.validate_response(response) is None
-        assert response["audio"]["deleted_at"] == "2026-03-02T01:00:30Z"
-        assert response["state"] == "done"
-
-
-@pytest.mark.parametrize(
-    ("cause", "deleted_by"),
-    [("midnight", "schedule"), ("retention_limit", "schedule"), ("deleted_on_request", "request")],
-)
-def test_delete_audio_fails_waiting_users_and_keeps_the_record(
-    layout: Layout, tmp_path: Path, cause: str, deleted_by: str
-) -> None:
+def test_purge_audio_fails_waiting_users_and_keeps_the_record(layout: Layout, tmp_path: Path) -> None:
     clock = FakeClock()
     first, second, third = accept_three(layout, tmp_path, clock)
-    share_audio(layout, first, second, {"after_job": second})
+    share_audio(layout, first, second)
     with hold(layout.state_lock):
         lifecycle.finish(layout, load_job(layout, first), "done", clock.now())
         clock.advance(60)
-        lifecycle.delete_audio(layout, first, cause, clock.now())
+        failed = lifecycle.purge_audio(layout, first, clock.now())
 
+    assert [job.request_id for job in failed] == [second]
     audio = load_audio(layout, first)
     assert not (layout.audio / first).exists()
-    assert audio.deleted_by == deleted_by
+    assert audio.deleted_by == "purge"
     assert audio.deleted_at == clock.now()
     assert load_job(layout, first).state == "done"
-    failed = load_job(layout, second)
-    assert failed.state == "failed"
-    assert failed.failure == Failure("audio_deleted", "The recording was deleted before the job finished.", cause)
+    ended = load_job(layout, second)
+    assert ended.state == "failed"
+    assert ended.failure == Failure("audio_deleted", "The recording was deleted before the job finished.")
     assert load_job(layout, third).state == "queued"
     assert list(layout.queue.glob(f"*-{second}")) == []
     assert read_response(layout, first)["audio"]["deleted_at"] == "2026-03-02T01:01:00Z"
     response = read_response(layout, second)
     assert contract.validate_response(response) is None
-    assert response["failure"]["cause"] == cause
+    assert response["failure"] == {
+        "reason": "audio_deleted",
+        "detail": "The recording was deleted before the job finished.",
+    }
     assert read_response(layout, third)["queue_position"] == 1
 
 
@@ -178,55 +157,67 @@ def test_clear_dead_worker_interrupts_running_jobs_only(layout: Layout, tmp_path
     assert (layout.audio / second / "audio.wav").is_file()
 
 
-def test_due_cause_is_none_once_the_audio_is_deleted(layout: Layout, tmp_path: Path) -> None:
+def test_is_due_from_delete_at_until_the_recording_is_deleted(layout: Layout, tmp_path: Path) -> None:
     clock = FakeClock()
     first, _, _ = accept_three(layout, tmp_path, clock)
-    clock.set("2026-03-04T00:00:00Z")
     audio = load_audio(layout, first)
-    assert lifecycle.due_cause(audio, clock.now()) == "retention_limit"
 
-    assert lifecycle.due_cause(replace(audio, deleted_at=clock.now(), deleted_by="schedule"), clock.now()) is None
-
-
-def test_delete_audio_on_a_deleted_recording_changes_nothing(layout: Layout, tmp_path: Path) -> None:
-    clock = FakeClock()
-    first, _, _ = accept_three(layout, tmp_path, clock)
-    with hold(layout.state_lock):
-        lifecycle.delete_audio(layout, first, "midnight", clock.now())
-    before = {path: path.read_bytes() for path in layout.root.rglob("*") if path.is_file()}
-    clock.advance(3600)
-
-    with hold(layout.state_lock):
-        failed = lifecycle.delete_audio(layout, first, "deleted_on_request", clock.now())
-
-    assert failed == []
-    assert {path: path.read_bytes() for path in layout.root.rglob("*") if path.is_file()} == before
-    assert load_audio(layout, first).deleted_by == "schedule"
+    assert lifecycle.is_due(audio, clock.now()) is False
+    clock.set("2026-03-02T14:57:59Z")
+    assert lifecycle.is_due(audio, clock.now()) is False
+    clock.set("2026-03-02T14:58:00Z")
+    assert lifecycle.is_due(audio, clock.now()) is True
+    assert lifecycle.is_due(replace(audio, deleted_at=clock.now(), deleted_by="purge"), clock.now()) is False
 
 
-def test_delete_everything_fails_other_users_of_the_recording_first(layout: Layout, tmp_path: Path) -> None:
+@pytest.mark.parametrize("target_index", [0, 1], ids=["first_pass", "second_pass"])
+def test_delete_everything_deletes_every_user_of_the_recording(
+    layout: Layout, tmp_path: Path, target_index: int
+) -> None:
     clock = FakeClock()
     first, second, third = accept_three(layout, tmp_path, clock)
-    share_audio(layout, first, second, {"after_job": first})
+    share_audio(layout, first, second)
+    save_job(layout, replace(load_job(layout, second), hints=("alpha",)))
     clock.advance(30)
 
     with hold(layout.state_lock):
-        lifecycle.delete_everything(layout, load_job(layout, first), clock.now())
+        target = (first, second)[target_index]
+        lifecycle.delete_everything(layout, load_job(layout, target), clock.now())
 
     assert not (layout.audio / first).exists()
     audio = load_audio(layout, first)
     assert (audio.deleted_by, audio.deleted_at) == ("request", clock.now())
-    other = load_job(layout, second)
-    assert other.state == "failed"
-    detail = "The recording was deleted before the job finished."
-    assert other.failure == Failure("audio_deleted", detail, "deleted_on_request")
-    ended = load_job(layout, first)
-    assert (ended.state, ended.deleted_at, ended.failure) == ("deleted", clock.now(), None)
+    for request_id in (first, second):
+        ended = load_job(layout, request_id)
+        assert (ended.state, ended.deleted_at, ended.failure, ended.hints) == ("deleted", clock.now(), None, None)
+        response = read_response(layout, request_id)
+        assert contract.validate_response(response) is None
+        assert response["state"] == "deleted"
+        assert response["audio"]["deleted_at"] == "2026-03-02T01:00:30Z"
     assert load_job(layout, third).state == "queued"
     assert (layout.audio / third / "audio.wav").is_file()
     assert list(layout.queue.iterdir()) == [layout.queue / f"00000003-{third}"]
+    assert read_response(layout, third)["queue_position"] == 1
+
+
+def test_delete_everything_after_the_purge_keeps_the_purge_marks(layout: Layout, tmp_path: Path) -> None:
+    clock = FakeClock()
+    first, second, _ = accept_three(layout, tmp_path, clock)
+    share_audio(layout, first, second)
+    with hold(layout.state_lock):
+        lifecycle.finish(layout, load_job(layout, first), "done", clock.now())
+        clock.set("2026-03-02T14:58:30Z")
+        lifecycle.purge_audio(layout, first, clock.now())
+        clock.advance(10)
+        lifecycle.delete_everything(layout, load_job(layout, first), clock.now())
+
+    audio = load_audio(layout, first)
+    assert (audio.deleted_by, audio.deleted_at) == ("purge", clock.now() - timedelta(seconds=10))
     for request_id in (first, second):
+        ended = load_job(layout, request_id)
+        assert (ended.state, ended.deleted_at, ended.failure) == ("deleted", clock.now(), None)
         response = read_response(layout, request_id)
         assert contract.validate_response(response) is None
-        assert response["audio"]["deleted_at"] == "2026-03-02T01:00:30Z"
-    assert read_response(layout, third)["queue_position"] == 1
+        assert response["audio"]["deleted_at"] == "2026-03-02T14:58:30Z"
+    assert load_job(layout, first).result_deleted_at == clock.now()
+    assert load_job(layout, second).result_deleted_at is None

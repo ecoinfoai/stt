@@ -89,18 +89,17 @@ def test_deletes_and_sweeps_never_log_hints_requester_transcript_or_file_names(
         intake.run_once(layout, clock.now)
         return request_id
 
-    def delete(target: str, scope: str) -> None:
-        write_delete_request(layout.inbox, request_id=new_id(), requested_by=REQUESTER, target=target, scope=scope)
+    def delete(target: str) -> None:
+        write_delete_request(layout.inbox, request_id=new_id(), requested_by=REQUESTER, target=target)
         intake.run_once(layout, clock.now)
 
     clock.set("2026-03-02T14:10:00Z")
-    results = submit(delete_audio="at_midnight")
-    everything = submit(delete_audio="at_midnight")
+    kept = submit()
+    deleted = submit()
     run_worker(layout, clock)
-    delete(results, "result")
-    delete(everything, "everything")
-    midnight = submit(delete_audio="at_midnight")
-    dead = submit(delete_audio="after_job")
+    delete(deleted)
+    purged = submit()
+    dead = submit()
     with hold(layout.state_lock):
         lifecycle.start(layout, load_job(layout, dead), clock.now())
     (layout.work / dead / "out").mkdir(parents=True)
@@ -109,9 +108,7 @@ def test_deletes_and_sweeps_never_log_hints_requester_transcript_or_file_names(
     (layout.inbox / f"{STRAY_NAME}.json.tmp").write_bytes(b"{")
 
     run_sweep(layout, clock)
-    clock.set("2026-03-02T15:00:30Z")
-    run_sweep(layout, clock)
-    clock.set("2026-03-03T00:59:00Z")
+    clock.set("2026-03-02T14:58:30Z")
     run_sweep(layout, clock)
     set_to_ctime_plus(clock, stray, 61)
     run_sweep(layout, clock)
@@ -121,8 +118,9 @@ def test_deletes_and_sweeps_never_log_hints_requester_transcript_or_file_names(
     for secret in (HINT, REQUESTER, TRANSCRIPT_LINE, STRAY_NAME):
         assert secret not in output
     assert f"{dead} failed interrupted" in output
-    assert f"{midnight} failed audio_deleted" in output
+    assert f"{purged} failed audio_deleted" in output
     assert list(layout.inbox.iterdir()) == []
+    assert not (layout.jobs / kept).exists()
 
 
 ERROR_TEXT = "zzerrortext"

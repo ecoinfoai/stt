@@ -10,14 +10,13 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, Iterable, Literal, Mapping
+from typing import Any, Iterable, Literal
 
 from stt.server.deadlines import format_time, parse_time
 from stt.server.layout import Layout, atomic_write_text
 
 JobState = Literal["queued", "running", "done", "failed", "deleted"]
-DeleteAudio = Literal["after_job", "at_midnight"]
-DeletedBy = Literal["schedule", "after_job", "request"]
+DeletedBy = Literal["purge", "request"]
 
 _RECORD_MODE = 0o600
 _JOB_TIME_FIELDS = (
@@ -39,12 +38,10 @@ class Failure:
     Attributes:
         reason: Failure reason code.
         detail: Fixed English sentence for the reason.
-        cause: Only for ``audio_deleted``: what deleted the audio.
     """
 
     reason: str
     detail: str
-    cause: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,7 +56,6 @@ class Job:
     language: str
     diarize: bool
     hints: tuple[str, ...] | None
-    delete_audio: DeleteAudio
     duration_s: float
     state: JobState
     expires_at: datetime
@@ -76,16 +72,16 @@ class Audio:
     """A received recording.
 
     Attributes:
-        policy: ``{"after_job": request_id}`` or ``{"at": datetime}``.
+        delete_at: The daily purge after ``received_at``; a delete request may come first.
         users: Request ids of the jobs that use this recording.
+        deleted_by: ``purge`` (the daily purge) or ``request`` (a delete request).
     """
 
     audio_id: str
     original_name: str
     owner: str
     received_at: datetime
-    hard_deadline: datetime
-    policy: Mapping[str, str | datetime]
+    delete_at: datetime
     users: tuple[str, ...]
     deleted_at: datetime | None = None
     deleted_by: DeletedBy | None = None
@@ -104,8 +100,6 @@ def _job_to_dict(job: Job) -> dict[str, Any]:
     for key in _JOB_TIME_FIELDS:
         data[key] = _dump_time(getattr(job, key))
     data["hints"] = None if job.hints is None else list(job.hints)
-    if job.failure is not None and job.failure.cause is None:
-        del data["failure"]["cause"]
     return data
 
 
@@ -121,7 +115,6 @@ def _job_from_dict(data: dict[str, Any]) -> Job:
         language=data["language"],
         diarize=data["diarize"],
         hints=None if hints is None else tuple(hints),
-        delete_audio=data["delete_audio"],
         duration_s=data["duration_s"],
         state=data["state"],
         expires_at=parse_time(data["expires_at"]),
@@ -135,14 +128,12 @@ def _job_from_dict(data: dict[str, Any]) -> Job:
 
 
 def _audio_to_dict(audio: Audio) -> dict[str, Any]:
-    policy = {key: format_time(value) if isinstance(value, datetime) else value for key, value in audio.policy.items()}
     return {
         "audio_id": audio.audio_id,
         "original_name": audio.original_name,
         "owner": audio.owner,
         "received_at": format_time(audio.received_at),
-        "hard_deadline": format_time(audio.hard_deadline),
-        "policy": policy,
+        "delete_at": format_time(audio.delete_at),
         "users": list(audio.users),
         "deleted_at": _dump_time(audio.deleted_at),
         "deleted_by": audio.deleted_by,
@@ -150,16 +141,12 @@ def _audio_to_dict(audio: Audio) -> dict[str, Any]:
 
 
 def _audio_from_dict(data: dict[str, Any]) -> Audio:
-    policy: dict[str, str | datetime] = (
-        {"at": parse_time(data["policy"]["at"])} if "at" in data["policy"] else dict(data["policy"])
-    )
     return Audio(
         audio_id=data["audio_id"],
         original_name=data["original_name"],
         owner=data["owner"],
         received_at=parse_time(data["received_at"]),
-        hard_deadline=parse_time(data["hard_deadline"]),
-        policy=policy,
+        delete_at=parse_time(data["delete_at"]),
         users=tuple(data["users"]),
         deleted_at=_load_time(data["deleted_at"]),
         deleted_by=data["deleted_by"],
