@@ -374,3 +374,10 @@ def test_fetch_models_help_exits_0_with_english_text(capsys: pytest.CaptureFixtu
     out = capsys.readouterr().out
     assert "--models" in out and "HF_TOKEN" in out
     assert out.isascii()
+
+
+def test_top_level_usage_lists_every_server_subcommand() -> None:
+    server_line = next(line for line in cli.usage().splitlines() if line.strip().startswith("server "))
+
+    for name in ("intake", "work", "sweep", "fetch-models"):
+        assert name in server_line

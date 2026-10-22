@@ -32,7 +32,7 @@ _SUMMARIES: dict[str, str] = {
     "transcribe": "미디어 파일·폴더를 한국어 전사문(TXT)으로 바꾼다",
     "batch": "목록 파일(.txt/.yaml)에 적은 여러 미디어를 전사한다",
     "enroll": "전사한 파일에서 화자 목소리를 등록해 사전에 쌓는다",
-    "server": "Run the server transcription stages (intake, work, sweep)",
+    "server": "Run the server transcription stages (intake, work, sweep, fetch-models)",
 }
 
 

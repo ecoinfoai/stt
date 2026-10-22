@@ -38,8 +38,8 @@ def fetch(models_dir: Path, token: str | None, download: Callable[..., object]) 
     does not write it when downloading by commit hash. When every repository is done,
     ``<models_dir>/.complete`` is written atomically with one ``<repo> <commit>`` line per
     ``PINNED`` entry. If ``.complete`` already holds exactly that list, nothing is downloaded;
-otherwise it is removed before downloading, so a failed run never leaves a list that no
-longer describes the rewritten ``refs/main`` files.
+    otherwise it is removed before downloading, so a failed run never leaves a list that no
+    longer describes the rewritten ``refs/main`` files.
 
     Args:
         models_dir: The model folder (``HF_HOME``); created when missing.
