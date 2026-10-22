@@ -448,10 +448,10 @@ description: "Task list for 001-server-transcription"
 - [X] T068 [P] `.github/workflows/ci.yml` 의 flake 작업을 `nix flake check --no-build` 로 바꾼다(R15). 서버 패키지·VM 확인을 flake 에 더하기
   **전에** 한다 — 순서가 바뀌면 그 사이에 올린 커밋에서 CI 가 CUDA 패키지와 VM 을 빌드한다. RED 해당 없음 — CI 설정. 확인: 로컬
   `nix flake check --no-build` 통과 — supports SC-013
-- [ ] T069 `flake.nix` 에 `checks.x86_64-linux.server-smoke`(runCommand: `${server}/bin/stt server --help`, `${server}/bin/python -c "from stt.server import
+- [X] T069 `flake.nix` 에 `checks.x86_64-linux.server-smoke`(runCommand: `${server}/bin/stt server --help`, `${server}/bin/python -c "from stt.server import
   contract, engine, models; contract.load_schema('request'); import jsonschema, av"`)를 먼저 쓴다 — 패키지가 없으므로 RED(`nix build
   .#checks.x86_64-linux.server-smoke` 실패, R20-18) — supports FR-015, SC-012 — verify RED
-- [ ] T070 `flake.nix`·`flake.lock`·`nix/package.nix`: 입력 pyproject-nix·uv2nix·pyproject-build-systems(research R1 의 고정 커밋), R1 부록의 덮어쓰기,
+- [X] T070 `flake.nix`·`flake.lock`·`nix/package.nix`: 입력 pyproject-nix·uv2nix·pyproject-build-systems(research R1 의 고정 커밋), R1 부록의 덮어쓰기,
   `stt` 원본을 `pyproject.toml`·`uv.lock`·`README.md`·`src/` 로 좁힘, `packages.x86_64-linux.server`(`diarize`+`server` 묶음, ffmpeg 를 `PATH` 에 감싼 `stt`)와
   VM 시험용 `server-light`(`server` 묶음만). devShell 은 그대로. 확인: `nix build .#checks.x86_64-linux.server-smoke -L` 통과, `jsonschema`·`rpds-py` 가
   휠로 들어감, 이 호스트에서 `env -i ./result/bin/python -c "import torch; print(torch.cuda.is_available())"` True(드라이버 없을 때 0·False 는 R1 에서
