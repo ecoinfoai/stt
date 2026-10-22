@@ -12,9 +12,9 @@
 
 | 호출하는 쪽(bhu-llm) | stt |
 |---|---|
-| 요청을 쓴다(inbox), 응답·결과를 읽는다(outbox) | 요청을 검사해 받아들이거나 거절하고, 차례로 전사하고, 응답·결과를 쓰고, 정한 때에 지운다 |
+| 요청을 쓴다(inbox), 응답·결과를 읽는다(outbox) | 요청을 검사해 받아들이거나 거절하고, 차례로 전사하고, 응답·결과를 쓰고, 「다 지우기」 요청과 매일 정리에서만 지운다 |
 | `request_id` 를 만든다(UUID, 다시 쓰지 않음) | 요청자 표식을 믿고 같은 요청자 확인에만 쓴다 |
-| 결과를 복사한 직후 「결과 지우기」를 보낸다 | 가져가지 않은 결과도 24시간에 지운다 |
+| 이용자가 일을 마치면 「다 지우기」를 보낸다 | 보내지 않아도 매일 정리(23:58 KST)가 그날 받은 모든 것을 지운다 |
 | 실패 코드를 이용자 문구(한국어)로 바꾼다 | 실패 코드와 영어 설명 한 문장을 낸다 |
 
 ## 2. 폴더와 권한
@@ -46,8 +46,9 @@
 3. stt 받기 단계가 바로 처리하고, 수 초 안에 `outbox/<request_id>.json` 이 생긴다 — 받아들였으면 `state: queued` 와 `queue_position`,
    거절했으면 §4 의 두 꼴 가운데 하나(`kind: invalid` 의 refusal, 또는 `state: failed` 와 `failure`). delete 요청에는 `kind: delete` 와 `outcome`.
    inbox 의 요청과 첨부는 처리 즉시 사라진다(첨부는 stt 가 복사해 가져간다).
-4. 호출하는 쪽은 응답을 다시 읽어 진행을 본다: `queued`(순서) → `running` → `done` | `failed`, 그리고 「지금 지우기」 뒤에는 `deleted`.
-5. `done` 이면 `result.transcript`·`result.data` 경로의 파일을 읽고, 복사가 끝나면 「결과 지우기」를 보낸다(§5).
+4. 호출하는 쪽은 응답을 다시 읽어 진행을 본다: `queued`(순서) → `running` → `done` | `failed`, 그리고 「다 지우기」 뒤에는 `deleted`.
+5. `done` 이면 `result.transcript`·`result.data` 경로의 파일을 읽는다. 결과를 가져가는 것만으로는 아무것도 지워지지 않는다 — 같은 녹음으로
+   2차를 맡길 수 있다. 이용자가 일을 마치면 「다 지우기」를 보낸다(§5).
 
 ## 4. 받기 단계의 검사 — 스키마 밖의 것
 
@@ -65,7 +66,7 @@
 | `language` 가 엔진의 언어 목록에 있음 | `failed(invalid_request)` |
 | 녹음을 열 수 있고 음성 흐름이 있음 | `failed(unreadable_audio)` |
 | 녹음 길이 ≤ 3시간 | `failed(audio_too_long)` |
-| `from_request`: 같은 요청자의 transcribe 이고 녹음이 남아 있음(삭제 시각이 지났으면 청소 전이라도 없는 것으로 본다) | `failed(source_unavailable)`(없음·남의 것·지워짐을 가르지 않는다) |
+| `from_request`: 같은 요청자의 transcribe 이고 녹음이 남아 있음(매일 정리 시각이 지났으면 청소 전이라도 없는 것으로 본다) | `failed(source_unavailable)`(없음·남의 것·지워짐을 가르지 않는다) |
 | delete 의 `target`: 같은 요청자의 transcribe | 응답 `outcome: refused`(없음·남의 것을 가르지 않는다) |
 
 받기는 본 `*.json` 을 하나도 inbox 에 남기지 않는다. 거절된 요청의 첨부는 그 자리에서 지운다 — 지우는 것은 언제나 **파일 이름 앞부분**의
@@ -73,27 +74,29 @@
 
 ## 5. 지우기
 
+지우기는 둘뿐이다: 「다 지우기」 요청과 매일 정리.
+
 | 요청 | 지우는 것 | 상태에 남는 것 |
 |---|---|---|
-| `scope: result` (결과 지우기) | 그 job 의 `outbox/<id>/` | `result.deleted_at`. 녹음은 그 job 의 삭제 시기를 따른다. 답: 지웠으면 `deleted`, 이미 지워졌으면(「지금 지우기」로 지운 job 포함) `already_deleted`, 결과가 생긴 적이 없으면(대기·처리 중·실패, 결과 없이 지운 job) `no_result` |
-| `scope: everything` (지금 지우기) | 그 job 의 녹음(같은 녹음을 쓰는 다른 job 이 있어도), 처리 중 음성, 힌트 사본, 결과. 처리 중이면 멈춘다 | `state: deleted`, `deleted.at`, `audio.deleted_at`. 답: `deleted`, 이미 지웠으면 `already_deleted`. 같은 녹음을 기다리던 다른 job 은 `failed(audio_deleted)`, `cause: deleted_on_request` |
+| delete 요청 (다 지우기) | `target` job 의 녹음(같은 녹음을 쓰는 다른 job 이 있어도), 처리 중 음성, 힌트 사본, 결과. 그 녹음을 쓰는 모든 job(1차·2차)에 적용된다. 처리 중이면 멈춘다 | `state: deleted`, `deleted.at`, `audio.deleted_at`. 답: `deleted`, 이미 지웠으면 `already_deleted`, 없는 job·남의 job 이면 `refused` |
 
 - 처리 시간은 수 초다(받기 단계가 바로 처리). 처리 중인 엔진은 2초 안에 멈춘다(SC-005: 1분 안).
-- 예정된 삭제(끝나면 바로·자정·24시간)는 요청 없이 일어난다. 응답의 `audio.delete_at` 은 그 녹음을 지울 시각이고, 녹음은 그로부터 1분 안에
-  사라진다. 24시간 상한의 `delete_at` 은 처음 받은 때 + 23시간 58분이다 — 1분마다 도는 청소가 늦어도 24시간 안에 끝내도록 2분 당겼다
-  (data-model 「보관 기한의 여유」). 그 전에 끝나지 않은 job 은 `failed(audio_deleted)` 이고 `cause` 가 원인을 가른다: `midnight`·
-  `retention_limit`(보관 상한)·`deleted_on_request`.
-- 응답과 결과는 `expires_at`(받은 때 + 23시간 58분)에서 1분 안에 함께 사라진다. 그 뒤에는 그 `request_id` 에 대해 아무것도 남지 않는다.
+- **매일 정리**: 요청이 없어도 매일 23:58 `Asia/Seoul`(KST)에 그날 받은 모든 job 의 녹음·처리 중 음성·힌트 사본·결과·응답·기록이 지워진다
+  (1분 안). 응답의 `audio.delete_at` 과 `expires_at` 은 그 job 을 받은 날(KST)의 23:58 이다. 00:00 에 받은 것이 가장 오래 남아 약 23시간
+  59분이므로 어떤 자료도 24시간을 넘지 않는다. 23:58~24:00 에 받은 job 은 기한이 이미 지나 있어 다음 청소(1분 안)가 처리 없이 지운다.
+- 매일 정리 때 대기·처리 중인 job 은 멈추고 `failed(audio_deleted)` 가 되며, 같은 청소가 곧바로 그 job 째 지운다 — 호출하는 쪽에는 응답이
+  사라진 것으로 보인다(§7).
+- 「다 지우기」로 지운 job 의 응답(`state: deleted`)과 delete 요청의 답도 `expires_at`(받은 날의 23:58)에 사라진다.
 
 ## 6. 예 — 두 번의 전사
 
-1차(힌트 없음, 화자 구분 없음, 2차를 위해 자정까지 보관):
+1차(힌트 없음, 화자 구분 없음):
 
 ```json
 {"schema_version": 1, "kind": "transcribe",
  "request_id": "0b9a8c2e-5f1d-4c3a-9e7b-2d6f4a1c8e30", "requested_by": "owui-user-42",
  "audio": {"file": "0b9a8c2e-5f1d-4c3a-9e7b-2d6f4a1c8e30.audio.m4a"},
- "language": "ko", "diarize": false, "delete_audio": "at_midnight"}
+ "language": "ko", "diarize": false}
 ```
 
 받아들인 직후 응답:
@@ -101,26 +104,25 @@
 ```json
 {"schema_version": 1, "kind": "transcribe",
  "request_id": "0b9a8c2e-5f1d-4c3a-9e7b-2d6f4a1c8e30", "state": "queued", "queue_position": 1,
- "accepted_at": "2026-10-22T05:00:02Z", "updated_at": "2026-10-22T05:00:02Z", "expires_at": "2026-10-23T04:58:02Z",
- "audio": {"delete_policy": "at_midnight", "delete_at": "2026-10-22T15:00:00Z"}}
+ "accepted_at": "2026-10-22T05:00:02Z", "updated_at": "2026-10-22T05:00:02Z", "expires_at": "2026-10-22T14:58:00Z",
+ "audio": {"delete_at": "2026-10-22T14:58:00Z"}}
 ```
 
-2차(1차의 녹음, 언어 모델이 고른 힌트, 화자 구분, 끝나면 바로 삭제):
+2차(1차의 녹음, 언어 모델이 고른 힌트, 화자 구분):
 
 ```json
 {"schema_version": 1, "kind": "transcribe",
  "request_id": "6f2e1d0c-9b8a-4e7d-8c6b-5a4f3e2d1c0b", "requested_by": "owui-user-42",
  "audio": {"from_request": "0b9a8c2e-5f1d-4c3a-9e7b-2d6f4a1c8e30"},
- "language": "ko", "diarize": true, "hints": ["Yersinia enterocolitica", "hepatitis B"],
- "delete_audio": "after_job"}
+ "language": "ko", "diarize": true, "hints": ["Yersinia enterocolitica", "hepatitis B"]}
 ```
 
-결과를 복사한 뒤:
+이용자가 일을 마친 뒤(다 지우기 — 대상이 2차여도 1차의 녹음·결과까지 지워진다):
 
 ```json
 {"schema_version": 1, "kind": "delete",
  "request_id": "c3d2e1f0-a9b8-4c7d-8e6f-5a4b3c2d1e0f", "requested_by": "owui-user-42",
- "target": "6f2e1d0c-9b8a-4e7d-8c6b-5a4f3e2d1c0b", "scope": "result"}
+ "target": "6f2e1d0c-9b8a-4e7d-8c6b-5a4f3e2d1c0b"}
 ```
 
 ## 7. 호출하는 쪽의 의무
@@ -129,11 +131,14 @@
 - 요청 파일은 반드시 `.tmp` 로 쓰고 이름을 바꾼다. 첨부는 요청보다 먼저 다 쓴다. 두 파일 모두 그룹이 읽을 수 있는 일반 파일이어야 한다(§3).
 - 요청을 맡긴 뒤 5분 안에 `outbox/<request_id>.json` 이 생기지 않으면 실패로 보고 운영자에게 알린다(받기 단위가 멈춘 것이다). 1시간 넘게
   처리되지 못한 inbox 파일은 청소가 지운다.
-- 응답 파일이 사라졌으면 그 job 은 만료된 것이다(`expires_at`). 녹음을 가져온 job 은 녹음의 보관 상한과 `expires_at` 이 같아,
-  `retention_limit` 실패가 응답과 함께 사라질 수 있다 — 응답이 사라진 것을 만료로 본다.
-- 응답·결과를 검사할 때는 이 폴더의 스키마를 쓴다. 모르는 `reason`·`cause` 가 오면 판이 어긋난 것이다. 이용자 문구는 `reason`(과 `cause`)로
-  고르고, `detail` 은 운영자 기록용이다.
-- 결과를 복사한 뒤에는 「결과 지우기」를 보낸다. 이용자가 「지금 지워줘」 하면 「지금 지우기」를 보낸다.
+- 응답 파일이 사라졌으면 그 job 은 만료된 것이다(`expires_at`). 매일 정리는 대기·처리 중인 job 도 `failed(audio_deleted)` 로 만든 뒤 곧바로
+  응답째 지우므로, 그 실패가 응답에 보이지 않고 사라질 수 있다 — 응답이 사라진 것을 만료로 본다.
+- 매일 정리는 23:58(KST)에 그날 받은 모든 것을 지운다. 호출하는 쪽은 이용자에게 「자정에 유지관리로 작업 결과물과 자료가 사라질 수 있으니
+  자정(00:00) 이후에 맡기라」고 미리 알린다. 23:58~24:00 에 맡긴 job 은 처리되지 못하고 지워지고, 늦은 시각에 맡긴 job 도 23:58 까지 끝나지
+  못하면 같은 모양으로 사라진다.
+- 응답·결과를 검사할 때는 이 폴더의 스키마를 쓴다. 모르는 `reason` 이 오면 판이 어긋난 것이다. 이용자 문구는 `reason` 으로 고르고,
+  `detail` 은 운영자 기록용이다.
+- 이용자가 일을 마치면(또는 「지워줘」 하면) 「다 지우기」를 보낸다. 결과를 가져가는 것만으로는 아무것도 지워지지 않는다.
 - 실명은 stt 에 보내지 않는다. 힌트 단어장에 사람 이름이 들어갈 수는 있다 — stt 는 job 이 끝나면 그 사본을 지우고 로그에 남기지 않는다.
 
 ## 8. 이 계약에 없는 것

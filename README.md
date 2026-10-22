@@ -252,16 +252,26 @@ are the contract:
 
 ### Personal-data deletion promise
 
-Recordings are personal data. A recording, the audio made while
-processing it and the hint copy are deleted when the job asks
-(`after_job`: right after the job ends; `at_midnight`: next 00:00
-KST) and in every case within 24 hours of first receipt, including
-after a crash. A result is deleted on request, and in any case within
-24 hours of receipt (the limit is 23 h 58 min after receipt, so the
-1-minute sweep stays inside 24 h). Two delete requests exist: `scope: result` removes only the
-result (the recording follows the job's own schedule, so a second
-pass can reuse it); `scope: everything` removes the recording,
-working audio, hint copy and result at once and stops a running job.
+Recordings are personal data. Only two things delete: a
+**delete-everything request** and the **daily purge**.
+
+- A delete request (`kind: delete`, naming one earlier job) removes
+  the recording, the audio made while processing it, the hint copy
+  and the results of every job that uses that recording (first and
+  second pass), and stops a running job. Fetching a result deletes
+  nothing, so a second pass can reuse the recording.
+- The daily purge runs at **23:58 Asia/Seoul** (KST) and removes
+  everything received that KST day (recording, working audio, hint
+  copy, result, response and record), including queued and running
+  jobs, which end as `audio_deleted`. A sweep runs every minute, so
+  the data is gone within a minute after 23:58. What arrives between
+  23:58 and 24:00 is purged by the next sweep without being
+  processed. Nothing outlives 24 hours from receipt, including after
+  a crash.
+
+The caller should tell users to submit after midnight (00:00 KST):
+a job that cannot finish before 23:58 is lost, and its response
+disappears with it, which the caller treats as expiry.
 Details: contract README §5.
 
 ### Commands

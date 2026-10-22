@@ -54,14 +54,13 @@ let
         (recording / "audio.wav").write_bytes(b"RIFF")
         save_audio(layout, Audio(
             audio_id=request_id, original_name="lecture.wav", owner="dead-worker-caller",
-            received_at=now, hard_deadline=deadlines.hard_deadline(now),
-            policy={"after_job": request_id}, users=(request_id,),
+            received_at=now, delete_at=deadlines.purge_time(now), users=(request_id,),
         ))
         save_job(layout, Job(
             request_id=request_id, requested_by="dead-worker-caller", seq=next_seq(load_jobs(layout)),
             accepted_at=now, audio_id=request_id, language="en", diarize=False, hints=None,
-            delete_audio="after_job", duration_s=2.0, state="running",
-            expires_at=deadlines.expires_at(now), started_at=now,
+            duration_s=2.0, state="running",
+            expires_at=deadlines.purge_time(now), started_at=now,
         ))
         scratch = layout.work / request_id / "tmp"
         scratch.mkdir(mode=0o700, parents=True)
@@ -77,7 +76,9 @@ pkgs.testers.runNixOSTest {
       enable = true;
       inherit package;
     };
-    # The test moves the clock itself (midnight, the 23h58m retention).
+    # The test moves the clock forward to the next midday in Seoul, so that it cannot
+    # run across the daily purge at 23:58. Never backwards: the sweep timer, which is
+    # persistent, would then wait for its last trigger time.
     services.timesyncd.enable = false;
     users.users.caller = {
       isNormalUser = true;
@@ -121,7 +122,6 @@ pkgs.testers.runNixOSTest {
     OTHER = "owui-other-3307"
     HINTS = ["zebrafishquartz", "lanternmossword"]
     KST = timezone(timedelta(hours=9))
-    RETENTION = timedelta(hours=23, minutes=58)
     UNITS = ("stt-intake.service", "stt-worker.service", "stt-sweep.service")
 
 
@@ -131,10 +131,6 @@ pkgs.testers.runNixOSTest {
 
     def prop(unit, name, node=server):
         return node.succeed(f"systemctl show -P {name} {unit}").strip()
-
-
-    def contract_time(text):
-        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
     def vm_now():
@@ -160,12 +156,12 @@ pkgs.testers.runNixOSTest {
         server.succeed(as_user("caller", f"cp {source} {target} && chmod 0640 {target}"))
 
 
-    def transcribe(request_id=None, delete_audio="after_job", requester=REQUESTER, extension="wav", **extra):
+    def transcribe(request_id=None, requester=REQUESTER, extension="wav", **extra):
         request_id = request_id or str(uuid.uuid4())
         doc = {
             "schema_version": 1, "kind": "transcribe", "request_id": request_id,
             "requested_by": requester, "audio": {"file": f"{request_id}.audio.{extension}"},
-            "language": "en", "diarize": False, "delete_audio": delete_audio,
+            "language": "en", "diarize": False,
         }
         doc.update(extra)
         return doc
@@ -179,10 +175,10 @@ pkgs.testers.runNixOSTest {
         return request_id
 
 
-    def delete(target, scope, requester=REQUESTER):
+    def delete(target, requester=REQUESTER):
         return submit({
             "schema_version": 1, "kind": "delete", "request_id": str(uuid.uuid4()),
-            "requested_by": requester, "target": target, "scope": scope,
+            "requested_by": requester, "target": target,
         }, source=None)
 
 
@@ -228,6 +224,9 @@ pkgs.testers.runNixOSTest {
 
     start_all()
     server.wait_for_unit("multi-user.target")
+    local = vm_now().astimezone(KST)
+    noon = datetime(local.year, local.month, local.day, 12, tzinfo=KST)
+    set_clock(noon if local < noon else noon + timedelta(days=1))
     for unit in ("stt-intake.path", "stt-worker.path", "stt-sweep.timer"):
         server.succeed(f"systemctl is-active {unit}")
 
@@ -316,10 +315,11 @@ pkgs.testers.runNixOSTest {
         assert still["state"] == "queued" and still["queue_position"] == 1, still
         server.succeed("systemctl is-active gpu-hold-1.service")
 
-    with subtest("after the lock is released the job fails gpu_unavailable and its after_job audio is gone (B-2)"):
+    with subtest("after the lock is released the job fails gpu_unavailable and its audio stays until deleted (B-2)"):
         done = wait_response(first["request_id"], failed_with("gpu_unavailable"), timeout=60)
-        assert "deleted_at" in done["audio"], done
-        server.succeed(f"test ! -e {STATE}/audio/{first['request_id']}")
+        assert "deleted_at" not in done["audio"], done
+        assert done["expires_at"] == done["audio"]["delete_at"], done
+        server.succeed(f"test -d {STATE}/audio/{first['request_id']}")
         server.fail("systemctl is-active gpu-hold-1.service")
 
     with subtest("the worker does not wake again once the queue is empty (B-11)"):
@@ -333,7 +333,7 @@ pkgs.testers.runNixOSTest {
     with subtest("a burst of requests is answered and intake keeps watching"):
         burst = []
         for _ in range(8):
-            burst.append(delete(str(uuid.uuid4()), "result"))
+            burst.append(delete(str(uuid.uuid4())))
             time.sleep(0.6)
         for request_id in burst:
             assert response(request_id)["outcome"] == "refused"
@@ -390,24 +390,22 @@ pkgs.testers.runNixOSTest {
         assert failed_with("source_unavailable")(response(missing["request_id"]))
         inbox_empty()
 
-    with subtest("the two deletes, someone else's job, already deleted, no result (B-5)"):
-        kept = transcribe(delete_audio="at_midnight")
+    with subtest("delete everything: a shared recording, someone else's job, already deleted (B-5)"):
+        kept = transcribe()
         submit(kept)
         wait_response(kept["request_id"], failed_with("gpu_unavailable"))
         server.succeed(f"test -d {STATE}/audio/{kept['request_id']}")
-        other = transcribe(delete_audio="at_midnight")
+        other = transcribe()
         submit(other)
         wait_response(other["request_id"], failed_with("gpu_unavailable"))
 
-        answer = response(delete(kept["request_id"], "everything"))
+        answer = response(delete(kept["request_id"]))
         assert answer["kind"] == "delete" and answer["outcome"] == "deleted", answer
         gone = response(kept["request_id"])
         assert gone["state"] == "deleted" and "deleted_at" in gone["audio"], gone
         server.succeed(f"test ! -e {STATE}/audio/{kept['request_id']}")
-        assert response(delete(kept["request_id"], "everything"))["outcome"] == "already_deleted"
-        assert response(delete(kept["request_id"], "result"))["outcome"] == "no_result"
-        assert response(delete(other["request_id"], "result"))["outcome"] == "no_result"
-        assert response(delete(other["request_id"], "everything", requester=OTHER))["outcome"] == "refused"
+        assert response(delete(kept["request_id"]))["outcome"] == "already_deleted"
+        assert response(delete(other["request_id"], requester=OTHER))["outcome"] == "refused"
         assert failed_with("gpu_unavailable")(response(other["request_id"]))
         server.succeed(f"test -d {STATE}/audio/{other['request_id']}")
         inbox_empty()
@@ -427,7 +425,7 @@ pkgs.testers.runNixOSTest {
         sweep()
         assert failed_with("interrupted")(response(stopped["request_id"]))
         server.succeed(f"test ! -e {STATE}/work/{stopped['request_id']}")
-        server.succeed(f"test ! -e {STATE}/audio/{stopped['request_id']}")
+        server.succeed(f"test -d {STATE}/audio/{stopped['request_id']}")
         server.succeed(f"test -z \"$(ls -A {STATE}/queue)\"")
 
     with subtest("a busy stage exits 75, which the unit counts as success"):
@@ -445,50 +443,15 @@ pkgs.testers.runNixOSTest {
         sweep()
         assert prop("stt-sweep.service", "ExecMainStatus") == "0"
         server.succeed(f"test ! -e {STATE}/work/{dead}")
-        server.succeed(f"test ! -e {STATE}/audio/{dead}")
+        server.succeed(f"test -d {STATE}/audio/{dead}")
         assert failed_with("interrupted")(response(dead))
 
-    with subtest("an at_midnight job held behind the GPU lock loses its audio at midnight (B-3)"):
-        hold_gpu("gpu-hold-2", 180)
-        today = vm_now().astimezone(KST).date()
-        midnight = datetime(today.year, today.month, today.day, tzinfo=KST) + timedelta(days=2)
-        set_clock(midnight - timedelta(seconds=30))
-        sweep()
-        late = transcribe(delete_audio="at_midnight")
-        submit(late)
-        queued = response(late["request_id"])
-        assert queued["state"] == "queued" and queued["queue_position"] == 1, queued
-        assert contract_time(queued["audio"]["delete_at"]) == midnight, (queued, midnight)
-        swept_at = prop("stt-sweep.service", "ExecMainStartTimestampMonotonic")
-        lost = wait_response(
-            late["request_id"],
-            lambda doc: doc["state"] == "failed" and doc["failure"]["reason"] == "audio_deleted",
-            timeout=120,
-        )
-        assert lost["failure"]["cause"] == "midnight", lost
-        assert contract_time(lost["finished_at"]) <= midnight + timedelta(minutes=1), (lost, midnight)
-        assert contract_time(lost["audio"]["deleted_at"]) <= midnight + timedelta(minutes=1), lost
-        server.succeed(f"test ! -e {STATE}/audio/{late['request_id']}")
-
     with subtest("the sweep timer runs the sweep by itself every minute"):
+        swept_at = prop("stt-sweep.service", "ExecMainStartTimestampMonotonic")
         server.wait_until_succeeds(
             f"test \"$(systemctl show -P ExecMainStartTimestampMonotonic stt-sweep.service)\" != {swept_at}",
             timeout=90,
         )
-        server.succeed("systemctl stop gpu-hold-2.service")
-
-    with subtest("23h58m after acceptance the response and the records are gone (B-4)"):
-        accepted = contract_time(lost["accepted_at"])
-        set_clock(accepted + RETENTION - timedelta(minutes=1))
-        sweep()
-        server.succeed(f"test -f {OUTBOX}/{late['request_id']}.json")
-        set_clock(accepted + RETENTION + timedelta(minutes=1))
-        sweep()
-        server.succeed(f"test ! -e {OUTBOX}/{late['request_id']}.json")
-        server.succeed(f"test ! -e {STATE}/jobs/{late['request_id']}")
-        server.succeed(f"test ! -e {STATE}/audio/{late['request_id']}.json")
-        for folder in ("jobs", "audio", "work", "queue", "requests/inbox", "requests/outbox"):
-            server.succeed(f"test -z \"$(ls -A {STATE}/{folder})\"")
 
     with subtest("the journal holds no hint word and no requester (B-9, FR-037)"):
         server.succeed(f"journalctl --no-pager -u stt-worker.service | grep -F '{first['request_id']} failed gpu_unavailable'")

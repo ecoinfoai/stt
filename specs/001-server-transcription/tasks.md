@@ -515,7 +515,7 @@ description: "Task list for 001-server-transcription"
   않음, `delete_result` 없앰, 「다 지우기」가 `audio.users` 의 모든 job 을 `deleted` 로 — 대기 표시·힌트·결과·작업 폴더 정리, 처리 중이면 워커가
   엔진을 멈춤, 녹음 기한 도래 때 대기·처리 중 job 은 `failed(audio_deleted)`); `intake`(정책 설정·`scope` 분기 없앰); `worker`·`sweep`(기한 판정을
   `delete_at` 으로, 청소 차례는 그대로). 이 기능에서 생긴 남은 지적(I2 「기록 없음」 갈래)은 대상이 없어지므로 함께 없앤다 — turns T079 GREEN
-- [ ] T081 [P] 서버 배포·문서 — `nix/vm-test.nix` 의 요청에서 `delete_audio`·`scope` 를 빼고 지우기 확인을 「다 지우기」로 바꾼다(매일 정리는
+- [X] T081 [P] 서버 배포·문서 — `nix/vm-test.nix` 의 요청에서 `delete_audio`·`scope` 를 빼고 지우기 확인을 「다 지우기」로 바꾼다(매일 정리는
   VM 시계를 옮기지 않으면 볼 수 없으므로 pytest 몫); `quickstart.md`·`contracts/README.md`(요청·응답 설명, §7 「응답이 사라지면 만료」 곁에 매일
   정리)·`README.md` 서버 절을 R22 로 고친다. 확인: `nix build .#checks.x86_64-linux.server-vm -L` 통과, `rg -n 'delete_audio|at_midnight|after_job|
   no_result|retention_limit|RETENTION_DUE|23h58|23 h 58' src nix specs/001-server-transcription/{quickstart.md,contracts} README.md` 0건(`tests` 는 없음을
