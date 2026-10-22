@@ -281,7 +281,7 @@ def test_work_exits_2_when_the_gpu_lock_file_is_missing(
     code = cli.main(["server", "work", "--root", str(layout.root), "--models", str(models), "--gpu-lock", str(missing)])
 
     assert code == 2
-    assert str(missing) in capsys.readouterr().err
+    assert capsys.readouterr().err == f"--gpu-lock points to a missing file: {missing}\n"
     assert load_job(layout, request_id).state == "queued"
 
 

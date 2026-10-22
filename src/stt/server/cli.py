@@ -94,8 +94,8 @@ def _work(args: argparse.Namespace, layout: Layout) -> int:
 
     try:
         return worker.run(layout, worker.DEFAULT_ENGINE_CMD, _utc_now, models_dir=args.models, gpu_lock=args.gpu_lock)
-    except MissingGpuLockError as error:
-        print(error, file=sys.stderr)
+    except MissingGpuLockError:
+        print(f"--gpu-lock points to a missing file: {args.gpu_lock}", file=sys.stderr)
         return EXIT_USAGE
 
 
