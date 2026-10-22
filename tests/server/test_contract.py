@@ -148,6 +148,16 @@ INVALID_REQUESTS = [
     ("kind_missing", transcribe_request(kind=None), "kind: field is required"),
     ("kind_unknown", transcribe_request(kind="purge"), "kind: value is not allowed"),
     ("not_an_object", ["x"], "request: value has the wrong type"),
+    ("request_id_final_newline", transcribe_request(request_id=f"{RID}\n"), "request_id: value has an invalid format"),
+    ("requester_final_newline", transcribe_request(requested_by="owui-user-42\n"), "requested_by: value has an invalid format"),
+    ("hint_final_newline", transcribe_request(hints=["abc\n"]), "hints: value has an invalid format"),
+    (
+        "from_request_final_newline",
+        transcribe_request(audio={"from_request": f"{OTHER_RID}\n"}),
+        "audio: must match exactly one alternative",
+    ),
+    ("delete_target_final_newline", delete_request(target=f"{RID}\n"), "target: value has an invalid format"),
+    ("language_final_newline", transcribe_request(language="ko\n"), "language: value has an invalid format"),
     (
         "deeply_nested_duplicate_hints",
         transcribe_request(hints=[nested_list(400), nested_list(400)]),

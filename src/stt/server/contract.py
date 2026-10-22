@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from importlib import resources
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, validators
 from jsonschema.exceptions import ValidationError
+from jsonschema.protocols import Validator
 
 SchemaName = Literal["request", "response", "result"]
 
@@ -64,12 +65,32 @@ def load_schema(name: SchemaName) -> dict[str, Any]:
     return json.loads(resource.read_text(encoding="utf-8"))
 
 
+_SCHEMA_PATTERN = Draft202012Validator.VALIDATORS["pattern"]
+
+
+def _pattern_without_final_newline(
+    validator: Validator, pattern: str, instance: object, schema: dict[str, Any]
+) -> Iterator[ValidationError]:
+    """The ``pattern`` keyword, also failing a string that ends with a newline.
+
+    ``re.search`` lets ``$`` match before a final newline, which callers that
+    validate the same schema with a full-string ``$`` reject.
+    """
+    if isinstance(instance, str) and instance.endswith("\n"):
+        yield ValidationError("value ends with a newline")
+        return
+    yield from _SCHEMA_PATTERN(validator, pattern, instance, schema)
+
+
+_RequestValidator = validators.extend(Draft202012Validator, {"pattern": _pattern_without_final_newline})
+
+
 @lru_cache(maxsize=None)
-def _validator(name: SchemaName, branch_ref: str | None) -> Draft202012Validator:
+def _validator(name: SchemaName, branch_ref: str | None) -> Validator:
     schema = load_schema(name)
     if branch_ref is not None:
         schema = {"$schema": schema["$schema"], "$defs": schema["$defs"], "$ref": branch_ref}
-    return Draft202012Validator(schema)
+    return (_RequestValidator if name == "request" else Draft202012Validator)(schema)
 
 
 def _describe(error: ValidationError) -> str:
@@ -81,7 +102,7 @@ def _describe(error: ValidationError) -> str:
     return f"{label}: {_PHRASES.get(str(error.validator), _GENERIC_PHRASE)}"
 
 
-def _first_error(validator: Draft202012Validator, doc: object) -> str | None:
+def _first_error(validator: Validator, doc: object) -> str | None:
     error = next(iter(validator.iter_errors(doc)), None)
     return None if error is None else _describe(error)
 
@@ -95,7 +116,8 @@ def validate_request(doc: object) -> str | None:
     Returns:
         None when valid, otherwise ``<JSON path>: <fixed phrase>`` for the first
         violation. A missing or unknown ``kind`` is reported at ``kind``; a document
-        nested too deeply to compare is reported at the root.
+        nested too deeply to compare is reported at the root. A string checked by a
+        ``pattern`` fails it when it ends with a newline.
     """
     if not isinstance(doc, dict):
         return f"{_ROOT_LABEL}: {_PHRASES['type']}"
