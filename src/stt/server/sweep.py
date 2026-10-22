@@ -44,8 +44,8 @@ def run_once(layout: Layout, now: Callable[[], datetime]) -> None:
     ``running`` ends as ``interrupted`` with its published result removed even if its
     recording is also due. Then deletes ``after_job`` recordings whose job already
     ended and recordings whose scheduled time or hard deadline has passed (failing
-    the jobs still waiting for them), and last removes
-    expired responses, results and records and stale leftovers.
+    the jobs still waiting for them), and last removes expired responses, results
+    and records and stale leftovers.
 
     Args:
         layout: The state root.
