@@ -476,11 +476,11 @@ description: "Task list for 001-server-transcription"
 
 ## Phase 9: Polish & 최종 확인
 
-- [ ] T074 [P] 언어 규칙 확인: `rg -n '[\x{1100}-\x{11FF}\x{3130}-\x{318F}\x{AC00}-\x{D7AF}]' src/stt/server src/stt/gpu_lock.py tests/server
+- [X] T074 [P] 언어 규칙 확인: `rg -n '[\x{1100}-\x{11FF}\x{3130}-\x{318F}\x{AC00}-\x{D7AF}]' src/stt/server src/stt/gpu_lock.py tests/server
   tests/test_gpu_lock.py tests/test_cli_gpu_lock.py nix` 0건; `git diff master -- src/stt/transcribe.py src/stt/diarize.py src/stt/enroll.py src/stt/cli.py
   tests/test_transcribe.py tests/test_diarize.py` 의 더해진 줄에서 한글이 나오면 하나하나 「기존 사용자 출력 문자열을 그대로 옮긴 것」인지 확인하고,
   아니면 고친다(R19). RED 해당 없음 — 확인 — supports 헌법 언어 규칙
-- [ ] T075 quickstart A: `uv sync --locked --extra server && uv run python -m pytest -q` 전부 통과, 시나리오 40개 + 경계 사례 8개가 각각 시험 하나
+- [X] T075 quickstart A: `uv sync --locked --extra server && uv run python -m pytest -q` 전부 통과, 시나리오 40개 + 경계 사례 8개가 각각 시험 하나
   이상에 대응하는지 `rg -o 'def test_(us[1-5]_[0-9]+|edge_[1-8])_' tests` 로 세어 빠짐이 없음. RED 해당 없음 — 확인 — supports SC-012, SC-013
 - [ ] T076 quickstart C(호스트 시험, 운영자와 함께, 배포 뒤): 1–11 을 실행하고(11 은 고정 모델 목록을 처음 바꾸는 배포 때) `specs/001-server-transcription/handoff/<날짜>.md` 에 기록 — SC-001 실측
   (1시간 녹음 1차·2차), SC-002 connect 시도 0(strace), R2 `[VERIFY]`(GPU 장치 넷으로 엔진이 GPU 를 봄) 닫기, 재부팅 뒤 첫 job(`nvidia_uvm`),
