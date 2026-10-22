@@ -256,8 +256,9 @@ Recordings are personal data. A recording, the audio made while
 processing it and the hint copy are deleted when the job asks
 (`after_job`: right after the job ends; `at_midnight`: next 00:00
 KST) and in every case within 24 hours of first receipt, including
-after a crash. A result is deleted on request or 24 hours after
-receipt. Two delete requests exist: `scope: result` removes only the
+after a crash. A result is deleted on request, and in any case within
+24 hours of receipt (the limit is 23 h 58 min after receipt, so the
+1-minute sweep stays inside 24 h). Two delete requests exist: `scope: result` removes only the
 result (the recording follows the job's own schedule, so a second
 pass can reuse it); `scope: everything` removes the recording,
 working audio, hint copy and result at once and stops a running job.
