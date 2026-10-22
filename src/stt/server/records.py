@@ -72,7 +72,8 @@ class Audio:
     """A received recording.
 
     Attributes:
-        delete_at: The daily purge after ``received_at``; a delete request may come first.
+        delete_at: 23:58 Asia/Seoul on the Seoul date of ``received_at`` (already past for a receipt
+            between 23:58 and 24:00); a delete request may come first.
         users: Request ids of the jobs that use this recording.
         deleted_by: ``purge`` (the daily purge) or ``request`` (a delete request).
     """

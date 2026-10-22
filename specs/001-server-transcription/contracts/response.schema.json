@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/ecoinfoai/stt/contracts/response.schema.json",
   "title": "stt server response",
-  "description": "What stt writes as requests/outbox/<request_id>.json, replaced atomically. A transcribe request gets a job status; a delete request gets a delete outcome; a request stt cannot use gets a refusal (contracts/README.md section 4). The file and any result disappear within one minute after expires_at, which is the first 23:58 Asia/Seoul after acceptance (the daily purge), so nothing stays longer than 24 hours.",
+  "description": "What stt writes as requests/outbox/<request_id>.json, replaced atomically. A transcribe request gets a job status; a delete request gets a delete outcome; a request stt cannot use gets a refusal (contracts/README.md section 4). The file and any result disappear within one minute after expires_at, which is 23:58 Asia/Seoul on the Seoul date of acceptance (the daily purge), so nothing stays longer than 24 hours. For a request accepted between 23:58 and 24:00 that time has already passed, and the next sweep removes it.",
   "oneOf": [
     { "$ref": "#/$defs/job_status" },
     { "$ref": "#/$defs/delete_outcome" },
@@ -79,7 +79,7 @@
           "required": ["delete_at"],
           "properties": {
             "delete_at": {
-              "description": "The daily purge that deletes the recording unless a delete request comes first: the first 23:58 Asia/Seoul after it was first received. It is gone within one minute after it.",
+              "description": "The daily purge that deletes the recording unless a delete request comes first: 23:58 Asia/Seoul on the Seoul date it was first received. For a recording received between 23:58 and 24:00 that time has already passed, and the next sweep removes it. It is gone within one minute after it.",
               "$ref": "#/$defs/time"
             },
             "deleted_at": { "$ref": "#/$defs/time" }
