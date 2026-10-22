@@ -120,12 +120,12 @@ description: "Task list for 001-server-transcription"
   reason, detail, now)`; `delete_outcome(request_id, target, scope, outcome, now)` 네 가지; `refusal(request_id, detail, now)`(`kind: invalid`);
   기록 없는 응답 세 꼴 모두 `duplicate_refused_at=None` 인자를 받음(R21-11) — 모든 문서가 response 스키마를 통과 — supports US1-8, US2-5, US3-5, US5-8 — verify RED
 - [X] T014 `src/stt/server/responses.py`: 위 순수 함수들(response.schema.json 의 조건부 필수 칸을 따른다) — turns T013 GREEN — supports US1-8, US2-5, US3-5, US5-8
-- [ ] T015 [P] `tests/test_gpu_lock.py` — RED: `gpu_lock.lock_path_from_env(environ) -> Path | None`; `gpu_lock.acquire(path, on_wait)`
+- [X] T015 [P] `tests/test_gpu_lock.py` — RED: `gpu_lock.lock_path_from_env(environ) -> Path | None`; `gpu_lock.acquire(path, on_wait)`
   문맥 관리자 — 파일을 읽기 전용으로 열고 `LOCK_EX`, 다른 프로세스가 쥐고 있으면 `on_wait` 를 정확히 한 번 부르고 기다림, 나오면 풀림;
   `gpu_lock.try_acquire(path)` 는 쥐어져 있으면 None; 연 fd 는 상속되지 않음(`os.get_inheritable` False); 파일이 없으면 `MissingGpuLockError`
   (메시지 `STT_GPU_LOCK points to a missing file: <path>`); `WAIT_MESSAGE == "GPU is in use by another stt job; waiting for it to finish."`;
   **`sys.modules["fcntl"] = None` 에서도 `import stt.gpu_lock` 이 된다**(R20-15) — supports US4-1, US4-2, US4-3, US4-4 — verify RED
-- [ ] T016 `src/stt/gpu_lock.py`: 위 함수·상수·`MissingGpuLockError`(contracts/cli.md §2, R3). `fcntl` 은 함수 안에서 불러온다 — turns T015 GREEN — supports US4-1, US4-2, US4-3, US4-4
+- [X] T016 `src/stt/gpu_lock.py`: 위 함수·상수·`MissingGpuLockError`(contracts/cli.md §2, R3). `fcntl` 은 함수 안에서 불러온다 — turns T015 GREEN — supports US4-1, US4-2, US4-3, US4-4
 
 **Checkpoint**: 계약·시각·배치·파일 안전·기록·응답·잠금이 시험으로 고정됐다.
 
