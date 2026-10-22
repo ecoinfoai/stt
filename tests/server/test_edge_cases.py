@@ -141,10 +141,15 @@ def _oversized(path: Path) -> None:
     put_bytes(path, b" " * (1024 * 1024 + 1))
 
 
+def _deeply_nested(path: Path) -> None:
+    put_bytes(path, b"[" * 200_000)
+
+
 @pytest.mark.parametrize(
     "write",
     [
         _broken_json,
+        _deeply_nested,
         _not_utf8,
         pytest.param(
             _unreadable,
@@ -152,7 +157,7 @@ def _oversized(path: Path) -> None:
         ),
         _oversized,
     ],
-    ids=["broken_json", "not_utf8", "unreadable", "oversized"],
+    ids=["broken_json", "deeply_nested", "not_utf8", "unreadable", "oversized"],
 )
 def test_every_inbox_json_is_consumed(layout: Layout, write: Callable[[Path], None]) -> None:
     request_id = new_id()
@@ -165,3 +170,40 @@ def test_every_inbox_json_is_consumed(layout: Layout, write: Callable[[Path], No
     assert response["kind"] == "invalid"
     assert response["failure"]["reason"] == "invalid_request"
     assert list(layout.inbox.glob("*.json")) == []
+
+
+def test_directory_named_like_a_request_is_refused_and_removed(layout: Layout) -> None:
+    request_id = new_id()
+    (layout.inbox / f"{request_id}.json").mkdir()
+
+    intake.run_once(layout, FakeClock().now)
+
+    response = read_response(layout, request_id)
+    assert contract.validate_response(response) is None
+    assert response["kind"] == "invalid"
+    assert inbox_names(layout) == []
+
+
+def test_non_empty_directory_named_like_a_request_propagates_after_the_refusal(layout: Layout) -> None:
+    request_id = new_id()
+    folder = layout.inbox / f"{request_id}.json"
+    folder.mkdir()
+    (folder / "inner").write_text("x", encoding="utf-8")
+
+    with pytest.raises(OSError):
+        intake.run_once(layout, FakeClock().now)
+
+    assert read_response(layout, request_id)["kind"] == "invalid"
+    assert folder.is_dir()
+
+
+def test_directory_with_non_uuid_name_is_removed_silently(
+    layout: Layout, capfd: pytest.CaptureFixture[str]
+) -> None:
+    (layout.inbox / "foo.json").mkdir()
+
+    intake.run_once(layout, FakeClock().now)
+
+    assert len((capfd.readouterr().out).splitlines()) == 1
+    assert inbox_names(layout) == []
+    assert list(layout.outbox.iterdir()) == []

@@ -93,15 +93,14 @@ def _discard(layout: Layout, stem: str) -> None:
     attachment_prefix = f"{stem}{_ATTACHMENT_INFIX}"
     for entry in os.scandir(layout.inbox):
         if entry.name == request_name or entry.name.startswith(attachment_prefix):
-            os.unlink(entry.path)
+            if entry.is_dir(follow_symlinks=False):
+                os.rmdir(entry.path)
+            else:
+                os.unlink(entry.path)
 
 
 def _pending(layout: Layout) -> list[Path]:
-    entries = [
-        entry
-        for entry in os.scandir(layout.inbox)
-        if entry.name.endswith(_REQUEST_SUFFIX) and not entry.is_dir(follow_symlinks=False)
-    ]
+    entries = [entry for entry in os.scandir(layout.inbox) if entry.name.endswith(_REQUEST_SUFFIX)]
     entries.sort(key=lambda entry: (entry.stat(follow_symlinks=False).st_mtime, entry.name))
     return [Path(entry.path) for entry in entries]
 
@@ -235,7 +234,7 @@ def _process(layout: Layout, path: Path, now: Callable[[], datetime]) -> None:
         return
     try:
         body = json.loads(data.decode("utf-8"))
-    except ValueError:
+    except (ValueError, RecursionError):
         _refuse(layout, request_id, _NOT_JSON_DETAIL, moment)
         return
     problem = contract.validate_request(body)
@@ -257,7 +256,7 @@ def _process(layout: Layout, path: Path, now: Callable[[], datetime]) -> None:
 def run_once(layout: Layout, now: Callable[[], datetime]) -> None:
     """Processes every ``*.json`` in the inbox and removes each one it saw.
 
-    Files are taken in (mtime, name) order. A request that cannot be used is
+    Files (and directories) named ``*.json`` are taken in (mtime, name) order. A request that cannot be used is
     answered and its attachment (named by the request file's own name) removed.
     Non-file ``OSError``s propagate and leave the file in place.
 
