@@ -364,7 +364,7 @@ description: "Task list for 001-server-transcription"
   `transcribe.main` 이 지금처럼 끝남(Windows 흉내, R20-15) — `test_us4_4`·`test_cli_runs_without_fcntl` 은 **회귀 방지 시험으로 처음부터 GREEN** 일
   수 있다(지금 동작을 지키는 시험, R21 F5); 파일이 없는데 `cuda` → `STT_GPU_LOCK points to a missing file: <path>` 와 종료 2,
   `stt batch --keep-going` 도 다음 묶음으로 넘어가지 않고 2; `stt enroll` 도 같은 대기 안내 — closes US4-1, US4-4, supports SC-013 — verify RED
-- [ ] T050 [P] [US4] `tests/test_diarize.py` 에 `test_us4_5_cpu_fallback_warns_once` — RED: 가짜 torch(`cuda.is_available()` False)·가짜 `Pipeline` 으로
+- [X] T050 [P] [US4] `tests/test_diarize.py` 에 `test_us4_5_cpu_fallback_warns_once` — RED: 가짜 torch(`cuda.is_available()` False)·가짜 `Pipeline` 으로
   `load_pipeline("cuda")` → 파이프라인을 돌려주고 stderr 에 cli.md §3 의 경고 정확히 한 번; CUDA 가 있으면 경고 없음; `load_pipeline("cpu")` 도 경고 없음 — closes US4-5 — verify RED
 - [ ] T051 [P] [US4] `tests/server/test_us4.py` — RED: `test_us4_2_server_job_waits_for_cli`(다른 프로세스가 잠금을 쥔 동안 `worker.run(..., gpu_lock=path)`
   를 스레드로 → 응답이 `queued`·`queue_position` 1 로 머물고 엔진이 뜨지 않음, 풀면 `done`); `test_us4_3_no_overlap_when_started_together`(명령줄 쪽
@@ -379,7 +379,7 @@ description: "Task list for 001-server-transcription"
   stderr 에 쓰고 종료 2 — `batch.run_groups` 의 `keep_going` 이 삼키지 않게 한다(예: `SystemExit(2)`). `main` 의 docstring 영어, 기존 출력 그대로 —
   turns `test_us4_1`, `test_us4_4`, `test_cli_runs_without_fcntl`, 없는 파일·batch 시험 GREEN (T049) — closes US4-1, US4-4
 - [X] T053 [P] [US4] `src/stt/enroll.py` `main`: 같은 잠금(같은 늦은 불러오기)을 `load_pipeline` 전부터 끝까지 — turns T049 의 enroll 시험 GREEN — closes US4-1
-- [ ] T054 [P] [US4] `src/stt/diarize.py` `load_pipeline`: `device == "cuda"` 인데 torch 가 CUDA 를 못 보면 CPU 로 계속하되 cli.md §3 의 영어 경고를
+- [X] T054 [P] [US4] `src/stt/diarize.py` `load_pipeline`: `device == "cuda"` 인데 torch 가 CUDA 를 못 보면 CPU 로 계속하되 cli.md §3 의 영어 경고를
   stderr 에 한 번(R17, 헌법 V) — turns T050 GREEN — closes US4-5
 - [ ] T055 [US4] `src/stt/server/worker.py`·`src/stt/server/cli.py`·`tests/server/conftest.py`: 워커에 `gpu_lock: Path` 인자(명령줄 `--gpu-lock FILE` 필수);
   `queued` job 을 고른 뒤 `poll_s` 마다 `try_acquire` 를 시도하며 그동안 job 이 아직 `queued` 인지(지워짐·만료) 봄; 잠금을 얻은 뒤에만 `lifecycle.start`;

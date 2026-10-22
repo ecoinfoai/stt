@@ -405,3 +405,81 @@ def test_load_pipeline_online_passes_token(fake_pyannote, monkeypatch):
     monkeypatch.setenv("HF_TOKEN", "fake-token")
     diarize.load_pipeline("cpu")
     assert fake_pyannote.calls == [(diarize.PIPELINE_NAME, "fake-token")]
+
+
+CPU_FALLBACK_WARNING = (
+    "Speaker diarization is running on CPU because torch cannot use CUDA; "
+    "it will be much slower."
+)
+
+
+class _MovablePipeline(_FakePipeline):
+    """Fake pipeline that records the device it is moved to."""
+
+    moved_to: list[str] = []
+
+    def to(self, device) -> None:
+        type(self).moved_to.append(device.type)
+
+
+@pytest.fixture()
+def fake_pyannote_cuda(monkeypatch, fake_pyannote):
+    """Fake torch/pyannote where the CUDA availability is switchable."""
+    import sys
+
+    _MovablePipeline.calls = []
+    _MovablePipeline.moved_to = []
+    torch = sys.modules["torch"]
+    torch.device = lambda name: SimpleNamespace(type=name)
+    sys.modules["pyannote.audio"].Pipeline = _MovablePipeline
+
+    def set_cuda(available: bool) -> None:
+        torch.cuda = SimpleNamespace(is_available=lambda: available)
+
+    return set_cuda
+
+
+def test_us4_5_cpu_fallback_warns_once(
+    fake_pyannote_cuda, monkeypatch, capsys
+):
+    """A CUDA request on a CPU-only torch continues and warns once."""
+    from stt import diarize
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    fake_pyannote_cuda(False)
+    pipeline = diarize.load_pipeline("cuda")
+    captured = capsys.readouterr()
+    assert isinstance(pipeline, _MovablePipeline)
+    assert _MovablePipeline.moved_to == []
+    assert captured.err.count(CPU_FALLBACK_WARNING) == 1
+    assert captured.err.strip() == CPU_FALLBACK_WARNING
+    assert captured.out == ""
+
+
+def test_us4_5_no_warning_when_cuda_is_available(
+    fake_pyannote_cuda, monkeypatch, capsys
+):
+    from stt import diarize
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    fake_pyannote_cuda(True)
+    diarize.load_pipeline("cuda")
+    captured = capsys.readouterr()
+    assert _MovablePipeline.moved_to == ["cuda"]
+    assert captured.err == ""
+    assert captured.out == ""
+
+
+@pytest.mark.parametrize("cuda_available", [False, True])
+def test_us4_5_no_warning_for_explicit_cpu(
+    fake_pyannote_cuda, monkeypatch, capsys, cuda_available
+):
+    from stt import diarize
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    fake_pyannote_cuda(cuda_available)
+    diarize.load_pipeline("cpu")
+    captured = capsys.readouterr()
+    assert _MovablePipeline.moved_to == []
+    assert captured.err == ""
+    assert captured.out == ""

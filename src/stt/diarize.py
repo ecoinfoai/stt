@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence, TypeAlias
@@ -37,6 +38,12 @@ DEFAULT_MIN_SECONDS: float = 1.5
 
 #: 등록된 목소리와 같은 사람으로 볼 최소 코사인 유사도.
 DEFAULT_VOICE_THRESHOLD: float = 0.75
+
+#: Warning written to stderr once when CUDA is requested but unusable.
+_CPU_FALLBACK_WARNING: str = (
+    "Speaker diarization is running on CPU because torch cannot use CUDA; "
+    "it will be much slower."
+)
 
 #: 이름 → 화자 임베딩.
 VoiceDB: TypeAlias = dict[str, list[float]]
@@ -531,6 +538,9 @@ def load_pipeline(device: str):
     except when HF_HUB_OFFLINE is "1": the pipeline is then read from the
     local cache with token=None and no token is required.
 
+    If 'cuda' is requested but torch cannot use CUDA, the pipeline stays on
+    the CPU and a one-line warning is written to stderr.
+
     Args:
         device: 'cuda' or 'cpu'.
 
@@ -565,8 +575,11 @@ def load_pipeline(device: str):
             f"'uv sync --extra diarize'로 화자 분리 의존성을 설치하세요."
         ) from error
     pipeline = Pipeline.from_pretrained(PIPELINE_NAME, token=token)
-    if device == "cuda" and torch.cuda.is_available():
-        pipeline.to(torch.device("cuda"))
+    if device == "cuda":
+        if torch.cuda.is_available():
+            pipeline.to(torch.device("cuda"))
+        else:
+            print(_CPU_FALLBACK_WARNING, file=sys.stderr)
     return pipeline
 
 
