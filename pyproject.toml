@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stt"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local lecture pipeline: yt-dlp fetch + faster-whisper transcription"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,6 +38,13 @@ diarize = [
     "nvidia-cublas-cu12>=12",
 ]
 
+# Server transcription (stt server ...): validates inbox requests against the
+# contract schemas. Combine with `diarize` when syncing the operator venv:
+# `uv sync --locked --extra server --extra diarize`.
+server = [
+    "jsonschema>=4.18",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=7",
@@ -45,3 +52,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"stt.server" = ["schemas/*.json"]
