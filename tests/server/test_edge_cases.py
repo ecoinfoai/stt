@@ -10,7 +10,7 @@ from typing import Callable
 
 import pytest
 
-from stt.server import contract, intake
+from stt.server import contract, intake, lifecycle
 from stt.server.layout import Layout, hold
 from stt.server.records import load_job
 
@@ -277,6 +277,37 @@ def test_stale_temp_and_orphan_audio_removed_after_one_hour(
     lines = capfd.readouterr().out.splitlines()
     assert len(lines) == 4
     assert all(request_id not in line for line in lines)
+
+
+def test_an_unremovable_inbox_entry_does_not_stop_the_other_stale_cleanups(
+    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = FakeClock()
+    request_id = new_id()
+    stuck = put_bytes(layout.inbox / f"{request_id}.json.tmp", b"{")
+    record_tmp = layout.jobs / request_id / ".job.json.0123abcd.tmp"
+    record_tmp.parent.mkdir()
+    put_bytes(record_tmp, b"{")
+    orphan_audio = layout.audio / request_id
+    orphan_audio.mkdir()
+    shutil.copyfile(wav, orphan_audio / "audio.wav")
+    remove = lifecycle._remove
+
+    def remove_all_but_inbox(path: Path) -> None:
+        if path.parent == layout.inbox:
+            raise PermissionError("inbox entry cannot be removed")
+        remove(path)
+
+    monkeypatch.setattr(lifecycle, "_remove", remove_all_but_inbox)
+
+    with hold(layout.worker_lock):
+        set_to_ctime_plus(clock, orphan_audio, 61)
+        with pytest.raises(PermissionError):
+            run_sweep(layout, clock)
+
+    assert stuck.exists()
+    assert not record_tmp.exists()
+    assert not orphan_audio.exists()
 
 
 def test_staging_folder_is_removed_at_once_when_no_worker_runs(layout: Layout) -> None:

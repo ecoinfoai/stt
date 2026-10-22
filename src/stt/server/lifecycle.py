@@ -332,14 +332,14 @@ def purge_expired(layout: Layout, now: datetime) -> None:
     with its last user. A response without a job record (a rejection or a delete
     answer) goes at its own ``expires_at``. Inbox files, temporary files and folders
     and recording folders without a record go once an hour has passed since their
-    last change (ctime); each such removal logs one fixed line without any name.
+    last change (ctime); each such removal logs one fixed line without any name. The
+    inbox goes last, since its files belong to another user and may resist removal.
 
     Args:
         layout: The state root.
         now: The current time.
     """
     _purge_records(layout, now)
-    _remove_stale(list(layout.inbox.iterdir()), now, _LOG_INBOX)
     temporary = [
         *layout.outbox.glob(".*.tmp"),
         *layout.jobs.glob("*/.*.tmp"),
@@ -352,3 +352,4 @@ def purge_expired(layout: Layout, now: datetime) -> None:
         if folder.is_dir() and not (layout.audio / f"{folder.name}.json").exists()
     ]
     _remove_stale(unrecorded, now, _LOG_AUDIO_FOLDER)
+    _remove_stale(list(layout.inbox.iterdir()), now, _LOG_INBOX)
