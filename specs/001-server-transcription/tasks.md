@@ -237,7 +237,7 @@ description: "Task list for 001-server-transcription"
 - [X] T033 [US1] `src/stt/server/cli.py` 와 `src/stt/cli.py`: `stt server intake [--root DIR]`, `stt server work [--root DIR] [--models DIR]`(`--models` 는 엔진
   환경의 `HF_HOME` 과 `HF_HUB_OFFLINE=1`), 기본값 `/var/lib/stt`·`/var/lib/stt-models`, 각 단계 잠금을 `try_hold` 로 잡지 못하면 75, 사용법 오류 2,
   도움말 영어. `src/stt/cli.py` 의 `COMMANDS` 에 `"server"`, `_SUMMARIES` 에 영어 한 줄 — turns T022 GREEN — supports US1-1
-- [ ] T034 [US1] US1 확인: `uv run python -m pytest -q` 전부 통과(기존 243개 포함, 기존 시험 파일의 기존 시험은 고치지 않았음을 `git diff` 로 확인).
+- [X] T034 [US1] US1 확인: `uv run python -m pytest -q` 전부 통과(기존 243개 포함, 기존 시험 파일의 기존 시험은 고치지 않았음을 `git diff` 로 확인).
   RED 해당 없음 — 확인 — closes US1-1…US1-8, US5-5, US5-6, 경계 사례 1·4·5
 
 **Checkpoint**: 받기 → 워커 → 엔진 → 게시가 가짜 엔진·가짜 모델로 끝까지 돈다(MVP).
@@ -306,7 +306,7 @@ description: "Task list for 001-server-transcription"
 - [X] T042 [US2] `src/stt/server/sweep.py` `run_once(layout, now) -> None` — 정책 시각·`hard_deadline` 이 지난 녹음을 `delete_audio`(원인 `midnight`·
   `retention_limit`), 그다음 `purge_expired`, `worker.lock` 을 `try_hold` 로 잡을 수 있으면(워커 없음) `clear_dead_worker`; `src/stt/server/cli.py` 에
   `stt server sweep [--root DIR]`(`sweep.lock`, 75) — turns `test_us2_3`, `_4`, `_5`, `_7`, `test_sc003_deletion_matrix`, T036, T037, T038 GREEN — closes US2-3, US2-4, US2-5, US2-7, 경계 사례 2·3, SC-003
-- [ ] T043 [US2] US2 확인: 전체 시험 통과. RED 해당 없음 — 확인 — closes US2-1…US2-12, 경계 사례 2·3, SC-003·SC-004·SC-005(가짜 엔진 기준)
+- [X] T043 [US2] US2 확인: 전체 시험 통과. RED 해당 없음 — 확인 — closes US2-1…US2-12, 경계 사례 2·3, SC-003·SC-004·SC-005(가짜 엔진 기준)
 
 **Checkpoint**: 정상·실패·강제 종료·워커 없음 어느 경우에도 정한 때에 남는 것이 없다.
 
