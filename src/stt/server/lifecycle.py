@@ -23,6 +23,7 @@ from stt.server.records import (
     Job,
     load_audio,
     load_audios,
+    load_job,
     load_jobs,
     queued_in_order,
     save_audio,
@@ -34,6 +35,7 @@ _RESPONSE_MODE = 0o640
 _MARKER_MODE = 0o600
 
 EndState = Literal["done", "failed", "deleted"]
+_END_STATES: tuple[EndState, ...] = ("done", "failed", "deleted")
 
 _AUDIO_DELETED_DETAIL = "The recording was deleted before the job finished."
 _STALE_AFTER = timedelta(hours=1)
@@ -159,6 +161,27 @@ def finish(layout: Layout, job: Job, state: EndState, now: datetime, failure: Fa
         write_job_response(layout, finished, now)
     rewrite_queued_responses(layout, now)
     return finished
+
+
+def delete_audio_of_ended_job(layout: Layout, audio: Audio, now: datetime) -> bool:
+    """Deletes an ``after_job`` recording that its job left behind by stopping inside `finish`.
+
+    Args:
+        layout: The state root.
+        audio: The recording's record.
+        now: Deletion time.
+
+    Returns:
+        True if the recording was deleted: it was not yet deleted, its policy is
+        ``after_job`` and that job's record is in an end state or gone.
+    """
+    if audio.deleted_at is not None or "after_job" not in audio.policy:
+        return False
+    request_id = str(audio.policy["after_job"])
+    if (layout.jobs / request_id / "job.json").exists() and load_job(layout, request_id).state not in _END_STATES:
+        return False
+    _remove_audio(layout, audio, "after_job", now)
+    return True
 
 
 def delete_audio(layout: Layout, audio_id: str, cause: str, now: datetime, keep: str | None = None) -> list[Job]:

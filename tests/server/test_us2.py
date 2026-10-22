@@ -7,6 +7,7 @@ import shutil
 import sys
 import threading
 import time
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ import pytest
 
 from stt.server import contract, intake, lifecycle, worker
 from stt.server.layout import Layout, hold
-from stt.server.records import load_audio, load_job
+from stt.server.records import Failure, load_audio, load_job, save_job
 
 from .conftest import (
     FAKE_ENGINE,
@@ -622,6 +623,23 @@ def scenario_died_after_publish(layout: Layout, wav: Path, clock: FakeClock, pol
     return request_id
 
 
+def plant_crash_before_audio_removal(layout: Layout, clock: FakeClock, request_id: str, failure: Failure | None) -> None:
+    """Leaves what a worker killed between saving the end state and removing the recording leaves."""
+    with hold(layout.state_lock):
+        started = lifecycle.start(layout, load_job(layout, request_id), clock.now())
+        state = "done" if failure is None else "failed"
+        save_job(layout, replace(started, state=state, finished_at=clock.now(), failure=failure, hints=None))
+    if failure is None:
+        (layout.outbox / request_id).mkdir()
+        (layout.outbox / request_id / "transcript.txt").write_text("published before the worker died\n", encoding="utf-8")
+
+
+def scenario_died_before_audio_removal(layout: Layout, wav: Path, clock: FakeClock, policy: str) -> str:
+    request_id = submit(layout, wav, clock, hints=["alpha"], delete_audio=policy)
+    plant_crash_before_audio_removal(layout, clock, request_id, None)
+    return request_id
+
+
 def scenario_intake_died_after_copy(layout: Layout, wav: Path, clock: FakeClock, policy: str) -> str:
     request_id = new_id()
     put_attachment(layout.inbox, f"{request_id}.audio.wav", wav)
@@ -640,9 +658,18 @@ def scenario_intake_died_after_copy(layout: Layout, wav: Path, clock: FakeClock,
         scenario_engine_died,
         scenario_worker_killed,
         scenario_died_after_publish,
+        scenario_died_before_audio_removal,
         scenario_intake_died_after_copy,
     ],
-    ids=["done", "failed", "engine_died", "worker_killed", "died_after_publish", "intake_died_after_copy"],
+    ids=[
+        "done",
+        "failed",
+        "engine_died",
+        "worker_killed",
+        "died_after_publish",
+        "died_before_audio_removal",
+        "intake_died_after_copy",
+    ],
 )
 def test_sc003_deletion_matrix(layout: Layout, wav: Path, clock: FakeClock, scenario: Any, policy: str) -> None:
     accepted = clock.now()
@@ -691,3 +718,37 @@ def test_sc003_dead_worker_first_swept_after_the_scheduled_time(
     assert "result" not in doc
     assert not (layout.outbox / request_id).exists()
     assert leftovers(layout.root) == []
+
+
+@pytest.mark.parametrize(
+    "failure", [None, Failure("engine_error", "The transcription engine failed.")], ids=["done", "failed"]
+)
+def test_sweep_removes_an_after_job_recording_whose_job_already_ended(
+    layout: Layout, wav: Path, clock: FakeClock, failure: Failure | None
+) -> None:
+    request_id = submit(layout, wav, clock, hints=["alpha"])
+    plant_crash_before_audio_removal(layout, clock, request_id, failure)
+    clock.advance(60)
+
+    run_sweep(layout, clock)
+
+    assert not (layout.audio / request_id).exists()
+    audio = load_audio(layout, request_id)
+    assert audio.deleted_by == "after_job"
+    assert audio.deleted_at == clock.now()
+    doc = assert_valid_response(layout, request_id)
+    assert doc["state"] == ("done" if failure is None else "failed")
+    assert doc["audio"]["deleted_at"] == "2026-03-02T01:01:00Z"
+    assert leftovers(layout.root) == []
+
+
+def test_sweep_removes_an_after_job_recording_whose_job_record_is_gone(
+    layout: Layout, wav: Path, clock: FakeClock
+) -> None:
+    request_id = submit(layout, wav, clock)
+    plant_crash_before_audio_removal(layout, clock, request_id, None)
+    shutil.rmtree(layout.jobs / request_id)
+
+    run_sweep(layout, clock)
+
+    assert not (layout.audio / request_id).exists()
