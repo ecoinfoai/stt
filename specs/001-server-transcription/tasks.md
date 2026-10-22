@@ -386,7 +386,7 @@ description: "Task list for 001-server-transcription"
   엔진이 끝나면 풀고 `poll_s` 만큼 쉰 뒤 다음 job 의 잠금을 시도한다(R3). conftest 의 `run_worker`·`run_worker_once` 가 tmp 잠금 파일을 만들어
   넘기게 고치고, 인자가 필수가 되므로 T022 의 `stt server work` 호출 두 곳에 `--gpu-lock <tmp 파일>` 을 더한다(이 기능의 앞 단계 시험을 고치는
   명시적 예외 — 단언은 그대로) — turns T051 GREEN — closes US4-2, US4-3
-- [ ] T056 [US4] US4 확인: 전체 시험 통과(기존 명령줄 시험 포함). RED 해당 없음 — 확인 — closes US4-1…US4-5, SC-010(가짜 기준), SC-013
+- [X] T056 [US4] US4 확인: 전체 시험 통과(기존 명령줄 시험 포함). RED 해당 없음 — 확인 — closes US4-1…US4-5, SC-010(가짜 기준), SC-013
 
 **Checkpoint**: GPU 를 둘이 함께 쥐는 경우가 없고, 잠금 변수가 없는 기계(Windows 포함)의 명령줄은 그대로다.
 
