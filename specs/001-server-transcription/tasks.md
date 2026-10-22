@@ -40,7 +40,7 @@ description: "Task list for 001-server-transcription"
 - **셸 없음**: 하위 프로세스는 인자 목록으로만 띄운다(`shell=True` 금지).
 - **시험은 GPU·망·모델 없이**: 무거운 라이브러리는 엔진 안에서만 늦게 불러오고, 시험은 가짜 모델·가짜 엔진·주입한 시계를 쓴다(R15).
   운영 코드에 시험용 분기를 두지 않는다 — 엔진 명령·시계·폴링 간격·처리 시간 상한 함수·GPU 잠금 파일은 인자로 받는다.
-- **시각**: 계약 시각은 UTC `YYYY-MM-DDTHH:MM:SSZ`, 자정만 `Asia/Seoul`(R7).
+- **시각**: 계약 시각은 UTC `YYYY-MM-DDTHH:MM:SSZ`, 매일 정리 시각(23:58)만 `Asia/Seoul`(R7, R22).
 - 검증 명령: `uv run python -m pytest -q`(개발 셸, `uv sync --locked --extra server` 뒤).
 
 ---
@@ -504,7 +504,7 @@ description: "Task list for 001-server-transcription"
   23:58:00·23:59:59 → 그날 23:58(이미 지남), UTC 로 돌려줌, 어떤 t 에도 `purge_time(t) + 1분 < t + 24h`; `RETENTION_DUE`·`next_midnight` 없음), `test_contract.py`(`delete_audio` 있는 transcribe·`scope`
   있는 delete → `invalid_request`, 없는 것은 통과; 응답 `audio` 에 `delete_policy` 가 있으면·delete 답에 `scope`·`no_result` 가 있으면·`failure`
   에 `cause` 가 있으면 스키마 위반), `test_us2.py`(개정 US2-1…10 을 `test_us2_<n>_…` 로 — 2 는 1차·2차 둘 다 `deleted` 이고 녹음·두 결과 0개, 5 는
-  완료·실패·대기·처리 중 job 이 23:58 직후 응답·기록·결과·녹음 0개, 6 은 23:58:30 에 받은 job 이 그날 정리 뒤 남고 다음 날 23:58 에 사라짐),
+  완료·실패·대기·처리 중 job 이 23:58 직후 응답·기록·결과·녹음 0개, 6 은 R22-sameday 규칙 — 23:58~24:00 에 받은 job 은 다음 청소에서 사라지고, 00:00:10 에 받은 job 은 그날 23:58 까지 남음),
   `test_us3.py`(개정 US3-1…4), `test_edge_cases.py`(경계 사례 2·3·8 새 문구), `test_lifecycle.py`·`test_records.py`·`test_responses.py`·
   `test_intake.py`·`test_logging.py`·`conftest.py`·`inbox_helpers.py`(요청에서 `delete_audio`·`scope` 를 뺀다). 옛 규칙만 확인하던 시험
   (「끝나면 바로」·「결과 지우기」·`no_result`·`retention_limit`·`cause`·I2 after_job 복구)은 지운다 — 보고서에 지운 시험 이름을 적는다.

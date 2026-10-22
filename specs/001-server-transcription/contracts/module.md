@@ -72,3 +72,4 @@ nixos-config 가 한다 — geo-scout 와 같은 모양이다(`nixos-config:flak
    그다음 부팅은 `.complete` 가 같아 바로 끝난다.
 9. 모델 받기 단위가 실패하면 워커가 시작할 때마다(`wants`·`after`) 다시 돈다 — 망이 돌아오면 다음 job 이 모델을 받게 한다. 그동안 job 은
    `models_unavailable` 로 끝난다.
+10. 계약 판: 처음 내놓기 전(T076·T077 전)이라 schema_version 1 을 그 자리에서 고쳤다. 001 을 처음 배포할 때 /var/lib/stt 는 비어 있어야 한다(옛 모양 기록은 읽지 못한다).

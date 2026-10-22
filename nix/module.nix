@@ -221,7 +221,7 @@ in
       wantedBy = [ "timers.target" ];
       timerConfig = {
         OnCalendar = "minutely";
-        # The default 1min accuracy could delay the midnight deletion past one minute.
+        # The default 1min accuracy could delay the 23:58 daily purge past one minute.
         AccuracySec = "1s";
         Persistent = true;
       };

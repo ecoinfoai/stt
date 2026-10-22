@@ -4,7 +4,7 @@ Setup guide for the stt pipeline. Downloading needs `ffmpeg`
 (yt-dlp uses it to extract audio). GPU transcription needs NVIDIA
 cuBLAS for CUDA 12 and cuDNN 9 (faster-whisper/CTranslate2
 requirement). stt runs on the GPU only: there is no CPU mode, and
-every command stops with a reason when no usable GPU is found.
+every transcription command (transcribe, batch, enroll) stops with a reason when no usable GPU is found.
 
 ## 1. Windows 11
 
