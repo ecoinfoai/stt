@@ -339,3 +339,69 @@ class TestMergeVoice:
     def test_merge_voice_dimension_mismatch_raises(self):
         with pytest.raises(ValueError):
             merge_voice({"한석준": [1.0, 0.0]}, "한석준", [1.0])
+
+
+class _FakePipeline:
+    """Records from_pretrained calls instead of loading a model."""
+
+    calls: list[tuple[str, object]] = []
+
+    @classmethod
+    def from_pretrained(cls, name: str, token=None):
+        cls.calls.append((name, token))
+        return cls()
+
+    def to(self, device) -> None:
+        raise AssertionError("cpu must not move the pipeline")
+
+
+@pytest.fixture()
+def fake_pyannote(monkeypatch):
+    """Install fake torch and pyannote.audio modules for load_pipeline."""
+    import sys
+    import types
+
+    _FakePipeline.calls = []
+    torch = types.ModuleType("torch")
+    torch.cuda = SimpleNamespace(is_available=lambda: False)
+    audio = types.ModuleType("pyannote.audio")
+    audio.Pipeline = _FakePipeline
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "pyannote", types.ModuleType("pyannote"))
+    monkeypatch.setitem(sys.modules, "pyannote.audio", audio)
+    return _FakePipeline
+
+
+def test_edge_6_offline_pipeline_needs_no_token(fake_pyannote, monkeypatch):
+    """Offline mode loads the cached pipeline with token=None."""
+    from stt import diarize
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    diarize.load_pipeline("cpu")
+    assert fake_pyannote.calls == [(diarize.PIPELINE_NAME, None)]
+
+
+@pytest.mark.parametrize("offline", [None, "0", ""])
+def test_load_pipeline_online_still_requires_token(
+    fake_pyannote, monkeypatch, offline
+):
+    from stt import diarize
+
+    if offline is None:
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    else:
+        monkeypatch.setenv("HF_HUB_OFFLINE", offline)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="HF_TOKEN"):
+        diarize.load_pipeline("cpu")
+    assert fake_pyannote.calls == []
+
+
+def test_load_pipeline_online_passes_token(fake_pyannote, monkeypatch):
+    from stt import diarize
+
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.setenv("HF_TOKEN", "fake-token")
+    diarize.load_pipeline("cpu")
+    assert fake_pyannote.calls == [(diarize.PIPELINE_NAME, "fake-token")]

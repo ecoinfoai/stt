@@ -447,3 +447,116 @@ class TestRealTokenizerBudget:
         assert report.applied == 37
         assert report.dropped[0] == "지식인사이드"
         assert len(report.dropped) == 100
+
+
+from stt import transcribe  # noqa: E402
+
+
+def test_build_timed_paragraphs_keeps_end_time():
+    """A paragraph's end time is the end of its last segment."""
+    segments = [
+        seg(0.0, 3.0, "First sentence."),
+        seg(3.2, 6.0, "Second sentence."),
+        seg(10.0, 12.5, "New paragraph."),
+    ]
+    paras = transcribe.build_timed_paragraphs(segments, gap_s=2.0, max_chars=800)
+    assert paras == [
+        (0.0, 6.0, "First sentence. Second sentence."),
+        (10.0, 12.5, "New paragraph."),
+    ]
+
+
+def test_build_timed_paragraphs_end_ignores_trailing_empty_segment():
+    """An empty-text segment after the last text does not extend the end."""
+    segments = [seg(0.0, 2.0, "Spoken."), seg(2.1, 9.0, "   ")]
+    paras = transcribe.build_timed_paragraphs(segments, gap_s=2.0, max_chars=800)
+    assert paras == [(0.0, 2.0, "Spoken.")]
+
+
+def test_build_timed_paragraphs_invalid_params_raise():
+    with pytest.raises(ValueError):
+        transcribe.build_timed_paragraphs([], gap_s=0.0, max_chars=800)
+    with pytest.raises(ValueError):
+        transcribe.build_timed_paragraphs([], gap_s=2.0, max_chars=0)
+
+
+def test_build_paragraphs_is_projection_of_timed():
+    """build_paragraphs equals the timed result without the end times."""
+    segments = [
+        seg(0.0, 3.0, "First sentence."),
+        seg(3.2, 6.0, "Second sentence."),
+        seg(10.0, 12.5, "New paragraph."),
+        seg(30.0, 31.0, "x" * 799 + "."),
+        seg(31.5, 33.0, "After a long run."),
+    ]
+    timed = transcribe.build_timed_paragraphs(segments, gap_s=2.0, max_chars=800)
+    plain = build_paragraphs(segments, gap_s=2.0, max_chars=800)
+    assert plain == [(start, text) for start, _end, text in timed]
+
+
+def _diarize_args(**overrides) -> SimpleNamespace:
+    values = dict(
+        voice_db=None, speakers=None, voice_threshold=0.5,
+        min_speaker_seconds=0.0, gap=2.0, max_chars=800,
+        no_timestamps=False,
+    )
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _word(start: float, end: float, text: str) -> SimpleNamespace:
+    return SimpleNamespace(start=start, end=end, word=text)
+
+
+@pytest.fixture()
+def fake_diarization(monkeypatch):
+    """Replace WAV conversion and the pyannote call with fixed stand-ins."""
+    from stt import diarize as dz
+
+    turns = [
+        dz.Turn(0.0, 3.0, "SPEAKER_00"),
+        dz.Turn(3.0, 9.0, "SPEAKER_01"),
+    ]
+    monkeypatch.setattr(dz, "to_wav", lambda src, dst: dst)
+    monkeypatch.setattr(dz, "diarize_wav", lambda *a, **k: turns)
+    segments = [
+        SimpleNamespace(
+            start=0.0, end=2.0, text="Question.",
+            words=[_word(0.0, 2.0, "Question. ")],
+        ),
+        SimpleNamespace(
+            start=4.0, end=8.0, text="Answer.",
+            words=[_word(4.0, 8.0, "Answer. ")],
+        ),
+    ]
+    return segments
+
+
+def test_diarized_blocks_split_from_rendering(
+    fake_diarization, tmp_path, capsys
+):
+    """diarized_blocks returns Blocks; build_diarized_body renders them."""
+    from stt import diarize as dz
+
+    media = tmp_path / "talk.m4a"
+    args = _diarize_args()
+    blocks = transcribe.diarized_blocks(media, fake_diarization, args, None)
+    assert [type(b) for b in blocks] == [dz.Block, dz.Block]
+    assert [b.speaker for b in blocks] == ["SPEAKER_00", "SPEAKER_01"]
+    assert [b.text for b in blocks] == ["Question.", "Answer."]
+    assert capsys.readouterr().out == ""
+
+    body = transcribe.build_diarized_body(
+        media, fake_diarization, args, None
+    )
+    assert body == dz.render_diarized(blocks, timestamps=True)
+    assert body.startswith("[00:00] " + dz.speaker_label("SPEAKER_00"))
+    assert capsys.readouterr().out != ""
+
+
+def test_diarized_blocks_without_words_raises(tmp_path):
+    segments = [SimpleNamespace(start=0.0, end=1.0, text="x", words=None)]
+    with pytest.raises(RuntimeError):
+        transcribe.diarized_blocks(
+            tmp_path / "talk.m4a", segments, _diarize_args(), None
+        )
