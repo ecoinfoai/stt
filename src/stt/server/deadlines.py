@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 SEOUL = ZoneInfo("Asia/Seoul")
@@ -20,20 +20,19 @@ def _require_aware(t: datetime) -> None:
         raise ValueError(_NAIVE_MESSAGE)
 
 
-def next_purge(t: datetime) -> datetime:
-    """Returns the daily purge that follows `t`: the first Asia/Seoul 23:58:00 strictly after it, in UTC.
+def purge_time(t: datetime) -> datetime:
+    """Returns the daily purge of `t`'s day: 23:58:00 Asia/Seoul on the Seoul date of `t`, in UTC.
 
     Every deadline is this value: a job's ``expires_at`` from its acceptance and a
-    recording's ``delete_at`` from its receipt.
+    recording's ``delete_at`` from its receipt. For `t` between 23:58 and midnight it
+    has already passed, so the next sweep removes what arrived then; nothing lives
+    24 hours.
 
     Raises:
         ValueError: If `t` is naive.
     """
     _require_aware(t)
-    local = t.astimezone(SEOUL)
-    purge = datetime.combine(local.date(), _PURGE_TIME, tzinfo=SEOUL)
-    if purge <= local:
-        purge = datetime.combine(local.date() + timedelta(days=1), _PURGE_TIME, tzinfo=SEOUL)
+    purge = datetime.combine(t.astimezone(SEOUL).date(), _PURGE_TIME, tzinfo=SEOUL)
     return purge.astimezone(timezone.utc)
 
 

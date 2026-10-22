@@ -228,7 +228,7 @@ def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetim
             hints=None if hints is None else tuple(hints),
             duration_s=duration_s,
             state="queued",
-            expires_at=deadlines.next_purge(now),
+            expires_at=deadlines.purge_time(now),
         )
         save_audio(
             layout,
@@ -237,7 +237,7 @@ def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetim
                 original_name=attachment_name,
                 owner=body["requested_by"],
                 received_at=now,
-                delete_at=deadlines.next_purge(now),
+                delete_at=deadlines.purge_time(now),
                 users=(request_id,),
             ),
         )
@@ -281,7 +281,7 @@ def _accept_second_pass(layout: Layout, body: dict[str, Any], source: Job, now: 
         hints=None if hints is None else tuple(hints),
         duration_s=source.duration_s,
         state="queued",
-        expires_at=deadlines.next_purge(now),
+        expires_at=deadlines.purge_time(now),
     )
     audio = load_audio(layout, source.audio_id)
     save_audio(layout, replace(audio, users=(*audio.users, request_id)))

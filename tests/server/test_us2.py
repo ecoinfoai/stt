@@ -35,6 +35,7 @@ INTERRUPTED_DETAIL = "The worker stopped before the job finished."
 AUDIO_DELETED_DETAIL = "The recording was deleted before the job finished."
 PURGE = "2026-03-02T14:58:00Z"
 AFTER_PURGE = "2026-03-02T14:58:30Z"
+AFTER_MIDNIGHT = "2026-03-02T15:00:10Z"
 NEXT_PURGE = "2026-03-03T14:58:00Z"
 
 
@@ -273,6 +274,33 @@ def test_us2_3_delete_request_stops_running_job(layout: Layout, wav: Path, clock
     assert leftovers(layout.root) == []
 
 
+@pytest.mark.parametrize("running", ["first", "second"])
+def test_delete_request_for_one_pass_stops_the_other_running_pass(
+    layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path, running: str
+) -> None:
+    first = submit(layout, wav, clock, hints=["alpha"])
+    if running == "second":
+        run_worker(layout, clock)
+    second = submit_second(layout, clock, first, hints=["beta"])
+    runner, target = (first, second) if running == "first" else (second, first)
+    pid_file, engine_cmd = pid_engine(tmp_path)
+    thread, errors = start_worker_thread(layout, clock, engine_cmd, runner)
+    engine_group = int(pid_file.read_text(encoding="utf-8"))
+
+    delete_id = submit_delete(layout, clock, target)
+
+    assert_group_gone(engine_group)
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert not errors
+    answer(layout, delete_id, target, "deleted")
+    for request_id in (first, second):
+        assert assert_valid_response(layout, request_id)["state"] == "deleted"
+        assert not (layout.outbox / request_id).exists()
+    assert not (layout.audio / first).exists()
+    assert leftovers(layout.root) == []
+
+
 def test_us2_4_delete_request_on_a_queued_job_never_runs_it(
     layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path
 ) -> None:
@@ -343,35 +371,44 @@ def test_done_job_keeps_result_and_recording_until_23_58(layout: Layout, wav: Pa
     assert_state_root_empty(layout)
 
 
-def test_us2_6_job_received_after_23_58_stays_until_the_next_purge(
-    layout: Layout, wav: Path, clock: FakeClock
+def test_us2_6_job_received_after_23_58_is_purged_by_the_next_sweep(
+    layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path
 ) -> None:
-    clock.set("2026-03-02T14:50:00Z")
-    early = submit(layout, wav, clock)
     clock.set(AFTER_PURGE)
     late = submit(layout, wav, clock, hints=["alpha"])
-    run_worker(layout, clock)
     doc = assert_valid_response(layout, late)
+    assert (doc["expires_at"], doc["audio"]["delete_at"]) == (PURGE, PURGE)
+    record = tmp_path / "record.jsonl"
+
+    run_worker(layout, clock, engine_cmd=[sys.executable, str(FAKE_ENGINE), "--mode", "done", "--record", str(record)])
+    clock.advance(15)
+    run_sweep(layout, clock)
+
+    assert not record.exists()
+    assert leftovers(layout.root) == []
+    assert_state_root_empty(layout)
+
+
+def test_us2_6_job_received_after_midnight_stays_until_that_days_23_58(
+    layout: Layout, wav: Path, clock: FakeClock
+) -> None:
+    clock.set(AFTER_MIDNIGHT)
+    request_id = submit(layout, wav, clock, hints=["alpha"])
+    run_worker(layout, clock)
+    doc = assert_valid_response(layout, request_id)
     assert (doc["expires_at"], doc["audio"]["delete_at"]) == (NEXT_PURGE, NEXT_PURGE)
 
-    clock.set("2026-03-02T14:59:00Z")
-    run_sweep(layout, clock)
-
-    assert not (layout.jobs / early).exists()
-    assert not (layout.outbox / f"{early}.json").exists()
-    assert assert_valid_response(layout, late)["state"] == "done"
-    assert (layout.outbox / late / "transcript.txt").is_file()
-    assert (layout.audio / late / "audio.wav").is_file()
-
-    clock.set("2026-03-03T14:57:59Z")
-    run_sweep(layout, clock)
-
-    assert (layout.audio / late / "audio.wav").is_file()
+    for moment in ("2026-03-02T15:01:00Z", "2026-03-03T01:00:00Z", "2026-03-03T14:57:59Z"):
+        clock.set(moment)
+        run_sweep(layout, clock)
+        assert assert_valid_response(layout, request_id)["state"] == "done"
+        assert (layout.outbox / request_id / "transcript.txt").is_file()
+        assert (layout.audio / request_id / "audio.wav").is_file()
 
     clock.set(NEXT_PURGE)
     run_sweep(layout, clock)
 
-    assert parse_time(NEXT_PURGE) - parse_time(AFTER_PURGE) < timedelta(hours=24)
+    assert parse_time(NEXT_PURGE) - parse_time(AFTER_MIDNIGHT) < timedelta(hours=24)
     assert_state_root_empty(layout)
 
 
@@ -582,9 +619,8 @@ def test_edge_8_queued_job_past_the_purge_is_not_started(
 def test_worker_after_a_purged_job_still_runs_the_next_one(layout: Layout, wav: Path, clock: FakeClock) -> None:
     clock.set("2026-03-02T14:57:00Z")
     purged = submit(layout, wav, clock)
-    clock.set("2026-03-02T14:58:10Z")
+    clock.set(AFTER_MIDNIGHT)
     fresh = submit(layout, wav, clock)
-    clock.set(AFTER_PURGE)
 
     run_worker(layout, clock)
 
@@ -662,6 +698,7 @@ def test_sc003_deletion_matrix(layout: Layout, wav: Path, clock: FakeClock, scen
     if path == "delete_request":
         submit_delete(layout, clock, request_id)
         assert assert_valid_response(layout, request_id)["state"] == "deleted"
+        assert leftovers(layout.root) == []
     else:
         clock.set(AFTER_PURGE)
 

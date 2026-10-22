@@ -10,6 +10,7 @@ import pytest
 from stt.server import deadlines
 
 UTC = timezone.utc
+SWEEP_PERIOD = timedelta(minutes=1)
 
 
 def utc(*args: int) -> datetime:
@@ -19,46 +20,53 @@ def utc(*args: int) -> datetime:
 @pytest.mark.parametrize(
     ("given", "expected"),
     [
-        (utc(2026, 10, 22, 14, 57, 59), utc(2026, 10, 22, 14, 58, 0)),
-        (utc(2026, 10, 22, 14, 58, 0), utc(2026, 10, 23, 14, 58, 0)),
-        (utc(2026, 10, 22, 14, 58, 1), utc(2026, 10, 23, 14, 58, 0)),
-        (utc(2026, 10, 22, 15, 0, 0), utc(2026, 10, 23, 14, 58, 0)),
+        (utc(2026, 10, 21, 15, 0, 0), utc(2026, 10, 22, 14, 58, 0)),
         (utc(2026, 10, 22, 0, 0, 0), utc(2026, 10, 22, 14, 58, 0)),
+        (utc(2026, 10, 22, 14, 57, 59), utc(2026, 10, 22, 14, 58, 0)),
+        (utc(2026, 10, 22, 14, 58, 0), utc(2026, 10, 22, 14, 58, 0)),
+        (utc(2026, 10, 22, 14, 59, 59), utc(2026, 10, 22, 14, 58, 0)),
     ],
-    ids=["kst_23_57_59", "kst_23_58_00", "kst_23_58_01", "kst_00_00", "kst_morning"],
+    ids=["kst_00_00_00", "kst_09_00_00", "kst_23_57_59", "kst_23_58_00", "kst_23_59_59"],
 )
-def test_next_purge_is_the_first_seoul_23_58_strictly_after(given: datetime, expected: datetime) -> None:
-    assert deadlines.next_purge(given) == expected
+def test_purge_time_is_23_58_of_the_seoul_date(given: datetime, expected: datetime) -> None:
+    assert deadlines.purge_time(given) == expected
 
 
-def test_next_purge_counts_sub_seconds_past_23_58_as_after() -> None:
-    assert deadlines.next_purge(datetime(2026, 10, 22, 14, 58, 0, 1, tzinfo=UTC)) == utc(2026, 10, 23, 14, 58, 0)
-
-
-def test_next_purge_accepts_non_utc_aware_input() -> None:
+def test_purge_time_accepts_non_utc_aware_input() -> None:
     kst = timezone(timedelta(hours=9))
-    assert deadlines.next_purge(datetime(2026, 10, 22, 23, 57, 59, tzinfo=kst)) == utc(2026, 10, 22, 14, 58, 0)
+    assert deadlines.purge_time(datetime(2026, 10, 22, 23, 59, 59, tzinfo=kst)) == utc(2026, 10, 22, 14, 58, 0)
+    assert deadlines.purge_time(datetime(2026, 10, 23, 0, 0, 0, tzinfo=kst)) == utc(2026, 10, 23, 14, 58, 0)
 
 
-def test_next_purge_returns_utc_aware_value() -> None:
-    result = deadlines.next_purge(utc(2026, 10, 22, 1, 0, 0))
+def test_purge_time_returns_utc_aware_value() -> None:
+    result = deadlines.purge_time(utc(2026, 10, 22, 1, 0, 0))
     assert result.utcoffset() == timedelta(0)
 
 
-def test_next_purge_never_keeps_anything_24_hours() -> None:
-    for minute in range(0, 24 * 60, 7):
-        t = utc(2026, 10, 22, 0, 0, 0) + timedelta(minutes=minute, seconds=13)
-        assert timedelta(0) < deadlines.next_purge(t) - t < timedelta(hours=24)
+def _assert_gone_within_24_hours(t: datetime) -> None:
+    assert deadlines.purge_time(t) + SWEEP_PERIOD < t + timedelta(hours=24), t
 
 
-@pytest.mark.parametrize("function", [deadlines.next_purge, deadlines.format_time])
+def test_purge_time_plus_one_sweep_is_within_24_hours_around_midnight() -> None:
+    start = utc(2026, 10, 22, 14, 55, 0)
+    for second in range(10 * 60 + 1):
+        _assert_gone_within_24_hours(start + timedelta(seconds=second))
+
+
+def test_purge_time_plus_one_sweep_is_within_24_hours_over_a_whole_day() -> None:
+    start = utc(2026, 10, 22, 0, 0, 0)
+    for step in range(0, 24 * 60 * 60 + 1, 17):
+        _assert_gone_within_24_hours(start + timedelta(seconds=step, microseconds=999_999))
+
+
+@pytest.mark.parametrize("function", [deadlines.purge_time, deadlines.format_time])
 def test_naive_datetime_is_rejected(function: Callable[[datetime], object]) -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         function(datetime(2026, 10, 22, 1, 0, 0))
 
 
 @pytest.mark.parametrize(
-    "name", ["RETENTION_DUE", "next_midnight", "hard_deadline", "expires_at", "audio_delete_at"]
+    "name", ["RETENTION_DUE", "next_midnight", "next_purge", "hard_deadline", "expires_at", "audio_delete_at"]
 )
 def test_retention_and_policy_deadlines_are_gone(name: str) -> None:
     assert not hasattr(deadlines, name)

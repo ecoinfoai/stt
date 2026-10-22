@@ -337,14 +337,16 @@ def test_edge_3_daily_purge_holds_without_worker(
     clock.set("2026-03-02T14:57:00Z")
     evening = _submit(layout, wav, clock, hints=["alpha"])
     clock.set("2026-03-02T14:58:10Z")
+    after_purge = _submit(layout, wav, clock, hints=["alpha"])
+    clock.set("2026-03-02T15:00:10Z")
     late = _submit(layout, wav, clock, hints=["alpha"])
     capfd.readouterr()
 
-    clock.set("2026-03-02T14:58:30Z")
+    clock.set("2026-03-02T15:00:30Z")
     run_sweep(layout, clock)
 
     output = capfd.readouterr().out
-    for request_id in (morning, evening):
+    for request_id in (morning, evening, after_purge):
         assert f"{request_id} failed audio_deleted" in output
         assert not (layout.outbox / f"{request_id}.json").exists()
         assert not (layout.jobs / request_id).exists()
@@ -381,15 +383,10 @@ def test_rejected_refused_and_delete_responses_expire_at_the_daily_purge(layout:
     write_delete_request(layout.inbox, request_id=answer_id, requested_by="professor-a", target=done)
     intake.run_once(layout, clock.now)
     assert read_response(layout, answer_id)["kind"] == "delete"
-    clock.set("2026-03-02T14:58:20Z")
-    after = new_id()
-    put_bytes(layout.inbox / f"{after}.json", b"{")
-    intake.run_once(layout, clock.now)
     names = (rejected, refused, answer_id)
     assert {name: read_response(layout, name)["expires_at"] for name in names} == dict.fromkeys(
         names, "2026-03-02T14:58:00Z"
     )
-    assert read_response(layout, after)["expires_at"] == "2026-03-03T14:58:00Z"
 
     clock.set("2026-03-02T14:57:59Z")
     run_sweep(layout, clock)
@@ -398,7 +395,12 @@ def test_rejected_refused_and_delete_responses_expire_at_the_daily_purge(layout:
     clock.set("2026-03-02T14:58:00Z")
     run_sweep(layout, clock)
     assert not any((layout.outbox / f"{name}.json").exists() for name in names)
-    assert (layout.outbox / f"{after}.json").is_file()
+
+    clock.set("2026-03-02T15:00:20Z")
+    after_midnight = new_id()
+    put_bytes(layout.inbox / f"{after_midnight}.json", b"{")
+    intake.run_once(layout, clock.now)
+    assert read_response(layout, after_midnight)["expires_at"] == "2026-03-03T14:58:00Z"
 
 
 def test_edge_7_second_pass_on_pending_first_runs_after_it(layout: Layout, wav: Path) -> None:

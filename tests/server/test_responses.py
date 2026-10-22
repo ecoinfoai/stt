@@ -34,7 +34,7 @@ def make_job(state: str = "queued", seq: int = 1, request_id: str = REQUEST_ID, 
         hints=None,
         duration_s=61.5,
         state=state,
-        expires_at=deadlines.next_purge(ACCEPTED),
+        expires_at=deadlines.purge_time(ACCEPTED),
     )
     return dataclasses.replace(job, **changes)
 
@@ -45,7 +45,7 @@ def make_audio(**changes: object) -> Audio:
         original_name=f"{REQUEST_ID}.audio.wav",
         owner="professor-a",
         received_at=ACCEPTED,
-        delete_at=deadlines.next_purge(ACCEPTED),
+        delete_at=deadlines.purge_time(ACCEPTED),
         users=(REQUEST_ID,),
     )
     return dataclasses.replace(audio, **changes)

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from stt.server import contract, intake
-from stt.server.deadlines import next_purge
+from stt.server.deadlines import purge_time
 from stt.server.layout import Layout
 from stt.server.records import load_audio, load_job, load_jobs
 
@@ -52,9 +52,9 @@ def test_accept_writes_records_marker_response_and_copies_attachment(
     assert job.hints == ("term one", "term two")
     assert job.diarize is True
     assert job.duration_s == pytest.approx(2.0, abs=0.05)
-    assert job.expires_at == next_purge(clock.now())
+    assert job.expires_at == purge_time(clock.now())
     audio = load_audio(layout, request_id)
-    assert audio.delete_at == next_purge(clock.now())
+    assert audio.delete_at == purge_time(clock.now())
     assert audio.users == (request_id,)
     assert audio.original_name == f"{request_id}.audio.wav"
     assert audio.owner == "professor-a"
@@ -75,10 +75,15 @@ def test_accept_writes_records_marker_response_and_copies_attachment(
 
 @pytest.mark.parametrize(
     ("accepted", "purge"),
-    [("2026-03-02T14:57:59Z", "2026-03-02T14:58:00Z"), ("2026-03-02T14:58:00Z", "2026-03-03T14:58:00Z")],
-    ids=["before_23_58_kst", "at_23_58_kst"],
+    [
+        ("2026-03-02T14:57:59Z", "2026-03-02T14:58:00Z"),
+        ("2026-03-02T14:58:00Z", "2026-03-02T14:58:00Z"),
+        ("2026-03-02T14:59:59Z", "2026-03-02T14:58:00Z"),
+        ("2026-03-02T15:00:00Z", "2026-03-03T14:58:00Z"),
+    ],
+    ids=["kst_23_57_59", "kst_23_58_00", "kst_23_59_59", "kst_00_00_00"],
 )
-def test_accept_sets_the_next_daily_purge_for_job_and_recording(
+def test_accept_sets_that_days_purge_for_job_and_recording(
     layout: Layout, wav: Path, accepted: str, purge: str
 ) -> None:
     clock = FakeClock(accepted)

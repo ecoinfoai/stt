@@ -91,7 +91,7 @@ def rejected_status(
         "state": "failed",
         "finished_at": format_time(now),
         "updated_at": format_time(now),
-        "expires_at": format_time(deadlines.next_purge(now)),
+        "expires_at": format_time(deadlines.purge_time(now)),
         "failure": {"reason": reason, "detail": detail},
     }
     return _with_duplicate(doc, duplicate_refused_at)
@@ -112,7 +112,7 @@ def delete_outcome(
         "target": target,
         "outcome": outcome,
         "processed_at": format_time(now),
-        "expires_at": format_time(deadlines.next_purge(now)),
+        "expires_at": format_time(deadlines.purge_time(now)),
     }
     return _with_duplicate(doc, duplicate_refused_at)
 
@@ -130,6 +130,6 @@ def refusal(
         "request_id": request_id,
         "failure": {"reason": "invalid_request", "detail": detail},
         "processed_at": format_time(now),
-        "expires_at": format_time(deadlines.next_purge(now)),
+        "expires_at": format_time(deadlines.purge_time(now)),
     }
     return _with_duplicate(doc, duplicate_refused_at)
