@@ -277,3 +277,100 @@ def test_defaults_are_the_production_state_and_model_folders() -> None:
     assert work_args.root == Path("/var/lib/stt")
     assert sweep_args.root == Path("/var/lib/stt")
     assert work_args.models == Path("/var/lib/stt-models")
+
+
+def _install_fake_hub(monkeypatch: pytest.MonkeyPatch, fail_on: str | None = None) -> list[dict[str, Any]]:
+    import types
+
+    calls: list[dict[str, Any]] = []
+
+    def snapshot_download(repo_id: str, **kwargs: Any) -> str:
+        calls.append({"repo_id": repo_id, **kwargs})
+        if repo_id == fail_on:
+            raise OSError("401 Unauthorized for token hf_secret_token_value")
+        return "snapshot"
+
+    module = types.ModuleType("huggingface_hub")
+    module.snapshot_download = snapshot_download  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", module)
+    return calls
+
+
+def test_fetch_models_downloads_pinned_commits_with_the_env_token(
+    models: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from stt.server import models as pinned
+
+    calls = _install_fake_hub(monkeypatch)
+    monkeypatch.setenv("HF_TOKEN", "hf_secret_token_value")
+
+    assert cli.main(["server", "fetch-models", "--models", str(models)]) == 0
+
+    assert [(c["repo_id"], c["revision"]) for c in calls] == list(pinned.PINNED)
+    assert all(c["token"] == "hf_secret_token_value" and c["cache_dir"] == str(models / "hub") for c in calls)
+    assert pinned.ref_mismatches(models) == []
+    assert (models / ".complete").is_file()
+    captured = capsys.readouterr()
+    assert "hf_secret_token_value" not in captured.out + captured.err
+
+
+def test_fetch_models_without_a_token_passes_none(models: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install_fake_hub(monkeypatch)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+
+    assert cli.main(["server", "fetch-models", "--models", str(models)]) == 0
+
+    assert all(c["token"] is None for c in calls)
+
+
+def test_fetch_models_skips_the_network_when_complete_matches(models: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_hub(monkeypatch)
+    assert cli.main(["server", "fetch-models", "--models", str(models)]) == 0
+    calls = _install_fake_hub(monkeypatch)
+
+    assert cli.main(["server", "fetch-models", "--models", str(models)]) == 0
+
+    assert calls == []
+
+
+def test_fetch_models_exits_1_naming_the_repository_and_hiding_the_token(
+    models: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from stt.server import models as pinned
+
+    failing = pinned.PINNED[1][0]
+    _install_fake_hub(monkeypatch, fail_on=failing)
+    monkeypatch.setenv("HF_TOKEN", "hf_secret_token_value")
+
+    assert cli.main(["server", "fetch-models", "--models", str(models)]) == 1
+
+    captured = capsys.readouterr()
+    assert failing in captured.err
+    assert "hf_secret_token_value" not in captured.out + captured.err
+    assert not (models / ".complete").exists()
+
+
+def test_fetch_models_without_models_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["server", "fetch-models"]) == 2
+
+    assert "--models" in capsys.readouterr().err
+
+
+def test_fetch_models_needs_no_state_root_or_stage_lock(
+    models: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_hub(monkeypatch)
+    untouched_root = tmp_path / "never-created"
+    monkeypatch.setattr("stt.server.cli.DEFAULT_ROOT", untouched_root)
+
+    assert cli.main(["server", "fetch-models", "--models", str(models)]) == 0
+
+    assert not untouched_root.exists()
+
+
+def test_fetch_models_help_exits_0_with_english_text(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["server", "fetch-models", "--help"]) == 0
+
+    out = capsys.readouterr().out
+    assert "--models" in out and "HF_TOKEN" in out
+    assert out.isascii()

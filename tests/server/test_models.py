@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from stt.server import models
 
 EXPECTED_PINNED = (
@@ -59,3 +61,129 @@ def test_missing_and_other_commit_reported_in_pinned_order(pinned_models: Path) 
 
 def test_empty_hf_home_reports_every_repository(tmp_path: Path) -> None:
     assert models.ref_mismatches(tmp_path) == [repo for repo, _ in EXPECTED_PINNED]
+
+
+SECRET_TOKEN = "hf_secret_token_value"
+
+
+class FakeDownload:
+    """Records every download call; can be told to fail for one repository."""
+
+    def __init__(self, fail_on: str | None = None) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.fail_on = fail_on
+
+    def __call__(self, **kwargs: object) -> str:
+        self.calls.append(kwargs)
+        if kwargs["repo_id"] == self.fail_on:
+            raise OSError(f"401 Unauthorized for token {SECRET_TOKEN}")
+        return "snapshot"
+
+
+def _expected_complete() -> str:
+    return "".join(f"{repo} {commit}\n" for repo, commit in models.PINNED)
+
+
+def test_fetch_downloads_each_pinned_commit_into_the_hub_cache(tmp_path: Path) -> None:
+    download = FakeDownload()
+
+    models.fetch(tmp_path, SECRET_TOKEN, download)
+
+    assert download.calls == [
+        {"repo_id": repo, "revision": commit, "cache_dir": str(tmp_path / "hub"), "token": SECRET_TOKEN}
+        for repo, commit in models.PINNED
+    ]
+
+
+def test_fetch_writes_refs_main_so_the_offline_check_passes(tmp_path: Path) -> None:
+    models.fetch(tmp_path, SECRET_TOKEN, FakeDownload())
+
+    assert models.ref_mismatches(tmp_path) == []
+    for repo, commit in models.PINNED:
+        assert _ref(tmp_path, repo).read_text(encoding="utf-8") == commit
+
+
+def test_fetch_writes_the_pinned_list_to_complete_after_all_downloads(tmp_path: Path) -> None:
+    models.fetch(tmp_path, SECRET_TOKEN, FakeDownload())
+
+    assert (tmp_path / ".complete").read_text(encoding="utf-8") == _expected_complete()
+    assert [p.name for p in tmp_path.iterdir() if p.name != "hub"] == [".complete"]
+
+
+def test_fetch_creates_the_models_folder_when_missing(tmp_path: Path) -> None:
+    target = tmp_path / "not" / "yet"
+
+    models.fetch(target, None, FakeDownload())
+
+    assert (target / ".complete").is_file()
+
+
+def test_fetch_makes_no_download_call_when_complete_matches(tmp_path: Path) -> None:
+    models.fetch(tmp_path, SECRET_TOKEN, FakeDownload())
+    second = FakeDownload()
+
+    models.fetch(tmp_path, SECRET_TOKEN, second)
+
+    assert second.calls == []
+
+
+def test_fetch_downloads_again_when_the_pinned_list_changed(tmp_path: Path) -> None:
+    old_commit = "0" * 40
+    (tmp_path / ".complete").write_text(
+        "".join(f"{repo} {old_commit}\n" for repo, _ in models.PINNED), encoding="utf-8"
+    )
+    download = FakeDownload()
+
+    models.fetch(tmp_path, SECRET_TOKEN, download)
+
+    assert len(download.calls) == len(models.PINNED)
+    assert (tmp_path / ".complete").read_text(encoding="utf-8") == _expected_complete()
+
+
+def test_fetch_downloads_again_when_complete_lacks_a_repository(tmp_path: Path) -> None:
+    (tmp_path / ".complete").write_text(_expected_complete().splitlines(keepends=True)[0], encoding="utf-8")
+    download = FakeDownload()
+
+    models.fetch(tmp_path, None, download)
+
+    assert len(download.calls) == len(models.PINNED)
+
+
+def test_fetch_failure_names_the_repository_and_hides_the_token(tmp_path: Path) -> None:
+    failing = models.PINNED[2][0]
+
+    with pytest.raises(models.FetchError) as raised:
+        models.fetch(tmp_path, SECRET_TOKEN, FakeDownload(fail_on=failing))
+
+    assert failing in str(raised.value)
+    assert SECRET_TOKEN not in str(raised.value)
+    assert SECRET_TOKEN not in repr(raised.value)
+    assert str(raised.value).isascii()
+
+
+def test_fetch_failure_writes_no_complete_file(tmp_path: Path) -> None:
+    with pytest.raises(models.FetchError):
+        models.fetch(tmp_path, SECRET_TOKEN, FakeDownload(fail_on=models.PINNED[-1][0]))
+
+    assert not (tmp_path / ".complete").exists()
+
+
+def test_fetch_failure_stops_before_later_repositories(tmp_path: Path) -> None:
+    download = FakeDownload(fail_on=models.PINNED[1][0])
+
+    with pytest.raises(models.FetchError):
+        models.fetch(tmp_path, SECRET_TOKEN, download)
+
+    assert [call["repo_id"] for call in download.calls] == [models.PINNED[0][0], models.PINNED[1][0]]
+    assert not _ref(tmp_path, models.PINNED[1][0]).exists()
+
+
+def test_fetch_retry_after_failure_downloads_again(tmp_path: Path) -> None:
+    with pytest.raises(models.FetchError):
+        models.fetch(tmp_path, SECRET_TOKEN, FakeDownload(fail_on=models.PINNED[3][0]))
+    retry = FakeDownload()
+
+    models.fetch(tmp_path, SECRET_TOKEN, retry)
+
+    assert len(retry.calls) == len(models.PINNED)
+    assert (tmp_path / ".complete").is_file()

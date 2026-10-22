@@ -1,8 +1,9 @@
-"""The ``stt server`` command group: ``intake``, ``work`` and ``sweep``, each under its stage lock."""
+"""The ``stt server`` command group: ``intake``, ``work`` and ``sweep`` under their stage locks, and ``fetch-models``."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from stt.server.layout import Layout, try_hold
 DEFAULT_ROOT = Path("/var/lib/stt")
 DEFAULT_MODELS = Path("/var/lib/stt-models")
 
+EXIT_FETCH_FAILED = 1
 EXIT_USAGE = 2
 EXIT_BUSY = 75
 
@@ -27,13 +29,13 @@ def build_parser() -> argparse.ArgumentParser:
     """Builds the ``stt server`` argument parser.
 
     Returns:
-        A parser with the ``intake``, ``work`` and ``sweep`` subcommands.
+        A parser with the ``intake``, ``work``, ``sweep`` and ``fetch-models`` subcommands.
     """
     parser = argparse.ArgumentParser(
         prog="stt server",
         description="Server-side transcription stages; each run drains its queue and exits.",
     )
-    commands = parser.add_subparsers(dest="command", metavar="{intake,work,sweep}", required=True)
+    commands = parser.add_subparsers(dest="command", metavar="{intake,work,sweep,fetch-models}", required=True)
 
     intake_parser = commands.add_parser(
         "intake", help="process every request in the inbox once", description="Process every request in the inbox once."
@@ -47,6 +49,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="delete what is due, expire old records and clear a dead worker's traces",
         description="Delete what is due, expire old records and clear a dead worker's traces.",
     )
+    fetch_parser = commands.add_parser(
+        "fetch-models",
+        help="download the pinned models into the model folder",
+        description="Download each pinned model at its pinned commit into the model folder and record the list in "
+        "DIR/.complete; do nothing when that list is already recorded. The only command that needs network access "
+        "and the HF_TOKEN environment variable.",
+    )
+    fetch_parser.add_argument("--models", type=Path, required=True, help="model cache folder to fill")
     for sub in (intake_parser, work_parser, sweep_parser):
         sub.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="state root (default: %(default)s)")
     work_parser.add_argument(
@@ -62,6 +72,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _fetch_models(args: argparse.Namespace) -> int:
+    from huggingface_hub import snapshot_download
+
+    from stt.server import models
+
+    try:
+        models.fetch(args.models, os.environ.get("HF_TOKEN") or None, snapshot_download)
+    except models.FetchError as error:
+        print(error, file=sys.stderr)
+        return EXIT_FETCH_FAILED
+    return 0
 
 
 def _work(args: argparse.Namespace, layout: Layout) -> int:
@@ -105,14 +128,16 @@ def main(argv: Sequence[str]) -> int:
         argv: Arguments after ``server``.
 
     Returns:
-        0 when the stage finished, 2 for a usage error or a missing GPU lock file, 75 when another run of the
-        same stage holds its lock.
+        0 when the stage finished or the models are in place, 1 when a model download failed, 2 for a usage
+        error or a missing GPU lock file, 75 when another run of the same stage holds its lock.
     """
     parser = build_parser()
     try:
         args = parser.parse_args(list(argv))
     except SystemExit as stop:
         return stop.code if isinstance(stop.code, int) else EXIT_USAGE
+    if args.command == "fetch-models":
+        return _fetch_models(args)
     layout = Layout(args.root)
     layout.ensure_layout()
     stage, lock_path = _STAGES[args.command]
