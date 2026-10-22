@@ -246,11 +246,14 @@ def _worker_kwargs(layout: Any, clock: FakeClock, mode: str, kwargs: dict[str, A
     state_root = layout.root
     models_dir = state_root.parent / f"{state_root.name}-models"
     models_dir.mkdir(exist_ok=True)
+    gpu_lock = state_root.parent / f"{state_root.name}-gpu.lock"
+    gpu_lock.touch()
     options: dict[str, Any] = {
         "engine_cmd": _engine_cmd(mode),
         "now": clock.now,
         "poll_s": 0.05,
         "models_dir": models_dir,
+        "gpu_lock": gpu_lock,
     }
     options.update(kwargs)
     return options

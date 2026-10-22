@@ -53,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--models", type=Path, default=DEFAULT_MODELS,
         help="model cache folder, used offline by the engine (default: %(default)s)",
     )
+    work_parser.add_argument(
+        "--gpu-lock", type=Path, required=True,
+        help="existing lock file shared with the command line's STT_GPU_LOCK",
+    )
     return parser
 
 
@@ -61,9 +65,14 @@ def _utc_now() -> datetime:
 
 
 def _work(args: argparse.Namespace, layout: Layout) -> int:
+    from stt.gpu_lock import MissingGpuLockError
     from stt.server import worker
 
-    return worker.run(layout, worker.DEFAULT_ENGINE_CMD, _utc_now, models_dir=args.models)
+    try:
+        return worker.run(layout, worker.DEFAULT_ENGINE_CMD, _utc_now, models_dir=args.models, gpu_lock=args.gpu_lock)
+    except MissingGpuLockError as error:
+        print(error, file=sys.stderr)
+        return EXIT_USAGE
 
 
 def _intake(args: argparse.Namespace, layout: Layout) -> int:
@@ -96,7 +105,7 @@ def main(argv: Sequence[str]) -> int:
         argv: Arguments after ``server``.
 
     Returns:
-        0 when the stage finished, 2 for a usage error, 75 when another run of the
+        0 when the stage finished, 2 for a usage error or a missing GPU lock file, 75 when another run of the
         same stage holds its lock.
     """
     parser = build_parser()

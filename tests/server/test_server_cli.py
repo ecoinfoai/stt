@@ -30,6 +30,13 @@ def models(tmp_path: Path) -> Path:
     return folder
 
 
+@pytest.fixture
+def gpu_lock(tmp_path: Path) -> Path:
+    path = tmp_path / "gpu.lock"
+    path.touch()
+    return path
+
+
 def hold_in_subprocess(lock: Path) -> subprocess.Popen[str]:
     holder = subprocess.Popen(
         [sys.executable, "-c", _HOLDER, str(lock)],
@@ -107,11 +114,11 @@ def test_intake_exits_75_while_another_process_holds_intake_lock(
 
 
 def test_work_exits_75_while_another_process_holds_worker_lock(
-    root: Path, models: Path, lock_holder: Any, capsys: pytest.CaptureFixture[str]
+    root: Path, models: Path, lock_holder: Any, capsys: pytest.CaptureFixture[str], gpu_lock: Path
 ) -> None:
     lock_holder(root / "worker.lock")
 
-    assert cli.main(["server", "work", "--root", str(root), "--models", str(models)]) == 75
+    assert cli.main(["server", "work", "--root", str(root), "--models", str(models), "--gpu-lock", str(gpu_lock)]) == 75
 
     err = capsys.readouterr().err
     assert err.strip() == "Another worker run is in progress."
@@ -176,10 +183,12 @@ def test_intake_is_not_blocked_by_the_worker_lock(root: Path, lock_holder: Any) 
     assert cli.main(["server", "intake", "--root", str(root)]) == 0
 
 
-def test_both_stages_exit_0_on_an_empty_root_and_release_their_locks(root: Path, models: Path) -> None:
+def test_both_stages_exit_0_on_an_empty_root_and_release_their_locks(
+    root: Path, models: Path, gpu_lock: Path
+) -> None:
     for _ in range(2):
         assert cli.main(["server", "intake", "--root", str(root)]) == 0
-        assert cli.main(["server", "work", "--root", str(root), "--models", str(models)]) == 0
+        assert cli.main(["server", "work", "--root", str(root), "--models", str(models), "--gpu-lock", str(gpu_lock)]) == 0
 
     for lock in (root / "intake.lock", root / "worker.lock"):
         context = try_hold(lock)
@@ -218,11 +227,13 @@ def test_intake_runs_the_stage_under_its_lock_with_a_utc_clock(
 
 
 def test_work_passes_the_engine_models_and_clock_to_the_worker_under_its_lock(
-    root: Path, models: Path, monkeypatch: pytest.MonkeyPatch
+    root: Path, models: Path, gpu_lock: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: dict[str, Any] = {}
 
-    def fake_run(layout: Layout, engine_cmd: Any, now: Any, *, poll_s: float = 2.0, models_dir: Path) -> int:
+    def fake_run(
+        layout: Layout, engine_cmd: Any, now: Any, *, poll_s: float = 2.0, models_dir: Path, gpu_lock: Path
+    ) -> int:
         seen.update(root=layout.root, engine=tuple(engine_cmd), models=models_dir)
         seen["clock"] = now()
         seen["lock"] = try_hold(layout.worker_lock)
@@ -230,7 +241,7 @@ def test_work_passes_the_engine_models_and_clock_to_the_worker_under_its_lock(
 
     monkeypatch.setattr(worker, "run", fake_run)
 
-    assert cli.main(["server", "work", "--root", str(root), "--models", str(models)]) == 0
+    assert cli.main(["server", "work", "--root", str(root), "--models", str(models), "--gpu-lock", str(gpu_lock)]) == 0
 
     assert seen["root"] == root
     assert seen["engine"] == worker.DEFAULT_ENGINE_CMD
@@ -260,7 +271,7 @@ def test_defaults_are_the_production_state_and_model_folders() -> None:
     parser = server_cli.build_parser()
 
     intake_args = parser.parse_args(["intake"])
-    work_args = parser.parse_args(["work"])
+    work_args = parser.parse_args(["work", "--gpu-lock", "gpu.lock"])
     sweep_args = parser.parse_args(["sweep"])
     assert intake_args.root == Path("/var/lib/stt")
     assert work_args.root == Path("/var/lib/stt")

@@ -366,7 +366,7 @@ description: "Task list for 001-server-transcription"
   `stt batch --keep-going` 도 다음 묶음으로 넘어가지 않고 2; `stt enroll` 도 같은 대기 안내 — closes US4-1, US4-4, supports SC-013 — verify RED
 - [X] T050 [P] [US4] `tests/test_diarize.py` 에 `test_us4_5_cpu_fallback_warns_once` — RED: 가짜 torch(`cuda.is_available()` False)·가짜 `Pipeline` 으로
   `load_pipeline("cuda")` → 파이프라인을 돌려주고 stderr 에 cli.md §3 의 경고 정확히 한 번; CUDA 가 있으면 경고 없음; `load_pipeline("cpu")` 도 경고 없음 — closes US4-5 — verify RED
-- [ ] T051 [P] [US4] `tests/server/test_us4.py` — RED: `test_us4_2_server_job_waits_for_cli`(다른 프로세스가 잠금을 쥔 동안 `worker.run(..., gpu_lock=path)`
+- [X] T051 [P] [US4] `tests/server/test_us4.py` — RED: `test_us4_2_server_job_waits_for_cli`(다른 프로세스가 잠금을 쥔 동안 `worker.run(..., gpu_lock=path)`
   를 스레드로 → 응답이 `queued`·`queue_position` 1 로 머물고 엔진이 뜨지 않음, 풀면 `done`); `test_us4_3_no_overlap_when_started_together`(명령줄 쪽
   흉내 = `gpu_lock.acquire` 안에서 구간 기록하는 하위 프로세스, 워커 쪽 = `fake_engine --record` — 두 구간이 겹치지 않고 둘 다 끝남);
   `test_delete_while_waiting_for_gpu`(잠금 대기 중 지금 지우기 → 엔진을 띄우지 않고 `deleted`); `test_cli_gets_turn_between_server_jobs`(줄에 job 둘,
@@ -381,7 +381,7 @@ description: "Task list for 001-server-transcription"
 - [X] T053 [P] [US4] `src/stt/enroll.py` `main`: 같은 잠금(같은 늦은 불러오기)을 `load_pipeline` 전부터 끝까지 — turns T049 의 enroll 시험 GREEN — closes US4-1
 - [X] T054 [P] [US4] `src/stt/diarize.py` `load_pipeline`: `device == "cuda"` 인데 torch 가 CUDA 를 못 보면 CPU 로 계속하되 cli.md §3 의 영어 경고를
   stderr 에 한 번(R17, 헌법 V) — turns T050 GREEN — closes US4-5
-- [ ] T055 [US4] `src/stt/server/worker.py`·`src/stt/server/cli.py`·`tests/server/conftest.py`: 워커에 `gpu_lock: Path` 인자(명령줄 `--gpu-lock FILE` 필수);
+- [X] T055 [US4] `src/stt/server/worker.py`·`src/stt/server/cli.py`·`tests/server/conftest.py`: 워커에 `gpu_lock: Path` 인자(명령줄 `--gpu-lock FILE` 필수);
   `queued` job 을 고른 뒤 `poll_s` 마다 `try_acquire` 를 시도하며 그동안 job 이 아직 `queued` 인지(지워짐·만료) 봄; 잠금을 얻은 뒤에만 `lifecycle.start`;
   엔진이 끝나면 풀고 `poll_s` 만큼 쉰 뒤 다음 job 의 잠금을 시도한다(R3). conftest 의 `run_worker`·`run_worker_once` 가 tmp 잠금 파일을 만들어
   넘기게 고치고, 인자가 필수가 되므로 T022 의 `stt server work` 호출 두 곳에 `--gpu-lock <tmp 파일>` 을 더한다(이 기능의 앞 단계 시험을 고치는

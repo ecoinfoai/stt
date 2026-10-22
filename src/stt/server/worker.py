@@ -2,6 +2,7 @@
 
 The caller holds ``worker.lock``. ``state.lock`` is taken here, briefly, to pick
 and start a job and to publish and finish it; it is never held while the engine runs.
+A job stays ``queued`` until the worker holds the GPU lock it shares with the command line.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Sequence
 
+from stt import gpu_lock as gpu_lock_module
 from stt.server import lifecycle
 from stt.server.layout import Layout, hold
 from stt.server.records import Failure, Job, load_audio, load_job, load_jobs, queued_in_order
@@ -158,46 +160,51 @@ def _settle(layout: Layout, job: Job, work_dir: Path, failure: Failure | None, n
 
 
 def _pick(layout: Layout, at: datetime) -> Job | None:
-    """Starts the oldest queued job whose recording is not yet due for deletion.
+    """Returns the oldest queued job whose recording is not yet due for deletion.
 
     A queued job whose recording is already due is failed with ``audio_deleted``
-    instead of being started, without waiting for the sweep.
+    instead of being returned, without waiting for the sweep.
     """
     while True:
         queued = queued_in_order(load_jobs(layout))
         if not queued:
             return None
-        cause = lifecycle.due_cause(load_audio(layout, queued[0].audio_id), at)
-        if cause is None:
-            return lifecycle.start(layout, queued[0], at)
-        for failed in lifecycle.delete_audio(layout, queued[0].audio_id, cause, at):
-            _log(failed.request_id, "failed audio_deleted")
+        if _fail_if_due(layout, queued[0], at):
+            continue
+        return queued[0]
 
 
-def run_one(
+def _fail_if_due(layout: Layout, job: Job, at: datetime) -> bool:
+    """Fails the users of `job`'s recording with ``audio_deleted`` if it is due; True if it was."""
+    cause = lifecycle.due_cause(load_audio(layout, job.audio_id), at)
+    if cause is None:
+        return False
+    for failed in lifecycle.delete_audio(layout, job.audio_id, cause, at):
+        _log(failed.request_id, "failed audio_deleted")
+    return True
+
+
+def _is_waiting(layout: Layout, request_id: str, at: datetime) -> bool:
+    """True while the job is still ``queued`` and its recording is not due; call with ``state.lock`` held."""
+    if not (layout.jobs / request_id / "job.json").exists():
+        return False
+    job = load_job(layout, request_id)
+    return job.state == "queued" and not _fail_if_due(layout, job, at)
+
+
+def _run_job(
     layout: Layout,
+    request_id: str,
     engine_cmd: Sequence[str],
     now: Callable[[], datetime],
-    *,
-    poll_s: float = 2.0,
+    poll_s: float,
     models_dir: Path,
-) -> bool:
-    """Runs the oldest queued job to its end.
-
-    Args:
-        layout: The state root.
-        engine_cmd: Engine command; the work folder is appended as the last argument.
-        now: Clock returning the current UTC time.
-        poll_s: Seconds between checks whether the engine has ended or the job was taken away.
-        models_dir: Model cache handed to the engine as ``HF_HOME``.
-
-    Returns:
-        True if a job was run, False if the queue was empty.
-    """
+) -> None:
+    """Starts `request_id` if it is still waiting and runs it; the caller holds the GPU lock."""
     with hold(layout.state_lock):
-        job = _pick(layout, now())
-        if job is None:
-            return False
+        if not _is_waiting(layout, request_id, now()):
+            return
+        job = lifecycle.start(layout, load_job(layout, request_id), now())
         work_dir = _prepare(layout, job)
     _log(job.request_id, "running")
     try:
@@ -207,7 +214,51 @@ def run_one(
             _log(job.request_id, "stopped")
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
-    return True
+
+
+def run_one(
+    layout: Layout,
+    engine_cmd: Sequence[str],
+    now: Callable[[], datetime],
+    *,
+    poll_s: float = 2.0,
+    models_dir: Path,
+    gpu_lock: Path,
+) -> bool:
+    """Runs the oldest queued job to its end, once the GPU lock is held.
+
+    The job stays ``queued`` while another process holds the GPU lock. If it is deleted
+    or its recording expires meanwhile, it is dropped without starting the engine.
+
+    Args:
+        layout: The state root.
+        engine_cmd: Engine command; the work folder is appended as the last argument.
+        now: Clock returning the current UTC time.
+        poll_s: Seconds between checks whether the GPU lock is free, the engine has
+            ended or the job was taken away.
+        models_dir: Model cache handed to the engine as ``HF_HOME``.
+        gpu_lock: Existing lock file shared with the command line.
+
+    Returns:
+        True if a job was picked, False if the queue was empty.
+
+    Raises:
+        MissingGpuLockError: If `gpu_lock` does not exist and a job is queued.
+    """
+    with hold(layout.state_lock):
+        job = _pick(layout, now())
+    if job is None:
+        return False
+    while True:
+        held = gpu_lock_module.try_acquire(gpu_lock)
+        if held is not None:
+            with held:
+                _run_job(layout, job.request_id, engine_cmd, now, poll_s, models_dir)
+            return True
+        time.sleep(poll_s)
+        with hold(layout.state_lock):
+            if not _is_waiting(layout, job.request_id, now()):
+                return True
 
 
 def run(
@@ -217,22 +268,31 @@ def run(
     *,
     poll_s: float = 2.0,
     models_dir: Path,
+    gpu_lock: Path,
 ) -> int:
     """Runs queued jobs one at a time until the queue is empty.
+
+    After each job the GPU lock is released and the worker rests `poll_s` before
+    it tries the lock for the next job, so a command line waiting on it gets its turn.
 
     Args:
         layout: The state root.
         engine_cmd: Engine command; the work folder is appended as the last argument.
         now: Clock returning the current UTC time.
-        poll_s: Seconds between checks whether the engine has ended or the job was taken away.
+        poll_s: Seconds between checks whether the GPU lock is free, the engine has
+            ended or the job was taken away.
         models_dir: Model cache handed to the engine as ``HF_HOME``.
+        gpu_lock: Existing lock file shared with the command line.
 
     Returns:
         0 once the queue is empty.
+
+    Raises:
+        MissingGpuLockError: If `gpu_lock` does not exist and a job is queued.
     """
     with hold(layout.state_lock):
         for interrupted in lifecycle.clear_dead_worker(layout, now()):
             _log(interrupted.request_id, "failed interrupted")
-    while run_one(layout, engine_cmd, now, poll_s=poll_s, models_dir=models_dir):
-        pass
+    while run_one(layout, engine_cmd, now, poll_s=poll_s, models_dir=models_dir, gpu_lock=gpu_lock):
+        time.sleep(poll_s)
     return 0
