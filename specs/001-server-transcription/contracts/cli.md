@@ -39,8 +39,7 @@
 | 조건 | 동작 |
 |---|---|
 | `STT_GPU_LOCK` 이 없다(다른 기계, Windows) | 잠금 없이 지금처럼 돈다 |
-| 있고, 장치가 `cuda` 로 정해졌다 | GPU 를 쓰기 전에(화자 구분 파이프라인·모델 적재 전) 그 파일을 읽기 전용으로 열어 배타 잠금을 건다. 이미 잡혀 있으면 stderr 에 `GPU is in use by another stt job; waiting for it to finish.` 를 한 번 쓰고 기다린다. 끝나면 놓는다 |
-| 있고, 장치가 `cpu` | 잠그지 않는다(GPU 를 쓰지 않는다) |
+| 있다 | GPU 를 쓰기 전에(화자 구분 파이프라인·모델 적재 전) 그 파일을 읽기 전용으로 열어 배타 잠금을 건다. 이미 잡혀 있으면 stderr 에 `GPU is in use by another stt job; waiting for it to finish.` 를 한 번 쓰고 기다린다. 끝나면 놓는다 |
 | 있는데 파일이 없다 | 시작 전에 멈춘다: `STT_GPU_LOCK points to a missing file: <path>` (종료 코드 2) — 배포가 어긋난 것이므로 조용히 잠금 없이 돌지 않는다 |
 
 - 대상: `stt transcribe`(그리고 그것을 부르는 `stt batch`, 묶음마다), `stt enroll`.
@@ -50,7 +49,11 @@
 - 잠금은 모델을 GPU 에 올려 둔 동안 내내 쥔다 — 메모리를 차지하는 동안이 겹치면 안 되는 구간이기 때문이다.
 - 서버의 NixOS 모듈이 `STT_GPU_LOCK=/run/stt/gpu.lock` 을 시스템 환경 변수로 둔다([module.md](module.md)).
 
-## 3. 명령줄의 다른 변경 — 말없던 CPU 화자 구분의 경고 (spec US4-5)
+## 3. 명령줄의 다른 변경 — GPU 전용 (spec US4-5·US4-6, FR-041, research R22)
 
-`stt transcribe --diarize`·`stt enroll` 이 GPU 로 정해졌는데 torch 가 CUDA 를 쓰지 못하면, 지금처럼 CPU 로 계속하되 stderr 에 한 번 쓴다:
-`Speaker diarization is running on CPU because torch cannot use CUDA; it will be much slower.` 그 밖의 출력은 바뀌지 않는다(FR-040).
+- `--device` 는 `auto`·`cuda` 만 받는다(둘 다 GPU). `cpu` 는 argparse 가 거절한다(종료 2). `stt batch` 의 `device` 설정도 같은 두 값만 받는다.
+- CUDA 장치가 없으면(`ctranslate2.get_cuda_device_count() == 0`) 모델을 올리기 전에 stderr 에 `No usable GPU was found; stt runs on the GPU only.`
+  를 쓰고 종료 1.
+- 화자 구분·목소리 등록에서 torch 가 CUDA 를 쓰지 못하면 CPU 로 넘어가지 않고 `Speaker diarization needs a GPU, but torch cannot use CUDA; stt
+  runs on the GPU only.` 로 멈춘다(종료 1). 예전의 CPU 경고 문구는 없어진다(R17 의 명령줄 부분을 대체).
+- GPU 메모리 부족 때 더 작은 모델로 넘어가는 명령줄 폴백(장치가 아니라 모델)과 그 밖의 출력은 바뀌지 않는다(FR-040).

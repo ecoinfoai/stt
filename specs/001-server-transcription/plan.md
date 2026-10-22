@@ -47,7 +47,7 @@ Nix — uv2nix·pyproject.nix·build-system-pkgs(R1: 휠만으로 빌드·망 �
 | II. 교내 처리 | 받기·워커·청소 단위 `PrivateNetwork=true`(R2). 외부 접속은 모델 받기 단위뿐 — 녹음을 다루지 않고, 부팅마다 돌되 받아 둔 고정 목록이 같으면 망에 닿지 않는다(R9). LLM 호출 없음. 입력은 inbox 의 파일뿐 | 통과 |
 | III. 삭제 보장 | 삭제 시각 계산(data-model §5·§6), 끝 상태로 가는 길 하나(`lifecycle.finish`, R20-9), 워커와 따로 도는 청소 단위(`AccuracySec=1s`), 엔진 하위 프로세스를 죽여 즉시 지우기, `MemorySwapMax=0`·`LimitCORE=0`·워커 `RemoveIPC`, 암호화 루트·백업 제외(R14), 이용자별 보관 없음, `화자N` 만. 경로마다 시험(quickstart A·B) | 통과 |
 | IV. 원문 무결성 | 전사록은 엔진 출력 그대로. 교정 규칙 없음. 불확실 표시·문단 시각 유지 | 통과 |
-| V. 말없는 실패 금지 | 정해진 실패 이유 11개(data-model §9), 작은 모델·CPU 로 대신하지 않음, 판정 재확인 뒤에만 게시, 경계 검사(스키마 + 의미, 링크·일반 파일 확인), 반영분만 엔진에 넣어 힌트 반영 수가 정의상 맞음(R20-10), 고정 모델 판 확인(R9). 명령줄의 기존 말없는 CPU 화자 구분은 이 기능이 같은 함수를 고치므로 경고를 더해 닫는다(R17, US4-5) | 통과 |
+| V. 말없는 실패 금지 | 정해진 실패 이유 11개(data-model §9), 작은 모델·CPU 로 대신하지 않음, 판정 재확인 뒤에만 게시, 경계 검사(스키마 + 의미, 링크·일반 파일 확인), 반영분만 엔진에 넣어 힌트 반영 수가 정의상 맞음(R20-10), 고정 모델 판 확인(R9). 명령줄도 GPU 전용 — CPU 로 넘어가지 않고 이유와 함께 멈춘다(R22, US4-5·US4-6, 헌법 1.1.0) | 통과 |
 | VI. 계약으로만 | JSON Schema 세 개를 패키지에 싣고 바이트 일치 시험, `schema_version`, 호환 깨짐은 판·핸드오프. bhu-llm 코드 공유 없음. 호스트 연결은 nixos-config | 통과 |
 | VII. 테스트 우선 | 과제마다 RED → GREEN 과 닫는 시나리오(tasks 템플릿). 기본 시험은 GPU·망·모델 없이. 시나리오 시험 이름 `test_us<N>_<n>_...` | 통과 |
 | 저작권·단어장·개인정보 | (1)은 stt 에 오지 않음. 힌트 사본은 job 이 끝나면 지움. 비밀은 agenix 경로로만. 셸 보간 없음(인자 목록) | 통과 |
@@ -82,7 +82,7 @@ src/stt/
 ├── cli.py               # 바뀜: `server` 명령 묶음 등록
 ├── gpu_lock.py          # 새: GPU 잠금(명령줄·워커 공용, STT_GPU_LOCK)
 ├── transcribe.py        # 바뀜: 끝 시각 문단(build_timed_paragraphs), 빈 결과 허용 선택, 화자 문단/글 분리, main 의 GPU 잠금 (R8)
-├── diarize.py           # 바뀜: 오프라인이면 HF_TOKEN 불요 (R8-4), 말없던 CPU 대체에 경고 (R17, US4-5)
+├── diarize.py           # 바뀜: 오프라인이면 HF_TOKEN 불요 (R8-4), CUDA 없으면 멈춤 (R22, US4-6)
 ├── enroll.py            # 바뀜: GPU 잠금
 └── server/              # 새
     ├── __init__.py
@@ -130,7 +130,7 @@ torch 가 올라오므로(R5 측정) 받기의 언어 확인은 `contract.py` �
 | 1. US1 (P1) | 받기(경계 검사·파일 안전·받아들임·대기 순서), 워커(가짜 엔진), 엔진(시작 점검 GPU·모델 판, 가짜 모델: 문단 끝 시각·화자·힌트 반영 수), 결과 게시 | US1 + US5-5·US5-6 |
 | 2. US2 (P1) | 녹음 정책·자정·24시간·결과 만료, 지우기 두 가지, 처리 중 취소, 청소 단계, 죽은 워커 정리 | US2 |
 | 3. US3 (P2) | `from_request`, 같은 요청자 확인, 정책 교체, 대기 중 1차 가리키기 | US3 |
-| 4. US4 (P2) | 명령줄 GPU 잠금(transcribe·batch·enroll, Windows 무해), 워커의 잠금 줄 서기, 말없던 CPU 화자 구분 경고 | US4 |
+| 4. US4 (P2) | 명령줄 GPU 잠금(transcribe·batch·enroll, Windows 무해), 워커의 잠금 줄 서기, GPU 전용 명령줄(R22) | US4 |
 | 5. US5 (P3) | 길이·형식·시간 초과·GPU 메모리·엔진 오류 분류·무음·짧은 녹음 | US5 |
 | 6. 배포 | 모델 받기(고정 커밋), 패키지 smoke check → uv2nix 패키지, VM 시험 → NixOS 모듈, CI, README | 경계 사례·FR-015·FR-035·FR-037 |
 | 7. 확인 | 호스트 시험 C(운영자와 함께), 핸드오프 §7, `T-Verify-Final`(project-audit) | SC-001~013 |

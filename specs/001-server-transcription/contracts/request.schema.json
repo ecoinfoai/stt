@@ -35,8 +35,7 @@
         "requested_by",
         "audio",
         "language",
-        "diarize",
-        "delete_audio"
+        "diarize"
       ],
       "properties": {
         "schema_version": { "const": 1 },
@@ -83,10 +82,6 @@
           "maxItems": 200,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/hint" }
-        },
-        "delete_audio": {
-          "description": "after_job: delete the recording right after this job ends. at_midnight: keep it until the next 00:00 Asia/Seoul. Never longer than 24 hours after it was first received.",
-          "enum": ["after_job", "at_midnight"]
         }
       }
     },
@@ -98,8 +93,7 @@
         "kind",
         "request_id",
         "requested_by",
-        "target",
-        "scope"
+        "target"
       ],
       "properties": {
         "schema_version": { "const": 1 },
@@ -107,12 +101,8 @@
         "request_id": { "$ref": "#/$defs/request_id" },
         "requested_by": { "$ref": "#/$defs/requested_by" },
         "target": {
-          "description": "request_id of the transcribe request to delete from.",
+          "description": "request_id of a transcribe request. Deletes its recording now, together with the temporary audio, hint copy and result of every job that uses that recording.",
           "$ref": "#/$defs/request_id"
-        },
-        "scope": {
-          "description": "result: delete the job's result files only. everything: delete the recording, temporary audio, hint copy and result now.",
-          "enum": ["result", "everything"]
         }
       }
     }

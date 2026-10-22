@@ -210,7 +210,7 @@ lib.genAttrs (lib.filter (lib.hasPrefix "nvidia-") (lib.attrNames prev))
   쓸 단위만 갖는다).
 - **대안**: 상주 데몬 하나(GPU 계산을 멈출 수 없고, 데몬이 멈추면 삭제도 멈춘다), HTTP 서비스(열린 포트 — bhu-llm 이 이미 기각).
 
-## R11. 지우기 요청 두 가지 — spec 보정
+## R11. 지우기 요청 두 가지 — spec 보정 (R22 가 대체)
 
 - **결정**: `scope: result`(결과 지우기)와 `scope: everything`(지금 지우기). spec FR-005·FR-033·US2-6·US2-12 를 고쳤다.
 - **근거**: 운영자 결정 「가져가면 지운다 — 「지금 지우기」로」를 그대로 따르면, bhu-llm 이 1차 결과를 가져가며 녹음까지 지워 2차 전사를 할 수
@@ -255,7 +255,7 @@ lib.genAttrs (lib.filter (lib.hasPrefix "nvidia-") (lib.attrNames prev))
 - 전사록 머리글과 `화자N` 은 기존 코드가 만드는 한국어 산출물이다. 이 기능은 그 글자를 새로 쓰지 않는다 — 시험은 상수 대신
   `speaker_label("SPEAKER_00")` 을 불러 비교한다(헌법 TODO(KOREAN_PRODUCT_TEXT)).
 
-## R17. 명령줄에 이미 있는 말없는 대체 — 엔진은 막고, 명령줄은 경고한다
+## R17. 명령줄에 이미 있는 말없는 대체 — 엔진은 막고, 명령줄은 경고한다 (명령줄 부분은 R22 가 대체)
 
 - 🟢 `load_pipeline` 은 torch 가 CUDA 를 못 보면 말없이 CPU 로 화자 구분을 한다(`src/stt/diarize.py:562-563`). 헌법 V 위반이다.
   엔진은 화자 구분을 할 때 torch 의 CUDA 를 먼저 확인하고 없으면 `gpu_unavailable` 로 끝낸다.
@@ -363,3 +363,30 @@ lib.genAttrs (lib.filter (lib.hasPrefix "nvidia-") (lib.attrNames prev))
 19. **`delete_after`**(C9): `delete_policy` 가 `after_job` 이면 반드시 있고(그 정책을 정한 요청), 아니면 없다 — 스키마 조건으로 묶었다.
 20. **`/var/lib/stt` 권한**(F17): systemd `StateDirectoryMode` 기본값은 0755 → 0751 로 둔다.
 21. **패키지 자료**(C15): 스키마가 휠에 실리는지 계약 시험이 `uv build --wheel` 로 확인한다(Phase 8 까지 기다리지 않는다).
+
+## R22. 삭제 단순화와 GPU 전용 — 운영자 결정 (2026-10-22, 001 병합 뒤)
+
+운영자 결정: 「이용자가 마쳤다고 지우기를 요청하면 녹음과 회의록을 지우고, 아니면 밤 12시 직전에 지운다」, 「늦게 맡겨 끝나지 못하는 작업은
+그대로 실패 — bhu-llm 이 『자정에 유지관리로 작업결과물과 자료가 유실될 수 있으니 자정 이후에 하라』고 알린다」, 「CPU 는 안 된다. 오직 GPU 만
+하고, GPU 가 안 되면 안 되는 것」(명령줄 포함). 처리 시간 상한(R12)과 1차 전에 온 2차 받기(R13), 저장 위치(R14)는 그대로 확정.
+
+- **결정 — 삭제**: 지우기는 「다 지우기」 요청과 매일 정리 둘뿐이다. 요청의 `delete_audio`, delete 의 `scope`, 응답의 `audio.delete_policy`·
+  `audio.delete_after`·`failure.cause`, delete 답의 `no_result` 를 없앤다. 모든 기한은 `next_purge(t)` = t 보다 뒤인 첫 23:58 `Asia/Seoul` 이다
+  (job·응답 `expires_at`, 녹음 `delete_at`). `RETENTION_DUE`(R21-1)는 없어진다.
+- **왜 23:58 인가**: 운영자의 「밤 12시 직전」. 정확히 00:00 이면 00:00 직후에 받은 자료가 다음 날 00:00 + 청소 지연(1분 안)까지 남아 24시간을
+  넘을 수 있다(헌법 III). 23:58 이면 청소가 늦어도 23:59 무렵 끝나 24시간 안이다. 23:58 뒤에 받은 작업은 다음 날 23:58 까지 남는다.
+- **「다 지우기」의 범위**: 대상 job 의 녹음을 쓰는 모든 job(`audio.users`, 같은 요청자)을 `deleted` 로 만든다 — 「음성과 회의록을 지운다」는
+  뜻은 1차·2차를 가리지 않는다. 다른 job 을 `failed(audio_deleted)` 로 만들던 동작(R20-8 `deleted_on_request`)은 없어진다.
+- **job 이 끝나도 녹음을 지우지 않는다**: 「끝나면 바로」가 없으므로 `lifecycle.finish` 는 녹음을 지우지 않는다. 최종 리뷰 I2(after_job 녹음
+  복구)와 남겨 둔 지적(공유 녹음 오삭제 틈)은 대상이 없어진다.
+- **매일 정리 때의 대기·처리 중 job**: 지금 구조(녹음 기한 도래 → `failed(audio_deleted)` → 같은 청소의 만료 단계가 job 째 삭제)를 그대로 쓴다.
+  `audio_deleted` 는 남지만 원인 칸은 필요 없다(원인이 하나뿐이다). 계약 §7 「응답이 사라지면 만료로 본다」가 호출하는 쪽의 기준이다.
+- **결정 — GPU 전용**: 명령줄 `transcribe`·`batch`·`enroll` 과 화자 구분은 GPU 로만 돈다. `--device` 는 `auto`·`cuda` 만 받는다(둘 다 GPU —
+  `auto` 는 기존 명령을 깨지 않으려고 남긴다, `cpu` 는 argparse 가 거절한다). GPU 를 쓸 수 없으면 모델을 올리기 전에 영어 고정 문구로 멈추고
+  0 아닌 코드로 끝난다(전사: ctranslate2 CUDA 장치 0개, 화자 구분·목소리 등록: torch 가 CUDA 를 못 씀). CPU 기본 모델(`small`)·CPU 경고·
+  `--device cpu` 안내 문구를 없앤다. GPU 잠금은 언제나 쥔다. GPU 메모리 부족 때 더 작은 모델로 넘어가는 명령줄 폴백(장치가 아니라 모델)은
+  그대로다(FR-040).
+- **대안**: 00:00 정리(24시간을 1분 넘길 수 있어 기각), 정리 때 대기 job 을 다음 날로 넘기기(운영자가 「그대로 실패」로 정함), 「다 지우기」를
+  대상 job 하나로 한정(이용자 뜻과 어긋남), 명령줄 CPU 경고 유지(운영자가 금지).
+- **시험**: 기존 시험 가운데 CPU 실행을 전제한 것만 바꾼다(SC-013). `RETENTION_DUE`·삭제 정책을 다루던 001 시험은 새 규칙으로 바꾼다.
+

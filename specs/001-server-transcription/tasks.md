@@ -15,7 +15,7 @@ description: "Task list for 001-server-transcription"
 
 **Organization**: 이야기별 단계. 기반(Phase 2)이 끝나야 이야기를 시작한다.
 
-**보정 이력**: 2026-10-22 `/speckit-analyze` 지적 36건과 보정 중 발견 1건(research R19·R20), 두 번째 분석 지적 38건(research R21)을 반영했다.
+**보정 이력**: 2026-10-22 `/speckit-analyze` 지적 36건과 보정 중 발견 1건(research R19·R20), 두 번째 분석 지적 38건(research R21)을 반영했다. 병합 뒤 운영자 결정(research R22 — 삭제 단순화·GPU 전용)은 Phase 10 이다.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -486,8 +486,59 @@ description: "Task list for 001-server-transcription"
   (1시간 녹음 1차·2차), SC-002 connect 시도 0(strace), R2 `[VERIFY]`(GPU 장치 넷으로 엔진이 GPU 를 봄) 닫기, 재부팅 뒤 첫 job(`nvidia_uvm`),
   SC-005·SC-007·SC-010, FR-037, 경계 사례 6(C-7: 망 없는 환경에서 화자 구분 전사 완료), 모델 받기 단위가 판이 바뀐 배포에서 다시 도는지(R9 `[VERIFY]`). RED 해당 없음 — 운영 확인 — closes 경계 사례 6, supports SC-001, SC-002, SC-007
 - [ ] T077 `docs/handoff/bhu-llm-2026-10-15.md` §7 의 S1–S11 칸을 T076 결과와 계약 위치로 채우고, 호출하는 쪽에 넘길 계약 요점(응답 꼴 두 가지,
-  `cause`, 파일 권한 0640·0660, 5분 응답 없음 = 실패, 응답이 사라지면 만료, `expires_at`·24시간 `delete_at` 은 23시간 58분, 결과 지우기 뒤 2차)을 적는다. RED 해당 없음 — 문서 — supports 헌법 VI
+  파일 권한 0640·0660, 5분 응답 없음 = 실패, 응답이 사라지면 만료, 지우기는 「다 지우기」와 매일 23:58 정리뿐(R22), 「GPU 없음」과 매일 정리의
+  이용자 안내는 호출하는 쪽 몫)을 적는다. RED 해당 없음 — 문서 — supports 헌법 VI
 - [ ] T078 T-Verify-Final: `project-audit` 을 한 번 돌리고, 지적을 고치거나 이유와 함께 기록한다(헌법 「개발 환경과 흐름」). RED 해당 없음 — 감사 — supports 헌법 「개발 환경과 흐름」
+
+---
+
+## Phase 10: 운영자 결정 R22 — 삭제 단순화와 GPU 전용 (2026-10-22, 병합 뒤)
+
+**Purpose**: spec 개정(`b0112ae`, 헌법 1.1.0)을 코드에 옮긴다. 근거: research R22, data-model §1·§2.2·§2.3·§3·§4·§5·§6·§9, 계약 스키마(이미 고침 —
+`contracts/*.schema.json` 과 `src/stt/server/schemas/` 사본이 같다). 001 의 다른 규칙(위 「모든 과제에 걸리는 규칙」)이 그대로 걸린다.
+시나리오 번호는 개정된 spec 의 것이다 — 이름이 옛 번호인 시험은 새 번호로 고쳐 단다.
+
+### 서버: 「다 지우기」와 매일 정리 (US2, US3)
+
+- [ ] T079 [US2] 서버 시험을 새 규칙으로 바꾼다 — RED: `tests/server/test_deadlines.py`(`next_purge`: KST 23:57:59 → 그날 23:58, 23:58:00 →
+  다음 날 23:58, 23:58:01 → 다음 날, UTC 로 돌려줌; `RETENTION_DUE`·`next_midnight` 없음), `test_contract.py`(`delete_audio` 있는 transcribe·`scope`
+  있는 delete → `invalid_request`, 없는 것은 통과; 응답 `audio` 에 `delete_policy` 가 있으면·delete 답에 `scope`·`no_result` 가 있으면·`failure`
+  에 `cause` 가 있으면 스키마 위반), `test_us2.py`(개정 US2-1…10 을 `test_us2_<n>_…` 로 — 2 는 1차·2차 둘 다 `deleted` 이고 녹음·두 결과 0개, 5 는
+  완료·실패·대기·처리 중 job 이 23:58 직후 응답·기록·결과·녹음 0개, 6 은 23:58:30 에 받은 job 이 그날 정리 뒤 남고 다음 날 23:58 에 사라짐),
+  `test_us3.py`(개정 US3-1…4), `test_edge_cases.py`(경계 사례 2·3·8 새 문구), `test_lifecycle.py`·`test_records.py`·`test_responses.py`·
+  `test_intake.py`·`test_logging.py`·`conftest.py`·`inbox_helpers.py`(요청에서 `delete_audio`·`scope` 를 뺀다). 옛 규칙만 확인하던 시험
+  (「끝나면 바로」·「결과 지우기」·`no_result`·`retention_limit`·`cause`·I2 after_job 복구)은 지운다 — 보고서에 지운 시험 이름을 적는다.
+  SC-003 표(지우는 길 2 × 종료 3)를 시험 하나로 둔다 — closes US2-1…10, US3-1…4, 경계 사례 2·3·8, SC-003, SC-004, SC-005 — verify RED
+- [ ] T080 [US2] 서버 구현 — `deadlines.next_purge`(23:58 `Asia/Seoul`, data-model §1) 로 모든 기한을 바꾸고 `RETENTION_DUE`·`next_midnight`
+  을 없앤다; `records`(Job 의 `delete_audio`, Audio 의 `policy`·`hard_deadline` → `delete_at`, `deleted_by` ∈ {`purge`,`request`});
+  `responses`(`audio` = `{delete_at, deleted_at?}`, delete 답에 `scope` 없음, `failure` 에 `cause` 없음); `lifecycle`(`finish` 가 녹음을 지우지
+  않음, `delete_result` 없앰, 「다 지우기」가 `audio.users` 의 모든 job 을 `deleted` 로 — 대기 표시·힌트·결과·작업 폴더 정리, 처리 중이면 워커가
+  엔진을 멈춤, 녹음 기한 도래 때 대기·처리 중 job 은 `failed(audio_deleted)`); `intake`(정책 설정·`scope` 분기 없앰); `worker`·`sweep`(기한 판정을
+  `delete_at` 으로, 청소 차례는 그대로). 이 기능에서 생긴 남은 지적(I2 「기록 없음」 갈래)은 대상이 없어지므로 함께 없앤다 — turns T079 GREEN
+- [ ] T081 [P] 서버 배포·문서 — `nix/vm-test.nix` 의 요청에서 `delete_audio`·`scope` 를 빼고 지우기 확인을 「다 지우기」로 바꾼다(매일 정리는
+  VM 시계를 옮기지 않으면 볼 수 없으므로 pytest 몫); `quickstart.md`·`contracts/README.md`(요청·응답 설명, §7 「응답이 사라지면 만료」 곁에 매일
+  정리)·`README.md` 서버 절을 R22 로 고친다. 확인: `nix build .#checks.x86_64-linux.server-vm -L` 통과, `rg -n 'delete_audio|at_midnight|after_job|
+  no_result|retention_limit|RETENTION_DUE|23h58|23 h 58' src tests nix specs/001-server-transcription/{quickstart.md,contracts} README.md` 0건.
+  RED 해당 없음 — 배포 선언·문서 (VM 시험이 확인) — supports US2-1, US2-3, FR-005
+
+### 명령줄: GPU 전용 (US4)
+
+- [ ] T082 [US4] 명령줄 시험 — RED: `tests/test_transcribe.py` 에 `--device cpu` → argparse 오류(종료 2); GPU 없음(`ctranslate2.get_cuda_device_count`
+  → 0)에서 `--device auto`·`cuda` 모두 모델을 올리기 전에 stderr 에 `No usable GPU was found; stt runs on the GPU only.` 를 내고 종료 1(모델 적재
+  함수가 불리지 않음), GPU 잠금은 장치와 상관없이 쥠; `tests/test_diarize.py` 에 torch 가 CUDA 를 못 쓰면 `load_pipeline` 이 `RuntimeError(
+  "Speaker diarization needs a GPU, but torch cannot use CUDA; stt runs on the GPU only.")` 을 내고 CPU 경고는 없음; `enroll`(torch CUDA 없음 →
+  같은 문구, 종료 1)·`batch`(설정 `device: cpu` → 실행 전에 거절) 시험. 기존 시험 가운데 CPU 실행을 전제한 것(CPU 경고·`small` 기본 모델·`detect_device("cpu")`
+  등)만 GPU 전용 동작에 맞게 바꾸고 보고서에 이름과 까닭을 적는다(SC-013) — closes US4-5, US4-6, SC-014 — verify RED
+- [ ] T083 [US4] 명령줄 구현 — `transcribe`·`enroll` 의 `--device` 는 `auto`·`cuda` 만, `detect_device` 는 CUDA 장치가 없으면 위 문구로 멈춤(CPU 를
+  돌려주지 않음), `CPU_DEFAULT_MODEL`·CPU 갈래·CPU 경고·`--device cpu` 안내 문구를 없앰, `diarize.load_pipeline` 은 CUDA 가 없으면 위 오류,
+  `batch` 는 `device` 설정을 같은 두 값으로 검사; 고치는 함수의 docstring 은 영어로. GPU 메모리 부족 때 작은 모델로 넘어가는 폴백은 그대로(FR-040).
+  `README.md`·`INSTALL.md` 의 CPU 안내(CPU-only 서버 절, `--device` 표, 문제 해결 표)를 GPU 전용으로 고친다 — turns T082 GREEN
+
+### 확인
+
+- [ ] T084 언어 규칙(T074 와 같은 `rg`) 0건, `uv run python -m pytest -q` 전부 통과, 개정 spec 의 시나리오(US1 8 · US2 10 · US3 4 · US4 6 · US5 9 = 37개)
+  와 경계 사례 8개가 각각 시험 하나 이상에 대응(`rg -o 'def test_(us[1-5]_[0-9]+|edge_[1-8])_' tests`), Python 3.10 환경에서도 전부 통과,
+  `nix flake check --no-build` 통과. RED 해당 없음 — 확인 — supports SC-012, SC-013
 
 ---
 
