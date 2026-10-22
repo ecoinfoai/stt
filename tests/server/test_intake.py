@@ -116,22 +116,6 @@ def test_next_run_rewrites_earlier_queued_responses(layout: Layout, wav: Path) -
     assert load_job(layout, second).seq == 2
 
 
-def test_from_request_is_temporarily_failed_invalid_request(
-    layout: Layout, capfd: pytest.CaptureFixture[str]
-) -> None:
-    request_id = new_id()
-    body = transcribe_body(request_id, audio={"from_request": new_id()})
-    put_body(layout.inbox, f"{request_id}.json", body)
-
-    intake.run_once(layout, FakeClock().now)
-
-    response = read_response(layout, request_id)
-    assert contract.validate_response(response) is None
-    assert response["state"] == "failed"
-    assert response["failure"] == {"reason": "invalid_request", "detail": "from_request is not supported."}
-    assert capfd.readouterr().out.splitlines() == [f"{request_id} failed invalid_request"]
-
-
 def test_refusal_log_line_carries_only_id_and_state(layout: Layout, capfd: pytest.CaptureFixture[str]) -> None:
     request_id = new_id()
     (layout.inbox / f"{request_id}.json").write_bytes(b"{")

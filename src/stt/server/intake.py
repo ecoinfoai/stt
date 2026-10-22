@@ -27,6 +27,7 @@ from stt.server.layout import (
 from stt.server.records import (
     Audio,
     Job,
+    load_audio,
     load_job,
     load_jobs,
     next_seq,
@@ -53,7 +54,7 @@ _NAME_MISMATCH_DETAIL = "request_id: must equal the file name"
 _ATTACHMENT_NAME_DETAIL = "audio.file: name must start with the request id"
 _ATTACHMENT_DETAIL = "audio.file: attachment is missing or not a safe regular file"
 _LANGUAGE_DETAIL = "language: language is not supported"
-_FROM_REQUEST_DETAIL = "from_request is not supported."
+_SOURCE_UNAVAILABLE_DETAIL = "The source recording is not available."
 
 
 def probe_duration(path: Path) -> float:
@@ -131,9 +132,13 @@ def _refuse(layout: Layout, request_id: str, detail: str, now: datetime) -> None
     _log(request_id, "refused")
 
 
+def _fail(layout: Layout, request_id: str, reason: str, detail: str, now: datetime) -> None:
+    _answer(layout, rejected_status(request_id, reason, detail, now))
+    _log(request_id, f"failed {reason}")
+
+
 def _reject(layout: Layout, request_id: str, detail: str, now: datetime) -> None:
-    _answer(layout, rejected_status(request_id, "invalid_request", detail, now))
-    _log(request_id, "failed invalid_request")
+    _fail(layout, request_id, "invalid_request", detail, now)
 
 
 def _delete_outcome(layout: Layout, body: dict[str, Any], now: datetime) -> str:
@@ -172,6 +177,13 @@ def _copy_attachment(source: BinaryIO, folder: Path, extension: str) -> Path:
     return target
 
 
+def _policy(body: dict[str, Any], now: datetime) -> dict[str, str | datetime]:
+    """Returns the recording policy that the request `body`, accepted at `now`, asks for."""
+    if body["delete_audio"] == "after_job":
+        return {"after_job": body["request_id"]}
+    return {"at": deadlines.next_midnight(now)}
+
+
 def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetime) -> None:
     request_id: str = body["request_id"]
     attachment_name: str = body["audio"]["file"]
@@ -182,11 +194,6 @@ def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetim
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
-    policy: dict[str, str | datetime] = (
-        {"after_job": request_id}
-        if body["delete_audio"] == "after_job"
-        else {"at": deadlines.next_midnight(now)}
-    )
     hints = body.get("hints")
     with hold(layout.state_lock):
         job = Job(
@@ -211,7 +218,7 @@ def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetim
                 owner=body["requested_by"],
                 received_at=now,
                 hard_deadline=deadlines.hard_deadline(now),
-                policy=policy,
+                policy=_policy(body, now),
                 users=(request_id,),
             ),
         )
@@ -221,11 +228,70 @@ def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetim
     _log(request_id, "queued")
 
 
+def _usable_source(layout: Layout, body: dict[str, Any], now: datetime) -> Job | None:
+    """Returns the earlier job whose recording the request may reuse, or None; the state lock is held.
+
+    A recording whose delete time has passed is deleted here first, without waiting for the sweep.
+    """
+    source_id = body["audio"]["from_request"]
+    if not (layout.jobs / source_id / "job.json").exists():
+        return None
+    source = load_job(layout, source_id)
+    if source.requested_by != body["requested_by"]:
+        return None
+    audio = load_audio(layout, source.audio_id)
+    cause = lifecycle.due_cause(audio, now)
+    if cause is not None:
+        for failed in lifecycle.delete_audio(layout, audio.audio_id, cause, now):
+            _log(failed.request_id, "failed audio_deleted")
+        return None
+    return source if audio.deleted_at is None else None
+
+
+def _accept_second_pass(layout: Layout, body: dict[str, Any], source: Job, now: datetime) -> None:
+    """Queues a job on the source's recording and hands the recording's policy to this request; the state lock is held."""
+    request_id: str = body["request_id"]
+    hints = body.get("hints")
+    job = Job(
+        request_id=request_id,
+        requested_by=body["requested_by"],
+        seq=next_seq(load_jobs(layout)),
+        accepted_at=now,
+        audio_id=source.audio_id,
+        language=body["language"],
+        diarize=body["diarize"],
+        hints=None if hints is None else tuple(hints),
+        delete_audio=body["delete_audio"],
+        duration_s=source.duration_s,
+        state="queued",
+        expires_at=deadlines.expires_at(now),
+    )
+    audio = load_audio(layout, source.audio_id)
+    audio = replace(audio, policy=_policy(body, now), users=(*audio.users, request_id))
+    save_audio(layout, audio)
+    save_job(layout, job)
+    lifecycle.create_marker(layout, job)
+    lifecycle.write_users_responses(layout, audio, now)
+    lifecycle.rewrite_queued_responses(layout, now)
+    _log(request_id, "queued")
+
+
+def _process_from_request(layout: Layout, request_id: str, body: dict[str, Any], now: datetime) -> None:
+    if not contract.language_supported(body["language"]):
+        _reject(layout, request_id, _LANGUAGE_DETAIL, now)
+        return
+    with hold(layout.state_lock):
+        source = _usable_source(layout, body, now)
+        if source is not None:
+            _accept_second_pass(layout, body, source, now)
+            return
+    _fail(layout, request_id, "source_unavailable", _SOURCE_UNAVAILABLE_DETAIL, now)
+
+
 def _process_transcribe(layout: Layout, request_id: str, body: dict[str, Any], now: datetime) -> None:
     audio = body["audio"]
     if "file" not in audio:
-        supported = contract.language_supported(body["language"])
-        _reject(layout, request_id, _FROM_REQUEST_DETAIL if supported else _LANGUAGE_DETAIL, now)
+        _process_from_request(layout, request_id, body, now)
         return
     if not audio["file"].startswith(f"{request_id}{_ATTACHMENT_INFIX}"):
         _reject(layout, request_id, _ATTACHMENT_NAME_DETAIL, now)

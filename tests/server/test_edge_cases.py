@@ -14,7 +14,7 @@ from stt.server import contract, intake
 from stt.server.layout import Layout, hold
 from stt.server.records import load_job
 
-from .conftest import FakeClock, leftovers, make_wav, new_id, run_sweep, run_worker, set_to_ctime_plus, write_delete_request
+from .conftest import FakeClock, leftovers, make_wav, new_id, run_sweep, run_worker, run_worker_once, set_to_ctime_plus, write_delete_request
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, put_bytes, read_response, transcribe_body
 
 
@@ -372,3 +372,30 @@ def test_rejected_and_delete_responses_expire_after_24h(layout: Layout, wav: Pat
         clock.advance(1)
         run_sweep(layout, clock)
         assert not (layout.outbox / f"{name}.json").exists()
+
+
+def test_edge_7_second_pass_on_pending_first_runs_after_it(layout: Layout, wav: Path) -> None:
+    clock = FakeClock()
+    first = new_id()
+    put_attachment(layout.inbox, f"{first}.audio.wav", wav)
+    put_body(layout.inbox, f"{first}.json", transcribe_body(first, delete_audio="at_midnight"))
+    intake.run_once(layout, clock.now)
+    assert read_response(layout, first)["state"] == "queued"
+    second = new_id()
+    body = transcribe_body(second, audio={"from_request": first}, delete_audio="after_job")
+    put_body(layout.inbox, f"{second}.json", body)
+
+    intake.run_once(layout, clock.now)
+
+    queued = read_response(layout, second)
+    assert contract.validate_response(queued) is None
+    assert (queued["state"], queued["queue_position"]) == ("queued", 2)
+    assert read_response(layout, first)["queue_position"] == 1
+    assert run_worker_once(layout, clock)
+    assert (read_response(layout, first)["state"], read_response(layout, second)["state"]) == ("done", "queued")
+    assert read_response(layout, second)["queue_position"] == 1
+    assert (layout.audio / first / "audio.wav").is_file()
+    assert run_worker_once(layout, clock)
+    assert read_response(layout, second)["state"] == "done"
+    assert not (layout.audio / first).exists()
+    assert leftovers(layout.root) == []

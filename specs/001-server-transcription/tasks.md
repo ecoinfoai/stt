@@ -322,7 +322,7 @@ description: "Task list for 001-server-transcription"
 
 ### Tests for User Story 3 (MANDATORY - write first) ⚠️
 
-- [ ] T044 [P] [US3] `tests/server/test_us3.py` — RED(지금은 `invalid_request` 로 거절된다):
+- [X] T044 [P] [US3] `tests/server/test_us3.py` — RED(지금은 `invalid_request` 로 거절된다):
   `test_us3_1_second_pass_reuses_first_audio`(첨부 없이 `done`, 엔진의 `spec.json` 이 1차 녹음 경로를 가리킴);
   `test_us3_2_after_job_second_pass_deletes_shared_audio`(2차 완료 직후 녹음 없음, 1차 응답의 `audio.deleted_at` 도 갱신);
   `test_us3_3_deleted_source_refused`(`source_unavailable`); `test_us3_4_other_requester_source_refused_without_disclosure`(답이 「없는 job」의 답과
@@ -331,16 +331,16 @@ description: "Task list for 001-server-transcription"
   `test_delete_everything_fails_other_users_of_audio`(같은 녹음을 기다리던 2차 → `failed(audio_deleted)`, `cause: deleted_on_request` — 공유 녹음은
   `from_request` 로만 생기므로 이 단계에서 시험한다); `test_edge_8_second_pass_after_deadline_before_sweep_refused`(1차 `at_midnight`, 00:00:30 에 2차,
   청소 없음 → `source_unavailable`, 녹음 없음, 1차 응답 `audio.deleted_at`·원인 midnight — R21-7) — closes US3-1…US3-6, 경계 사례 8(받기 쪽), SC-006 — verify RED
-- [ ] T045 [P] [US3] `tests/server/test_edge_cases.py` 에 `test_edge_7_second_pass_on_pending_first_runs_after_it` — 1차가 `queued` 인 동안 2차를 받아들이고
+- [X] T045 [P] [US3] `tests/server/test_edge_cases.py` 에 `test_edge_7_second_pass_on_pending_first_runs_after_it` — 1차가 `queued` 인 동안 2차를 받아들이고
   (`queue_position` 2), 워커가 1차 → 2차 순으로 처리 — closes 경계 사례 7 — verify RED
 
 ### Implementation for User Story 3 (turn T044–T045 GREEN)
 
-- [ ] T046 [US3] `src/stt/server/intake.py`: `from_request` 분기 — 원래 job 이 있고 같은 요청자이고 녹음이 지워지지 않았을 때만 받음, 아니면
+- [X] T046 [US3] `src/stt/server/intake.py`: `from_request` 분기 — 원래 job 이 있고 같은 요청자이고 녹음이 지워지지 않았을 때만 받음, 아니면
   `failed(source_unavailable)`(셋을 가르지 않는 같은 detail); 받으면 `Job.audio_id` = 원래 녹음, 녹음의 `policy` 를 이 요청 것으로 바꾸고 `users` 에 더함,
   그 녹음을 쓰는 모든 job 의 응답 갱신. 그 녹음의 삭제 시각이 지났으면 받기 전에 그 원인으로 `lifecycle.delete_audio` 를 부르고
   `source_unavailable`(R21-7). 임시 거절 삭제 — turns T044, T045 GREEN — closes US3-1, US3-3, US3-4, US3-6, 경계 사례 7·8
-- [ ] T047 [US3] `src/stt/server/worker.py`·`src/stt/server/responses.py`: 엔진 `spec.json` 의 `audio_path`·`original_name` 을 job 의 `audio_id` 녹음에서
+- [X] T047 [US3] `src/stt/server/worker.py`·`src/stt/server/responses.py`: 엔진 `spec.json` 의 `audio_path`·`original_name` 을 job 의 `audio_id` 녹음에서
   가져오고, 응답의 `audio.delete_at` 을 그 job 기준(data-model §5)으로 — turns `test_us3_1`, `test_us3_5` GREEN (T044) — closes US3-1, US3-2, US3-5
 - [ ] T048 [US3] US3 확인: 전체 시험 통과. RED 해당 없음 — 확인 — closes US3-1…US3-6, 경계 사례 7, SC-006
 

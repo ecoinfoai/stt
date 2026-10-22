@@ -113,6 +113,13 @@ def due_cause(audio: Audio, now: datetime) -> str | None:
     return "retention_limit"
 
 
+def write_users_responses(layout: Layout, audio: Audio, now: datetime) -> None:
+    """Rewrites the response of every job that uses `audio`."""
+    for job in load_jobs(layout):
+        if job.request_id in audio.users:
+            write_job_response(layout, job, now)
+
+
 def _remove_audio(layout: Layout, audio: Audio, deleted_by: DeletedBy, now: datetime) -> Audio:
     """Deletes the file folder, keeps the record with the deletion marks, refreshes the users' responses."""
     folder = layout.audio / audio.audio_id
@@ -120,9 +127,7 @@ def _remove_audio(layout: Layout, audio: Audio, deleted_by: DeletedBy, now: date
         shutil.rmtree(folder)
     removed = replace(audio, deleted_at=now, deleted_by=deleted_by)
     save_audio(layout, removed)
-    for job in load_jobs(layout):
-        if job.request_id in audio.users:
-            write_job_response(layout, job, now)
+    write_users_responses(layout, removed, now)
     return removed
 
 
