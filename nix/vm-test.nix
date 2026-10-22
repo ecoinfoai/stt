@@ -25,6 +25,15 @@ let
     printf 'this is not audio\n' > $out/corrupt.mp3
   '';
 
+  # Stands in for the NVIDIA driver library at /run/opengl-driver/lib: loading it never
+  # returns, so the engine stays in its GPU check and the job stays `running`.
+  hangingCuda = pkgs.runCommandCC "stt-vm-hanging-libcuda" { } ''
+    mkdir -p $out/lib
+    printf '#include <unistd.h>\n__attribute__((constructor)) static void hang(void) { sleep(600); }\n' > hang.c
+    $CC -shared -fPIC -o $out/lib/libcuda.so.1 hang.c
+    ln -s libcuda.so.1 $out/lib/libcuda.so
+  '';
+
   # Leaves what a worker killed mid-job leaves: a `running` record, its recording and
   # a work folder with a temporary WAV, with no worker holding worker.lock.
   deadWorker = pkgs.writeText "stt-dead-worker.py" ''
@@ -268,6 +277,8 @@ pkgs.testers.runNixOSTest {
         assert prop(worker, "DevicePolicy") == "closed"
         assert prop(worker, "PrivateDevices") == "no"
         assert prop(worker, "RemoveIPC") == "yes"
+        assert prop(worker, "KillSignal") == "9", prop(worker, "KillSignal")
+        server.succeed(f"grep -x 'X-RestartIfChanged=false' /etc/systemd/system/{worker}")
         assert prop(worker, "TimeoutStartUSec") == "infinity", prop(worker, "TimeoutStartUSec")
         for unit in ("stt-intake.service", worker):
             assert prop(unit, "StartLimitIntervalUSec") == "0", (unit, prop(unit, "StartLimitIntervalUSec"))
@@ -401,6 +412,24 @@ pkgs.testers.runNixOSTest {
         server.succeed(f"test -d {STATE}/audio/{other['request_id']}")
         inbox_empty()
 
+    with subtest("stopping the worker while the engine runs ends the job interrupted, not engine_error"):
+        server.succeed("mkdir -p /run/opengl-driver && ln -s ${hangingCuda}/lib /run/opengl-driver/lib")
+        stopped = transcribe()
+        submit(stopped)
+        wait_response(stopped["request_id"], lambda doc: doc["state"] == "running", timeout=30)
+        time.sleep(4)
+        server.succeed("rm -r /run/opengl-driver")
+        started = time.monotonic()
+        server.succeed("systemctl stop stt-worker.service")
+        assert time.monotonic() - started < 15, time.monotonic() - started
+        assert response(stopped["request_id"])["state"] == "running", response(stopped["request_id"])
+        server.succeed(f"test -d {STATE}/work/{stopped['request_id']}")
+        sweep()
+        assert failed_with("interrupted")(response(stopped["request_id"]))
+        server.succeed(f"test ! -e {STATE}/work/{stopped['request_id']}")
+        server.succeed(f"test ! -e {STATE}/audio/{stopped['request_id']}")
+        server.succeed(f"test -z \"$(ls -A {STATE}/queue)\"")
+
     with subtest("a busy stage exits 75, which the unit counts as success"):
         server.succeed(f"systemd-run --uid=stt --unit=sweep-hold {FLOCK} {STATE}/sweep.lock {SLEEP} 30")
         server.wait_until_fails(f"flock -n {STATE}/sweep.lock true", timeout=15)
@@ -487,6 +516,7 @@ pkgs.testers.runNixOSTest {
         assert prop(models, "ConditionResult", fetcher) == "yes"
         environment = prop(models, "Environment", fetcher)
         assert "HF_HOME" not in environment and "HF_HUB_OFFLINE" not in environment, environment
+        assert "HF_XET_CACHE=/var/lib/stt-models/xet" in environment.split(), environment
         assert fetcher.succeed(f"grep '^ExecStart=' /etc/systemd/system/{models}").strip().endswith(
             "/bin/stt server fetch-models --models /var/lib/stt-models"
         )
@@ -495,5 +525,10 @@ pkgs.testers.runNixOSTest {
         assert "stt-models.service" in prop(worker, "Wants", fetcher).split()
         fetcher.succeed(f"journalctl -u {models} | grep -F 'Failed to download model repository'")
         fetcher.fail("journalctl --no-pager | grep -F hf_vmtestdummytoken")
+        # A failed model unit runs again whenever the worker starts.
+        fetched_at = prop(models, "ExecMainStartTimestampMonotonic", fetcher)
+        fetcher.succeed("systemctl start stt-worker.service")
+        assert prop(models, "ExecMainStartTimestampMonotonic", fetcher) != fetched_at
+        assert prop("stt-worker.service", "Result", fetcher) == "success"
   '';
 }

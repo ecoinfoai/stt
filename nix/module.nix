@@ -158,7 +158,15 @@ in
           MemoryMax = "12G";
           # Each job has its own processing limit; waiting for the GPU lock has none (FR-016).
           TimeoutStartSec = "infinity";
+          # PID 1 of its PID namespace ignores SIGTERM: the default stop killed only the engine,
+          # the worker then published engine_error and started the next job. Killed at once,
+          # the running job becomes `interrupted` at the next worker start or sweep.
+          KillSignal = "SIGKILL";
         })
+        // {
+          # A deployment does not kill a running transcription; the next start uses the new unit.
+          restartIfChanged = false;
+        }
         // lib.optionalAttrs fetchesModels {
           after = [ "stt-models.service" ];
           wants = [ "stt-models.service" ];
@@ -183,6 +191,8 @@ in
           ExecStart = "${stt} server fetch-models --models ${modelsDir}";
           RemainAfterExit = true;
           EnvironmentFile = cfg.huggingFaceTokenFile;
+          # hf_xet caches under $HF_HOME/xet by default; the unit's home (/var/empty) is read-only.
+          Environment = [ "HF_XET_CACHE=${modelsDir}/xet" ];
           StateDirectory = "stt-models";
           StateDirectoryMode = "0750";
           PrivateDevices = true;
