@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import struct
 import time
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ import pytest
 
 from stt.server import contract, deadlines, intake
 from stt.server.layout import Layout
+from stt.server.records import load_job
 
 from .conftest import FakeClock, leftovers, make_wav, new_id, run_worker
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, put_bytes, read_response, transcribe_body
@@ -207,7 +209,7 @@ def test_us5_2_recording_without_audio_stream_refused(
         def __exit__(self, *exc: object) -> None:
             return None
 
-    monkeypatch.setattr(av, "open", lambda path: NoAudio())
+    monkeypatch.setattr(av, "open", lambda path, **kwargs: NoAudio())
     request_id = _submit_wav(layout, wav, FakeClock())
 
     response = read_response(layout, request_id)
@@ -251,3 +253,86 @@ def test_us5_9_short_recording_gets_five_minute_floor(layout: Layout, tmp_path: 
     assert asked == [pytest.approx(10.0, abs=0.01)]
     assert given == [300.0]
     assert read_response(layout, request_id)["state"] == "done"
+
+
+def _euc_kr_tagged_wav(path: Path, seconds: float = 1.0) -> Path:
+    """Writes a 16 kHz mono PCM WAV whose INAM tag holds EUC-KR bytes, which PyAV cannot decode as UTF-8."""
+    rate = 16000
+    data = bytes(2 * int(rate * seconds))
+    title = "한글".encode("euc-kr") + b"\x00"
+    inam = b"INAM" + struct.pack("<I", len(title)) + title
+    inam += b"\x00" * (len(inam) % 2)
+    info = b"INFO" + inam
+    fmt = b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+    body = b"WAVE" + fmt + b"LIST" + struct.pack("<I", len(info)) + info + b"data" + struct.pack("<I", len(data)) + data
+    path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+    return path
+
+
+def test_us5_2_non_utf8_metadata_does_not_make_the_recording_unreadable(layout: Layout, tmp_path: Path) -> None:
+    tagged = _euc_kr_tagged_wav(tmp_path / "tagged.wav")
+    request_id = _submit_wav(layout, tagged, FakeClock())
+
+    response = read_response(layout, request_id)
+    assert response["state"] == "queued"
+    assert load_job(layout, request_id).duration_s == pytest.approx(1.0, abs=0.01)
+
+
+@pytest.mark.parametrize("fault", ["value_error", "type_error"])
+def test_us5_2_probe_faults_in_the_recording_are_unreadable_not_server_errors(
+    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    import av
+
+    class Broken:
+        duration = None
+
+        class streams:
+            audio = [type("Stream", (), {"time_base": None})()]
+
+        def demux(self, stream: object) -> Any:
+            return [type("Packet", (), {"duration": 5})()]
+
+        def __enter__(self) -> "Broken":
+            if fault == "value_error":
+                raise UnicodeDecodeError("utf-8", b"\xb0", 0, 1, "invalid start byte")
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr(av, "open", lambda path, **kwargs: Broken())
+    request_id = _submit_wav(layout, wav, FakeClock())
+
+    response = read_response(layout, request_id)
+    assert response["failure"] == {"reason": "unreadable_audio", "detail": UNREADABLE_AUDIO_DETAIL}
+    assert list(layout.audio.iterdir()) == []
+
+
+def test_us5_2_request_queued_behind_a_bad_attachment_is_still_answered(
+    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import av
+
+    clock = FakeClock()
+    bad_id = new_id()
+    put_attachment(layout.inbox, f"{bad_id}.audio.wav", wav)
+    put_body(layout.inbox, f"{bad_id}.json", transcribe_body(bad_id))
+    os.utime(layout.inbox / f"{bad_id}.json", (1, 1))
+    good_id = new_id()
+    put_attachment(layout.inbox, f"{good_id}.audio.wav", wav)
+    put_body(layout.inbox, f"{good_id}.json", transcribe_body(good_id))
+    real_open = av.open
+
+    def open_or_fail(path: str, **kwargs: Any) -> Any:
+        if bad_id in path:
+            raise UnicodeDecodeError("utf-8", b"\xb0", 0, 1, "invalid start byte")
+        return real_open(path, **kwargs)
+
+    monkeypatch.setattr(av, "open", open_or_fail)
+
+    intake.run_once(layout, clock.now)
+
+    assert read_response(layout, bad_id)["failure"]["reason"] == "unreadable_audio"
+    assert read_response(layout, good_id)["state"] == "queued"
+    assert inbox_names(layout) == []

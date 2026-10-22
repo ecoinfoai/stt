@@ -80,12 +80,12 @@ def probe_duration(path: Path) -> float:
         Duration in seconds.
 
     Raises:
-        UnreadableAudioError: If the file cannot be opened, has no audio stream or fails to demux.
+        UnreadableAudioError: If the file cannot be opened, has no audio stream or fails to demux or parse.
     """
     import av
 
     try:
-        with av.open(str(path)) as container:
+        with av.open(str(path), metadata_errors="ignore") as container:
             if not container.streams.audio:
                 raise UnreadableAudioError
             if container.duration is not None:
@@ -96,7 +96,7 @@ def probe_duration(path: Path) -> float:
                 for packet in container.demux(stream)
                 if packet.duration is not None
             )
-    except av.error.FFmpegError:
+    except (av.error.FFmpegError, ValueError, TypeError, ArithmeticError):
         raise UnreadableAudioError from None
 
 
