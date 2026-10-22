@@ -167,7 +167,7 @@ description: "Task list for 001-server-transcription"
   첨부가 심볼릭 링크·하드 링크·FIFO → `failed(invalid_request)`, 링크 대상은 그대로;
   `test_every_inbox_json_is_consumed` — 깨진 JSON·UTF-8 아님·0600 으로 다른 계정이 만든 것 흉내(`chmod 000`, root 면 건너뜀)·1 MiB 초과 →
   모두 `refusal`, 처리 뒤 inbox 에 `*.json` 이 없음 — closes US5-6, 경계 사례 1, supports FR-002 — verify RED
-- [ ] T020 [P] [US1] `tests/server/test_engine.py` — `stt.server.engine` 이 없으므로 RED. `engine.main([work_dir])` 를 같은 프로세스에서 부르고
+- [X] T020 [P] [US1] `tests/server/test_engine.py` — `stt.server.engine` 이 없으므로 RED. `engine.main([work_dir])` 를 같은 프로세스에서 부르고
   (`gpu_present`·`pinned_models` fixture), `transcribe.load_model` 을 `tests/test_cli_integration.py` 의 `FakeModel` 모양(영어 문장)으로, 화자 파이프라인
   (`diarize.load_pipeline`·`diarize.to_wav`·화자 구간)을 가짜로 바꿔 낀다:
   `test_us1_2_diarized_paragraphs_have_speaker_and_times` — 모든 문단 `speaker` 가 `speaker_label("SPEAKER_0n")` 값, `start <= end`, 1.5초 미만
@@ -224,7 +224,7 @@ description: "Task list for 001-server-transcription"
   확인한 뒤에만 `out/` 의 `transcript.txt`·`result.json` 을 `outbox/.<id>.tmp/` 에 0640 으로 복사하고 `outbox/<id>/`(2750)로 rename 해 게시, 그리고
   `lifecycle.finish`, 작업 폴더 삭제. 기본 엔진 명령 `[sys.executable, "-m", "stt.server.engine"]` — turns T018(워커 부분, `test_worker_passes_engine_env`,
   `test_engine_crash_without_verdict_is_engine_error` 포함) GREEN — closes US1-1, US1-7, US1-8
-- [ ] T032 [US1] `src/stt/server/engine.py`: `main(argv) -> int`, `if __name__ == "__main__"`. `spec.json` 을 읽고 `tempfile.tempdir` 를
+- [X] T032 [US1] `src/stt/server/engine.py`: `main(argv) -> int`, `if __name__ == "__main__"`. `spec.json` 을 읽고 `tempfile.tempdir` 를
   `<work_dir>/tmp` 로 정한 뒤(R21-5) **시작 점검**: `cuda_device_count()`
   (ctranslate2) > 0, `diarize` 면 `torch_cuda_available()` 도 — 아니면 `gpu_unavailable`; `models.ref_mismatches(HF_HOME)` 가 비어 있음 — 아니면
   `models_unavailable`(실패 판정은 `outcome.json` 에 쓰고 종료 0, 고정 문장 detail). 그다음 `transcribe.load_model("large-v3", "cuda")`(대체 없음),
