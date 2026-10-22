@@ -97,14 +97,14 @@ description: "Task list for 001-server-transcription"
   마이크로초를 버리고 `Z` 로 끝남, `parse_time(format_time(t))` 왕복 — supports US2-3, US2-5, US3-5, US5-3, US5-9 — verify RED
 - [X] T008 `src/stt/server/deadlines.py`: 위 함수들(순수 함수, `zoneinfo.ZoneInfo("Asia/Seoul")`, `MIN_PROCESSING_S = 300.0`,
   `MAX_AUDIO_S = 10_800.0`, `RETENTION_DUE = timedelta(hours=23, minutes=58)`) — turns T007 GREEN — supports US2-3, US2-5, US3-5, US5-3, US5-9
-- [ ] T009 [P] `tests/server/test_layout.py` — RED: `Layout(root)` 의 경로(`inbox`, `outbox`, `jobs`, `audio`, `work`, `queue`, `state_lock`,
+- [X] T009 [P] `tests/server/test_layout.py` — RED: `Layout(root)` 의 경로(`inbox`, `outbox`, `jobs`, `audio`, `work`, `queue`, `state_lock`,
   `worker_lock`, `intake_lock`, `sweep_lock`); `ensure_layout()` 가 없는 내부 폴더를 0700 으로 만들고 있는 폴더의 권한은 바꾸지 않음;
   `is_request_name`(`<소문자 UUID>.json` 만 True, `.json.tmp`·대문자·다른 이름 False), `attachment_id`(contracts 의 확장자 목록);
   `atomic_write_text(path, text, mode=0o640)` — 최종 권한이 정확히 그 값, 실패해도 임시 파일이 남지 않음;
   `hold(path)` 배타 잠금 문맥 관리자와 `try_hold(path) -> contextmanager | None` — 다른 프로세스(`subprocess` 로 띄운 `python -c` 가 `fcntl.flock`)가
   쥐면 None; **파일 안전**(R20-3): `read_request_bytes(path, limit=1 MiB) -> bytes` 와 `open_attachment(path) -> BinaryIO` 가 심볼릭 링크(대상이 있어도),
   하드 링크(링크 수 2), FIFO·폴더, 크기 초과(요청만), 읽기 권한 없음(root 로 돌면 건너뜀)에서 `UnsafeFileError`(이유 코드)를 내고 내용을 읽지 않음 — supports US1-1, US2-4, US5-6 — verify RED
-- [ ] T010 `src/stt/server/layout.py`: 위 배치·이름 규칙·원자적 쓰기(fsync 뒤 rename)·flock 도우미·`O_NOFOLLOW` 열기와 `fstat`(일반 파일·링크 수 1)
+- [X] T010 `src/stt/server/layout.py`: 위 배치·이름 규칙·원자적 쓰기(fsync 뒤 rename)·flock 도우미·`O_NOFOLLOW` 열기와 `fstat`(일반 파일·링크 수 1)
   확인 — turns T009 GREEN — supports US1-1, US2-4, US5-6
 - [ ] T011 [P] `tests/server/test_records.py` — RED: `Job`·`Audio`(data-model §3·§4 의 칸 — `Audio.policy` 는 `{"after_job": id}` | `{"at": time}`,
   `received_at`, `hard_deadline`, `Job.failure.cause`, frozen dataclass)의 JSON 왕복; `save_job`/`load_job`/`load_jobs`, `save_audio`/`load_audio`

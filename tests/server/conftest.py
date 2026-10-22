@@ -229,7 +229,7 @@ def _engine_cmd(mode: str) -> list[str]:
 
 
 def _worker_kwargs(layout: Any, clock: FakeClock, mode: str, kwargs: dict[str, Any]) -> dict[str, Any]:
-    state_root = layout.work.parent
+    state_root = layout.root
     models_dir = state_root.parent / f"{state_root.name}-models"
     models_dir.mkdir(exist_ok=True)
     options: dict[str, Any] = {
