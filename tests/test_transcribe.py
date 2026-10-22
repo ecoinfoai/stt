@@ -560,3 +560,28 @@ def test_diarized_blocks_without_words_raises(tmp_path):
         transcribe.diarized_blocks(
             tmp_path / "talk.m4a", segments, _diarize_args(), None
         )
+
+
+def _fake_model_with(segments):
+    """Builds a model whose transcribe() yields `segments` for a 5-second file."""
+
+    class _Model:
+        def transcribe(self, audio, **kwargs):
+            return iter(segments), SimpleNamespace(duration=5.0, language="en")
+
+    return _Model()
+
+
+def test_transcribe_file_allow_empty(tmp_path):
+    """allow_empty=True returns an empty list; the default still raises."""
+    media = tmp_path / "silent.m4a"
+    model = _fake_model_with([])
+
+    segments, duration, language = transcribe.transcribe_file(
+        model, media, "en", None, 5, allow_empty=True
+    )
+
+    assert (segments, duration, language) == ([], 5.0, "en")
+    with pytest.raises(RuntimeError) as default_error:
+        transcribe.transcribe_file(model, media, "en", None, 5)
+    assert "silent.m4a" in str(default_error.value)

@@ -739,22 +739,26 @@ def transcribe_file(
     terms: str | None,
     beam_size: int,
     word_timestamps: bool = False,
+    allow_empty: bool = False,
 ) -> tuple[list[SegmentLike], float, str]:
-    """미디어 파일 하나를 전사해 세그먼트 목록을 돌려준다.
+    """Transcribes one media file and returns its segments.
 
     Args:
-        model: 적재된 WhisperModel.
-        media: 전사할 미디어 파일 경로.
-        language: 언어 코드('ko' 등) 또는 자동 감지 시 None.
-        terms: hotwords로 넣을 용어 문자열 또는 None.
-        beam_size: 빔 서치 크기(클수록 정확, 느림).
-        word_timestamps: True면 단어 단위 시각도 함께 받는다(화자 분리용).
+        model: A loaded WhisperModel.
+        media: Path of the media file to transcribe.
+        language: Language code such as 'ko', or None to detect it.
+        terms: Hotwords string to pass to the model, or None.
+        beam_size: Beam search size (larger is more accurate and slower).
+        word_timestamps: If True, also receive word-level times (for
+            speaker diarization).
+        allow_empty: If True, a result without segments is returned as an
+            empty list instead of raising.
 
     Returns:
-        (세그먼트 목록, 오디오 길이(초), 전사 언어 코드) 튜플.
+        A (segments, audio duration in seconds, language code) tuple.
 
     Raises:
-        RuntimeError: 전사 결과가 비어 있을 때.
+        RuntimeError: If the result is empty and allow_empty is False.
 
     Examples:
         >>> transcribe_file(m, Path("a.m4a"), "ko", None, 5)  # doctest: +SKIP
@@ -769,8 +773,8 @@ def transcribe_file(
         word_timestamps=word_timestamps,
         log_progress=True,
     )
-    segments = list(segments_iter)  # 실제 전사는 여기서 진행된다.
-    if not segments:
+    segments = list(segments_iter)  # The transcription itself runs here.
+    if not segments and not allow_empty:
         raise RuntimeError(
             f"빈 전사 결과: '{media.name}'에서 음성을 찾지 못했습니다. "
             f"무음 파일이 아닌지 확인하세요."
