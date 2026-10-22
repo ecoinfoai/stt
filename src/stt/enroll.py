@@ -201,6 +201,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 voices = dz.merge_voice(voices, name, found[label])
                 added += 1
                 print(f"  {dz.speaker_label(label)} → {name}")
+        del pipeline
     dz.save_voice_db(voices, args.db)
     print(f"등록 완료: {added}건 → {args.db} (이름 {len(voices)}명)")
     return 0

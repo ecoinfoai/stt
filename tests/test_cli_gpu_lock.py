@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+import weakref
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -242,3 +243,104 @@ def test_us4_4_batch_keep_going_does_not_continue_after_missing_lock_file(
     assert stopped.value.code == 2
     assert capsys.readouterr().err.count("points to a missing file") == 1
     assert recorder.times == []
+
+
+class FakeTorch:
+    """Stand-in for the `torch` module that records the state at `empty_cache` time."""
+
+    def __init__(self, lock_file: Path, pipeline_ref: list[Any]) -> None:
+        self.cuda = self
+        self.empty_cache_calls = 0
+        self.lock_busy: list[bool] = []
+        self.pipeline_gone: list[bool] = []
+        self._lock_file = lock_file
+        self._pipeline_ref = pipeline_ref
+
+    def is_available(self) -> bool:
+        return True
+
+    def empty_cache(self) -> None:
+        self.empty_cache_calls += 1
+        self.lock_busy.append(gpu_lock.try_acquire(self._lock_file) is None)
+        self.pipeline_gone.append(all(ref() is None for ref in self._pipeline_ref))
+
+
+class FakePipeline:
+    """Weak-referenceable stand-in for the diarization pipeline."""
+
+
+def _track_pipeline(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    refs: list[Any] = []
+
+    def fake_load_pipeline(device: str) -> FakePipeline:
+        pipeline = FakePipeline()
+        refs.append(weakref.ref(pipeline))
+        return pipeline
+
+    monkeypatch.setattr(diarize, "load_pipeline", fake_load_pipeline)
+    return refs
+
+
+def test_us4_cli_returns_cached_gpu_memory_before_releasing_lock(
+    lock_file: Path, media: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STT_GPU_LOCK", str(lock_file))
+    refs = _track_pipeline(monkeypatch)
+    fake_torch = FakeTorch(lock_file, refs)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setattr(transcribe, "run_with_fallback", lambda *args, **kwargs: None)
+
+    assert transcribe.main([str(media), "--device", "cuda", "--diarize"]) == 0
+
+    assert fake_torch.empty_cache_calls == 1
+    assert fake_torch.lock_busy == [True]
+    assert fake_torch.pipeline_gone == [True]
+
+
+def test_us4_enroll_returns_cached_gpu_memory_before_releasing_lock(
+    lock_file: Path, media: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STT_GPU_LOCK", str(lock_file))
+    refs = _track_pipeline(monkeypatch)
+    fake_torch = FakeTorch(lock_file, refs)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    enroll_map = tmp_path / "enroll.yaml"
+    enroll_map.write_text(
+        f"- media: {media}\n  speakers:\n    SPEAKER_00: Alice\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(diarize, "to_wav", lambda src, dst: dst)
+    monkeypatch.setattr(
+        diarize, "diarize_embeddings", lambda pipeline, wav: (["SPEAKER_00"], [[1.0, 0.0]])
+    )
+
+    code = enroll.main(
+        ["--map", str(enroll_map), "--db", str(tmp_path / "voices.json"), "--device", "cuda"]
+    )
+
+    assert code == 0
+    assert fake_torch.empty_cache_calls == 1
+    assert fake_torch.lock_busy == [True]
+    assert fake_torch.pipeline_gone == [True]
+
+
+def test_us4_cli_does_not_touch_torch_without_lock(
+    lock_file: Path, media: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("STT_GPU_LOCK", raising=False)
+    fake_torch = FakeTorch(lock_file, [])
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setattr(transcribe, "load_model", lambda name, device: FakeModel())
+
+    assert transcribe.main([str(media), "--device", "cuda"]) == 0
+    assert fake_torch.empty_cache_calls == 0
+
+
+def test_us4_cli_does_not_import_torch_to_release_memory(
+    lock_file: Path, media: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STT_GPU_LOCK", str(lock_file))
+    monkeypatch.setattr(transcribe, "load_model", lambda name, device: FakeModel())
+    monkeypatch.delitem(sys.modules, "torch", raising=False)
+
+    assert transcribe.main([str(media), "--device", "cuda"]) == 0
+    assert "torch" not in sys.modules

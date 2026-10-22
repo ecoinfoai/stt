@@ -593,6 +593,19 @@ def detect_device(requested: str) -> str:
     return "cpu"
 
 
+def release_cached_gpu_memory() -> None:
+    """Returns memory PyTorch cached on the GPU, if PyTorch is already loaded.
+
+    PyTorch is never imported here: a run that did not load it holds nothing.
+    """
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 @contextmanager
 def hold_gpu_lock(device: str) -> Iterator[None]:
     """Holds the shared GPU lock while `device` is 'cuda' and STT_GPU_LOCK is set.
@@ -600,6 +613,9 @@ def hold_gpu_lock(device: str) -> Iterator[None]:
     The lock module is imported only when the variable is set, so runs
     without it (other machines, Windows) behave exactly as before. Waits
     while another process holds the lock and tells the user once on stderr.
+    Before the lock is released, cached PyTorch GPU memory is returned so
+    the next lock holder does not share the GPU with this idle process;
+    callers must drop their own GPU objects (such as the pipeline) first.
 
     Args:
         device: 'cuda' or 'cpu'.
@@ -621,7 +637,10 @@ def hold_gpu_lock(device: str) -> Iterator[None]:
         with gpu_lock.acquire(
             path, lambda: print(gpu_lock.WAIT_MESSAGE, file=sys.stderr)
         ):
-            yield
+            try:
+                yield
+            finally:
+                release_cached_gpu_memory()
     except gpu_lock.MissingGpuLockError as error:
         print(error, file=sys.stderr)
         raise SystemExit(2) from None
@@ -1226,5 +1245,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"  화자 분리 준비: {dz.PIPELINE_NAME}")
             pipeline = dz.load_pipeline(device)
         run_with_fallback(pending, chain, device, args, terms, pipeline)
+        del pipeline
     print("전체 완료.")
     return 0
