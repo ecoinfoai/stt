@@ -525,31 +525,37 @@ def save_voice_db(voices: VoiceDB, path: Path) -> Path:
 
 
 def load_pipeline(device: str):
-    """pyannote 화자 분리 파이프라인을 적재한다.
+    """Load the pyannote diarization pipeline.
 
-    HuggingFace 게이트 모델이라 HF_TOKEN 환경변수가 있어야 한다.
+    The gated Hugging Face models need the HF_TOKEN environment variable,
+    except when HF_HUB_OFFLINE is "1": the pipeline is then read from the
+    local cache with token=None and no token is required.
 
     Args:
-        device: 'cuda' 또는 'cpu'.
+        device: 'cuda' or 'cpu'.
 
     Returns:
-        적재된 pyannote Pipeline 인스턴스.
+        The loaded pyannote Pipeline instance.
 
     Raises:
-        RuntimeError: HF_TOKEN이 없거나 pyannote.audio가 설치되지 않았을 때.
+        RuntimeError: If HF_TOKEN is missing (online mode) or pyannote.audio
+            is not installed.
 
     Examples:
         >>> load_pipeline("cpu")  # doctest: +SKIP
     """
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        raise RuntimeError(
-            "HF_TOKEN 없음: 화자 분리에는 HuggingFace 토큰이 필요합니다. "
-            "https://huggingface.co/settings/tokens 에서 발급하고 "
-            "pyannote/segmentation-3.0, pyannote/speaker-diarization-3.1, "
-            "pyannote/speaker-diarization-community-1 세 모델에 동의한 뒤 "
-            "HF_TOKEN 환경변수로 넘기세요."
-        )
+    if os.environ.get("HF_HUB_OFFLINE") == "1":
+        token = None
+    else:
+        token = os.environ.get("HF_TOKEN")
+        if not token:
+            raise RuntimeError(
+                "HF_TOKEN 없음: 화자 분리에는 HuggingFace 토큰이 필요합니다. "
+                "https://huggingface.co/settings/tokens 에서 발급하고 "
+                "pyannote/segmentation-3.0, pyannote/speaker-diarization-3.1, "
+                "pyannote/speaker-diarization-community-1 세 모델에 동의한 뒤 "
+                "HF_TOKEN 환경변수로 넘기세요."
+            )
     try:
         import torch
         from pyannote.audio import Pipeline

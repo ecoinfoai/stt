@@ -28,7 +28,10 @@ from typing import (
 if TYPE_CHECKING:  # 무거운 import는 실행 시점으로 미룬다.
     from faster_whisper import WhisperModel
 
+    from stt.diarize import Block
+
 Paragraph: TypeAlias = tuple[float, str]
+TimedParagraph: TypeAlias = tuple[float, float, str]
 
 SUPPORTED_EXTS: frozenset[str] = frozenset({
     ".mp4", ".mkv", ".mov", ".avi", ".webm", ".ts",
@@ -352,29 +355,32 @@ def report_terms_budget(report: TermsReport) -> None:
         )
 
 
-def build_paragraphs(
+def build_timed_paragraphs(
     segments: Iterable[SegmentLike],
     gap_s: float = 2.0,
     max_chars: int = 800,
-) -> list[Paragraph]:
-    """세그먼트들을 읽기 좋은 문단 목록으로 합친다.
+) -> list[TimedParagraph]:
+    """Merge segments into readable paragraphs that keep their end times.
 
-    말의 쉼(gap_s 이상)에서 문단을 나누고, 한 문단이 max_chars를
-    넘으면 문장이 끝나는 지점에서 나눈다.
+    Paragraphs break at pauses of at least gap_s seconds, and, once a
+    paragraph exceeds max_chars, at the next sentence ending.
 
     Args:
-        segments: start/end/text 속성을 가진 세그먼트 목록.
-        gap_s: 문단을 나누는 무음 길이(초). 0보다 커야 한다.
-        max_chars: 문단 최대 글자 수 기준. 0보다 커야 한다.
+        segments: Segments with start/end/text attributes.
+        gap_s: Silence length in seconds that starts a new paragraph.
+            Must be greater than 0.
+        max_chars: Paragraph length (characters) after which the next
+            sentence ending starts a new paragraph. Must be greater than 0.
 
     Returns:
-        (시작 시각, 문단 텍스트) 튜플 목록.
+        (start, end, text) tuples, where end is the end time of the
+        paragraph's last non-empty segment.
 
     Raises:
-        ValueError: gap_s 또는 max_chars가 0 이하일 때.
+        ValueError: If gap_s or max_chars is 0 or less.
 
     Examples:
-        >>> build_paragraphs([], gap_s=2.0, max_chars=800)
+        >>> build_timed_paragraphs([], gap_s=2.0, max_chars=800)
         []
     """
     if gap_s <= 0:
@@ -387,7 +393,7 @@ def build_paragraphs(
             f"잘못된 max_chars: {max_chars}. build_paragraphs()의 "
             f"max_chars는 0보다 큰 정수여야 합니다."
         )
-    paragraphs: list[Paragraph] = []
+    paragraphs: list[TimedParagraph] = []
     parts: list[str] = []
     start = 0.0
     prev_end = 0.0
@@ -403,7 +409,7 @@ def build_paragraphs(
                 and parts[-1].endswith(_SENTENCE_ENDINGS)
             )
             if gap_break or length_break:
-                paragraphs.append((start, " ".join(parts)))
+                paragraphs.append((start, prev_end, " ".join(parts)))
                 parts, length = [], 0
         if not parts:
             start = segment.start
@@ -411,8 +417,42 @@ def build_paragraphs(
         length += len(text) + 1
         prev_end = segment.end
     if parts:
-        paragraphs.append((start, " ".join(parts)))
+        paragraphs.append((start, prev_end, " ".join(parts)))
     return paragraphs
+
+
+def build_paragraphs(
+    segments: Iterable[SegmentLike],
+    gap_s: float = 2.0,
+    max_chars: int = 800,
+) -> list[Paragraph]:
+    """Merge segments into readable paragraphs.
+
+    Same splitting rules as build_timed_paragraphs(), without end times.
+
+    Args:
+        segments: Segments with start/end/text attributes.
+        gap_s: Silence length in seconds that starts a new paragraph.
+            Must be greater than 0.
+        max_chars: Paragraph length (characters) after which the next
+            sentence ending starts a new paragraph. Must be greater than 0.
+
+    Returns:
+        (start, text) tuples.
+
+    Raises:
+        ValueError: If gap_s or max_chars is 0 or less.
+
+    Examples:
+        >>> build_paragraphs([], gap_s=2.0, max_chars=800)
+        []
+    """
+    return [
+        (start, text)
+        for start, _end, text in build_timed_paragraphs(
+            segments, gap_s, max_chars
+        )
+    ]
 
 
 def render_txt(paragraphs: Sequence[Paragraph], timestamps: bool) -> str:
@@ -759,28 +799,28 @@ def write_metadata(media: Path, out_dir: Path | None, run) -> Path:
     return metadata.write_for_media(media, out_dir, run)
 
 
-def build_diarized_body(
+def diarized_blocks(
     media: Path,
     segments: Sequence[SegmentLike],
     args: argparse.Namespace,
     pipeline,
-) -> str:
-    """화자 분리를 거쳐 '[MM:SS] 화자N: ...' 본문을 만든다.
+) -> list[Block]:
+    """Split the transcript into speaker paragraphs.
 
     Args:
-        media: 원본 미디어 파일 경로.
-        segments: word_timestamps=True로 받은 세그먼트 목록.
-        args: 파싱된 CLI 인자.
-        pipeline: load_pipeline()이 적재한 화자 분리 파이프라인.
+        media: Source media file path.
+        segments: Segments received with word_timestamps=True.
+        args: Parsed CLI arguments.
+        pipeline: Diarization pipeline loaded by diarize.load_pipeline().
 
     Returns:
-        화자 문단으로 이뤄진 본문 문자열.
+        Speaker paragraphs (diarize.Block), in time order.
 
     Raises:
-        RuntimeError: 단어 단위 시각이 비어 있을 때.
+        RuntimeError: If the segments carry no word-level timestamps.
 
     Examples:
-        >>> build_diarized_body(Path("a.m4a"), segs, ns, p)  # doctest: +SKIP
+        >>> diarized_blocks(Path("a.m4a"), segs, ns, p)  # doctest: +SKIP
     """
     import tempfile
 
@@ -800,10 +840,38 @@ def build_diarized_body(
         turns = dz.diarize_wav(
             pipeline, wav, args.speakers, voices, args.voice_threshold
         )
-    blocks = dz.assign_blocks(
+    return dz.assign_blocks(
         words, turns, args.min_speaker_seconds,
         gap_s=args.gap, max_chars=args.max_chars,
     )
+
+
+def build_diarized_body(
+    media: Path,
+    segments: Sequence[SegmentLike],
+    args: argparse.Namespace,
+    pipeline,
+) -> str:
+    """Build the '[MM:SS] <speaker>: ...' body after diarization.
+
+    Args:
+        media: Source media file path.
+        segments: Segments received with word_timestamps=True.
+        args: Parsed CLI arguments.
+        pipeline: Diarization pipeline loaded by diarize.load_pipeline().
+
+    Returns:
+        The body text made of speaker paragraphs.
+
+    Raises:
+        RuntimeError: If the segments carry no word-level timestamps.
+
+    Examples:
+        >>> build_diarized_body(Path("a.m4a"), segs, ns, p)  # doctest: +SKIP
+    """
+    from stt import diarize as dz
+
+    blocks = diarized_blocks(media, segments, args, pipeline)
     speakers = sorted({block.speaker for block in blocks})
     print(f"  화자 {len(speakers)}명, 문단 {len(blocks)}개")
     return dz.render_diarized(blocks, timestamps=not args.no_timestamps)

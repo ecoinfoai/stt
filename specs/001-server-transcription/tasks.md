@@ -180,7 +180,7 @@ description: "Task list for 001-server-transcription"
   `test_us5_5_no_gpu_fails_before_loading` — CUDA 장치 0 → `gpu_unavailable`, 모델을 부르지 않음; `diarize` 인데 torch 가 CUDA 를 못 봄 → `gpu_unavailable`(R17);
   `test_models_missing_or_other_revision_is_models_unavailable` — `refs/main` 이 없거나 다른 커밋 → `models_unavailable`, 모델을 부르지 않음(R9);
   모든 result.json 이 스키마 통과, 성공이면 `outcome.json` 이 `{"status": "done"}` — closes US1-2, US1-3, US1-4, US1-5, US1-6, US1-8, US5-5, 경계 사례 4·5 — verify RED
-- [ ] T021 [P] [US1] `tests/test_transcribe.py` 와 `tests/test_diarize.py` 에 R8 시험을 더한다(기존 시험은 고치지 않는다) — RED:
+- [X] T021 [P] [US1] `tests/test_transcribe.py` 와 `tests/test_diarize.py` 에 R8 시험을 더한다(기존 시험은 고치지 않는다) — RED:
   `test_build_timed_paragraphs_keeps_end_time` — 새 `build_timed_paragraphs` 의 문단 끝 시각 = 그 문단 마지막 세그먼트의 `end`;
   `test_build_paragraphs_is_projection_of_timed` — 같은 입력에서 `build_paragraphs` 가 `[(start, text) …]` 로 같음; `test_diarized_blocks_split_from_rendering` —
   새 함수(예: `diarized_blocks(...)`)가 `Block` 목록을 내고 `build_diarized_body` 의 글은 지금과 같음; `test_edge_6_offline_pipeline_needs_no_token` —
@@ -196,12 +196,12 @@ description: "Task list for 001-server-transcription"
 
 ### Implementation for User Story 1 (turn T018–T024 GREEN)
 
-- [ ] T025 [US1] `src/stt/transcribe.py` R8-1: `build_timed_paragraphs(...) -> list[tuple[float, float, str]]` 를 더하고 `build_paragraphs` 는 그 결과에서
+- [X] T025 [US1] `src/stt/transcribe.py` R8-1: `build_timed_paragraphs(...) -> list[tuple[float, float, str]]` 를 더하고 `build_paragraphs` 는 그 결과에서
   `(start, text)` 를 뽑는다(반환 모양·`render_txt` 그대로). 두 함수의 docstring 영어 — turns `test_build_timed_paragraphs_keeps_end_time`,
   `test_build_paragraphs_is_projection_of_timed` GREEN (T021) — supports US1-2, US1-3, US4-4
-- [ ] T026 [US1] `src/stt/transcribe.py` R8-3: `build_diarized_body` 에서 화자 문단 만들기(`Block` 목록)를 따로 떼고, 글 옮기기는 그 결과를 쓴다
+- [X] T026 [US1] `src/stt/transcribe.py` R8-3: `build_diarized_body` 에서 화자 문단 만들기(`Block` 목록)를 따로 떼고, 글 옮기기는 그 결과를 쓴다
   (임시 WAV 는 지금처럼 `TemporaryDirectory` — 엔진에서는 `TMPDIR` 이 작업 폴더라 함께 지워진다). 명령줄 출력 그대로 — turns `test_diarized_blocks_split_from_rendering` GREEN (T021) — supports US1-2, US4-4
-- [ ] T027 [P] [US1] `src/stt/diarize.py` R8-4: `load_pipeline` 이 `HF_HUB_OFFLINE` 이 켜져 있으면(`"1"`) `HF_TOKEN` 없이 `token=None` 으로 읽는다.
+- [X] T027 [P] [US1] `src/stt/diarize.py` R8-4: `load_pipeline` 이 `HF_HUB_OFFLINE` 이 켜져 있으면(`"1"`) `HF_TOKEN` 없이 `token=None` 으로 읽는다.
   docstring 영어, 기존 토큰 오류 문구는 그대로 — turns `test_edge_6_offline_pipeline_needs_no_token` GREEN (T021) — supports 경계 사례 6
 - [ ] T028 [P] [US1] `src/stt/server/models.py`: `PINNED: tuple[tuple[str, str], ...]`(R9 표), `ref_mismatches(hf_home: Path) -> list[str]`
   (`hub/models--<org>--<name>/refs/main` 을 읽어 비교) — turns T024 GREEN — supports US5-5, FR-012
