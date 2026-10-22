@@ -342,7 +342,7 @@ description: "Task list for 001-server-transcription"
   `source_unavailable`(R21-7). 임시 거절 삭제 — turns T044, T045 GREEN — closes US3-1, US3-3, US3-4, US3-6, 경계 사례 7·8
 - [X] T047 [US3] `src/stt/server/worker.py`·`src/stt/server/responses.py`: 엔진 `spec.json` 의 `audio_path`·`original_name` 을 job 의 `audio_id` 녹음에서
   가져오고, 응답의 `audio.delete_at` 을 그 job 기준(data-model §5)으로 — turns `test_us3_1`, `test_us3_5` GREEN (T044) — closes US3-1, US3-2, US3-5
-- [ ] T048 [US3] US3 확인: 전체 시험 통과. RED 해당 없음 — 확인 — closes US3-1…US3-6, 경계 사례 7, SC-006
+- [X] T048 [US3] US3 확인: 전체 시험 통과. RED 해당 없음 — 확인 — closes US3-1…US3-6, 경계 사례 7, SC-006
 
 **Checkpoint**: 2패스가 첨부 재전송 없이 돌고, 남의 것·지워진 것·없는 것은 같은 답으로 거절된다.
 
