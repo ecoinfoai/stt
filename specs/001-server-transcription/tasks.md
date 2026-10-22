@@ -90,12 +90,12 @@ description: "Task list for 001-server-transcription"
   (`required`·`pattern`·`uniqueItems`·`enum`·`const`·`additionalProperties`·`minItems`·`maxItems`·`minLength`·`maxLength`·`type`·`oneOf`)마다 고정 문구),
   `validate_response(doc) -> str | None`, `validate_result(doc) -> str | None`(내부 확인용), `LANGUAGE_CODES: frozenset[str]`(faster-whisper 1.2.1 의
   100개를 옮긴 상수)와 `language_supported(code: str) -> bool` — faster-whisper 를 불러오지 않는다(torch 가 따라 올라온다, R5) — turns T005 GREEN — supports US1-8, US5-6, SC-012
-- [ ] T007 [P] `tests/server/test_deadlines.py` — RED: `next_midnight` — `2026-10-22T14:59:59Z`(23:59:59 KST) → `2026-10-22T15:00:00Z`,
+- [X] T007 [P] `tests/server/test_deadlines.py` — RED: `next_midnight` — `2026-10-22T14:59:59Z`(23:59:59 KST) → `2026-10-22T15:00:00Z`,
   정확히 `15:00:00Z` → `2026-10-23T15:00:00Z`, `15:00:01Z` → `2026-10-23T15:00:00Z`, `00:00:00Z` → 같은 날 `15:00:00Z`, 시간대 없는 datetime →
   `ValueError`; `hard_deadline(t) == t + 23h58m`, `expires_at(t) == t + 23h58m`(24시간을 넘기지 않는 여유 2분, R21-1); `processing_limit(10.0) == 300.0`, `processing_limit(300.0) == 300.0`, `processing_limit(3600.0) == 3600.0`;
   `audio_delete_at(policy, hard_deadline)` 이 data-model §5 대로(`{"at": t}` → min(t, hard), `{"after_job": id}` → hard); `format_time` 이
   마이크로초를 버리고 `Z` 로 끝남, `parse_time(format_time(t))` 왕복 — supports US2-3, US2-5, US3-5, US5-3, US5-9 — verify RED
-- [ ] T008 `src/stt/server/deadlines.py`: 위 함수들(순수 함수, `zoneinfo.ZoneInfo("Asia/Seoul")`, `MIN_PROCESSING_S = 300.0`,
+- [X] T008 `src/stt/server/deadlines.py`: 위 함수들(순수 함수, `zoneinfo.ZoneInfo("Asia/Seoul")`, `MIN_PROCESSING_S = 300.0`,
   `MAX_AUDIO_S = 10_800.0`, `RETENTION_DUE = timedelta(hours=23, minutes=58)`) — turns T007 GREEN — supports US2-3, US2-5, US3-5, US5-3, US5-9
 - [ ] T009 [P] `tests/server/test_layout.py` — RED: `Layout(root)` 의 경로(`inbox`, `outbox`, `jobs`, `audio`, `work`, `queue`, `state_lock`,
   `worker_lock`, `intake_lock`, `sweep_lock`); `ensure_layout()` 가 없는 내부 폴더를 0700 으로 만들고 있는 폴더의 권한은 바꾸지 않음;
