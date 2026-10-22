@@ -1,4 +1,12 @@
 <!--
+Sync Impact Report — 2026-10-22 (amendment)
+- Version change: 1.0.0 → 1.1.0 (MINOR — two principles tightened, none removed)
+- III: deletion is either an explicit 「다 지우기」 request or the daily 23:58 KST purge; the per-job delete
+  timing (「끝나면 바로」/「자정」), result-only delete and the 24 h result clock are gone. The 24 h ceiling stays.
+- V: the CLI no longer falls back to CPU (the CPU-fallback warning example is removed); GPU only.
+- Source: operator decisions 2026-10-22.
+- Templates: no change. Follow-up: spec/plan/data-model/contracts/tasks of 001-server-transcription.
+
 Sync Impact Report — 2026-10-22
 - Version change: (unratified template) → 1.0.0
 - Ratification: initial adoption. 원칙은 운영자 결정(2026-10-15 bhu-llm 핸드오프 결정 #1~#5,
@@ -61,9 +69,9 @@ Rationale: 녹음에는 다른 참석자의 목소리와 발언이 있다. 밖�
 
 ### III. 삭제 보장과 쌓지 않음 (Guaranteed Deletion, No Accumulation)
 
-서버 경로에서 녹음·처리 중 만든 음성·힌트 단어장 사본은 작업이 정한 때에, 늦어도 **처음 받은 때로부터 24시간** 안에
-모든 저장 위치에서 지운다 — 실패·멈춤·강제 종료된 작업도 같다(MUST). 결과는 호출하는 쪽이 가져가 지우기를 요청하면
-즉시, 아니면 그 작업을 받은 때로부터 24시간에 지운다(MUST). 「지금 지우기」 요청은 즉시 처리한다(MUST). 처리 중
+서버 경로에서 녹음·처리 중 만든 음성·힌트 단어장 사본·결과는 호출하는 쪽이 「다 지우기」를 요청하면 즉시, 아니면
+매일 23:58(KST) 정리 때 모든 저장 위치에서 지운다 — 실패·멈춤·강제 종료된 작업도 같고, 어떤 자료도 **처음 받은 때로부터
+24시간**을 넘지 않는다(MUST). 매일 정리는 처리 단위가 멈춰 있어도 이루어진다(MUST). 처리 중
 원본은 암호화된 저장 위치에만 둔다(MUST). 이용자별 단어장·기록·목소리 특징·통계를 서버에 쌓지 않는다(MUST NOT).
 서버 경로에서 화자는 `화자N` 으로만 적고, 목소리 등록·실명 붙이기를 하지 않는다(MUST NOT). 삭제는 정상·실패·강제
 종료 경로마다 「남은 파일 0」을 확인하는 시험으로 증명한다(MUST).
@@ -85,7 +93,8 @@ Rationale: 전사록은 강의록·회의록·지식 노트에서 원문 인용�
 ### V. 말없는 실패 금지 (No Silent Degradation)
 
 엔진 한도 때문에 버려지는 힌트, 장치·모델의 대체, 일부만 된 결과를 알리지 않고 넘어가지 않는다(MUST NOT). 명령줄은
-경고하고 계속할 수 있다(지금의 힌트 한도 경고·CPU 전환 경고). 서버 경로는 품질을 낮춰 대신하지 않고 정해진 이유로
+경고하고 계속할 수 있다(지금의 힌트 한도 경고). stt 는 명령줄에서도 GPU 로만 전사·화자 구분을 한다 — GPU 를 쓸 수
+없으면 CPU 로 넘어가지 않고 이유를 알리고 멈춘다(MUST). 서버 경로는 품질을 낮춰 대신하지 않고 정해진 이유로
 실패한다(MUST). 일부만 된 결과를 완료로 내지 않는다(MUST). 시스템 경계(작업·파일·인자·역직렬화)에서 즉시 검증하고
 명시적 오류를 낸다(MUST). 신뢰된 내부 코드에 발생 불가능한 상태를 위한 방어 분기, `except: pass`, 무음 폴백을 두지
 않는다(MUST NOT).
@@ -154,4 +163,4 @@ Report 에 날짜·변경 내용·영향받은 템플릿과 산출물을 남긴�
 - 런타임 지침: 전역 `~/.claude/CLAUDE.md`, 저장소 `CLAUDE.md`, 현재 plan 을 함께 따른다. 충돌하면 이 헌법이 저장소
   안에서 우선하되, 전역 규칙 §1·§2·§4 보안은 프로젝트 파일이 그 절을 인용하고 이유를 대야만 바꿀 수 있다.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-22 | **Last Amended**: 2026-10-22
+**Version**: 1.1.0 | **Ratified**: 2026-10-22 | **Last Amended**: 2026-10-22
