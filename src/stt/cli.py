@@ -14,6 +14,7 @@ import sys
 from typing import Callable, Sequence
 
 from stt import batch, enroll, fetch, transcribe
+from stt.server import cli as server_cli
 
 Command = Callable[[Sequence[str]], int]
 
@@ -23,6 +24,7 @@ COMMANDS: dict[str, Command] = {
     "transcribe": transcribe.main,
     "batch": batch.main,
     "enroll": enroll.main,
+    "server": server_cli.main,
 }
 
 _SUMMARIES: dict[str, str] = {
@@ -30,6 +32,7 @@ _SUMMARIES: dict[str, str] = {
     "transcribe": "미디어 파일·폴더를 한국어 전사문(TXT)으로 바꾼다",
     "batch": "목록 파일(.txt/.yaml)에 적은 여러 미디어를 전사한다",
     "enroll": "전사한 파일에서 화자 목소리를 등록해 사전에 쌓는다",
+    "server": "Run the server transcription stages (intake, work)",
 }
 
 

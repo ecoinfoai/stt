@@ -186,7 +186,7 @@ description: "Task list for 001-server-transcription"
   새 함수(예: `diarized_blocks(...)`)가 `Block` 목록을 내고 `build_diarized_body` 의 글은 지금과 같음; `test_edge_6_offline_pipeline_needs_no_token` —
   `HF_HUB_OFFLINE=1`·`HF_TOKEN` 없음이면 `load_pipeline` 이 `token=None` 으로 `Pipeline.from_pretrained` 를 부름(가짜), 오프라인이 아니면 지금처럼
   토큰을 요구 — supports 경계 사례 6(망 없는 완료는 T076 의 C-7 이 닫는다), US1-2, US1-3, US4-4 — verify RED
-- [ ] T022 [P] [US1] `tests/server/test_server_cli.py` — RED: `stt server`(하위 명령 없음)·`stt server bogus` → 사용법을 stderr 에, 종료 2;
+- [X] T022 [P] [US1] `tests/server/test_server_cli.py` — RED: `stt server`(하위 명령 없음)·`stt server bogus` → 사용법을 stderr 에, 종료 2;
   `stt --help` 에 `server`; `stt server intake --root R` 이 다른 프로세스가 `intake.lock` 을 쥔 동안 종료 75, `work` 는 `worker.lock` 으로 75;
   빈 루트에서 둘 다 0 — supports US1-1 — verify RED
 - [X] T023 [P] [US1] `tests/server/test_logging.py` — RED: 힌트 `"zzhintword"`·요청자 `"zzrequester"` 로 받기 → 워커(가짜 엔진) → 엔진(가짜 모델)을
@@ -234,7 +234,7 @@ description: "Task list for 001-server-transcription"
   (`request_id` 는 `spec.json` 의 것, 문단 수 칸 없음 — R21-3)을
   `contract.validate_result` 로 확인한 뒤 `out/` 에 쓰고 `{"status": "done"}`. `processing_s` 는 단조 시계. 무거운 import 는 `main` 안에서.
   엔진 오류 분류는 US5 — turns T020, T023(엔진 부분) GREEN — closes US1-2…US1-6, US1-8, US5-5, 경계 사례 4·5
-- [ ] T033 [US1] `src/stt/server/cli.py` 와 `src/stt/cli.py`: `stt server intake [--root DIR]`, `stt server work [--root DIR] [--models DIR]`(`--models` 는 엔진
+- [X] T033 [US1] `src/stt/server/cli.py` 와 `src/stt/cli.py`: `stt server intake [--root DIR]`, `stt server work [--root DIR] [--models DIR]`(`--models` 는 엔진
   환경의 `HF_HOME` 과 `HF_HUB_OFFLINE=1`), 기본값 `/var/lib/stt`·`/var/lib/stt-models`, 각 단계 잠금을 `try_hold` 로 잡지 못하면 75, 사용법 오류 2,
   도움말 영어. `src/stt/cli.py` 의 `COMMANDS` 에 `"server"`, `_SUMMARIES` 에 영어 한 줄 — turns T022 GREEN — supports US1-1
 - [ ] T034 [US1] US1 확인: `uv run python -m pytest -q` 전부 통과(기존 243개 포함, 기존 시험 파일의 기존 시험은 고치지 않았음을 `git diff` 로 확인).
