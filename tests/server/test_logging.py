@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -121,3 +122,52 @@ def test_deletes_and_sweeps_never_log_hints_requester_transcript_or_file_names(
     assert f"{dead} failed interrupted" in output
     assert f"{midnight} failed audio_deleted" in output
     assert list(layout.inbox.iterdir()) == []
+
+
+ERROR_TEXT = "zzerrortext"
+
+
+def _decode_error() -> Exception:
+    import av.error
+
+    return av.error.InvalidDataError(1, f"{ERROR_TEXT} {HINT}")
+
+
+@pytest.mark.parametrize(
+    ("reason", "make_error"),
+    [
+        ("engine_error", lambda: ValueError(f"{ERROR_TEXT} {HINT} {REQUESTER}")),
+        ("unreadable_audio", _decode_error),
+    ],
+)
+def test_engine_failures_never_log_hints_requester_transcript_or_error_text(
+    layout: Layout,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    gpu_present: None,
+    pinned_models: Path,
+    reason: str,
+    make_error: Callable[[], Exception],
+) -> None:
+    clock = FakeClock()
+    request_id = new_id()
+    put_attachment(layout.inbox, f"{request_id}.audio.wav", make_wav(tmp_path / "source.wav", 2.0))
+    put_body(layout.inbox, f"{request_id}.json", transcribe_body(request_id, requested_by=REQUESTER, hints=[HINT]))
+    intake.run_once(layout, clock.now)
+    run_worker(layout, clock, mode=f"fail={reason}")
+    harness = Harness(tmp_path, monkeypatch)
+
+    def raiser(*args: object, **kwargs: object) -> None:
+        raise make_error()
+
+    monkeypatch.setattr(harness.model, "transcribe", raiser)
+    assert harness.run(hints=[HINT]) == 0
+
+    captured = capfd.readouterr()
+    output = captured.out + captured.err
+    for secret in (HINT, REQUESTER, ERROR_TEXT, TRANSCRIPT_LINE, "Traceback"):
+        assert secret not in output
+    for segment in PLAIN_SEGMENTS:
+        assert segment.text.strip() not in output
+    assert f"{request_id} failed {reason}" in output

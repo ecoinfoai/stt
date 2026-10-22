@@ -408,7 +408,7 @@ description: "Task list for 001-server-transcription"
   `outbox/<id>/` 없음, 작업 폴더 없음);
   `test_us5_9_short_recording_gets_five_minute_floor`(10초 녹음 job 에서 워커가 `processing_limit(10.0)` 을 부르고 300초 상한을 쓴다 — 감시 함수로 확인)
   — closes US5-1, US5-2, US5-3, US5-9 — verify RED
-- [ ] T058 [P] [US5] `tests/server/test_engine.py` 에 더한다 — RED:
+- [X] T058 [P] [US5] `tests/server/test_engine.py` 에 더한다 — RED:
   `test_us5_4_out_of_memory_fails_without_smaller_model`(가짜 모델이 `RuntimeError("CUDA failed with error out of memory")` → `gpu_out_of_memory`,
   `load_model` 이 `large-v3` 로만 불림, `out/` 비어 있음);
   `test_us5_7_silent_audio_completes_with_zero_paragraphs`(세그먼트 없음 → `done`, `paragraphs == []`, 전사록 = 머리글만, 화자 구분·`render_txt`·
@@ -416,17 +416,17 @@ description: "Task list for 001-server-transcription"
   `test_us5_8_unexpected_error_hides_internal_text`(예외 메시지 `"internal secret path"` → `engine_error`, detail 은 고정 영어 문장이고 그 글자 없음,
   stdout/stderr 에도 없음);
   `test_decode_failure_is_unreadable_audio`(PyAV 오류 → `unreadable_audio`, 고정 문장) — closes US5-4, US5-7, US5-8, SC-009 — verify RED
-- [ ] T059 [P] [US5] `tests/test_transcribe.py` 에 `test_transcribe_file_allow_empty`(R8-2: `allow_empty=True` 면 빈 목록, 기본값은 지금처럼 `RuntimeError`) — supports US5-7 — verify RED
-- [ ] T060 [P] [US5] `tests/server/test_logging.py` 에 더한다 — RED: 시간 초과·엔진 오류·해독 실패 경로에서도 힌트·요청자·전사문·예외 원문 0번 — supports FR-037, US5-8 — verify RED
+- [X] T059 [P] [US5] `tests/test_transcribe.py` 에 `test_transcribe_file_allow_empty`(R8-2: `allow_empty=True` 면 빈 목록, 기본값은 지금처럼 `RuntimeError`) — supports US5-7 — verify RED
+- [X] T060 [P] [US5] `tests/server/test_logging.py` 에 더한다 — RED: 시간 초과·엔진 오류·해독 실패 경로에서도 힌트·요청자·전사문·예외 원문 0번 — supports FR-037, US5-8 — verify RED
 
 ### Implementation for User Story 5 (turn T057–T060 GREEN)
 
-- [ ] T061 [US5] `src/stt/transcribe.py` R8-2: `transcribe_file(..., allow_empty: bool = False)`; docstring 영어, 기존 오류 문구 그대로 — turns T059 GREEN — supports US5-7
+- [X] T061 [US5] `src/stt/transcribe.py` R8-2: `transcribe_file(..., allow_empty: bool = False)`; docstring 영어, 기존 오류 문구 그대로 — turns T059 GREEN — supports US5-7
 - [ ] T062 [US5] `src/stt/server/intake.py`: `probe_duration` 이 열 수 없음·음성 흐름 없음을 `failed(unreadable_audio)`, `deadlines.MAX_AUDIO_S` 초과를
   `failed(audio_too_long)` 으로(고정 문장, 첨부 삭제) — turns `test_us5_1`, `test_us5_2` GREEN (T057) — closes US5-1, US5-2
 - [ ] T063 [US5] `src/stt/server/worker.py`: `processing_limit` 인자(기본 `deadlines.processing_limit`)로 job 의 `duration_s` 에서 상한을 구하고, 엔진을
   띄운 때부터 단조 시계로 재어 넘으면 `os.killpg(SIGKILL)` → `finish(failed(processing_timeout))`, 게시하지 않고 작업 폴더 삭제 — turns `test_us5_3`, `test_us5_9` GREEN (T057) — closes US5-3, US5-9
-- [ ] T064 [US5] `src/stt/server/engine.py`: `allow_empty=True` 로 전사하고 빈 결과면 화자 구분과 renderer 를 건너뛰어 머리글만 쓴다(R20-11);
+- [X] T064 [US5] `src/stt/server/engine.py`: `allow_empty=True` 로 전사하고 빈 결과면 화자 구분과 renderer 를 건너뛰어 머리글만 쓴다(R20-11);
   `classify_error(exc) -> tuple[reason, detail]` — OOM(`transcribe.is_oom_error`) → `gpu_out_of_memory`, PyAV 해독 오류 → `unreadable_audio`, 그 밖 →
   `engine_error`, detail 은 이유마다 고정 문장; 실패 판정을 `outcome.json` 에 쓰고 종료 0, `out/` 은 비우고, 예외 원문·traceback 을 출력하지 않음 — turns T058, T060 GREEN — closes US5-4, US5-7, US5-8
 - [ ] T065 [US5] US5 확인: 전체 시험 통과. RED 해당 없음 — 확인 — closes US5-1…US5-9, SC-009

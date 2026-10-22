@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -30,6 +31,9 @@ PARAGRAPH_MAX_CHARS = 800
 _DETAILS: dict[str, str] = {
     "gpu_unavailable": "The engine could not find a usable GPU.",
     "models_unavailable": "The pinned models are not present in the model cache.",
+    "gpu_out_of_memory": "The GPU ran out of memory while transcribing.",
+    "unreadable_audio": "The engine could not decode the audio.",
+    "engine_error": "The engine stopped because of an unexpected error.",
 }
 
 
@@ -47,8 +51,41 @@ def torch_cuda_available() -> bool:
     return bool(torch.cuda.is_available())
 
 
+def classify_error(error: Exception) -> tuple[str, str]:
+    """Maps an error raised while transcribing to a failure reason and its fixed detail.
+
+    The error text is never part of the detail: it may hold paths or audio content.
+
+    Args:
+        error: The exception the transcription raised.
+
+    Returns:
+        ``(reason, detail)``: ``gpu_out_of_memory`` for CUDA out of memory,
+        ``unreadable_audio`` for a PyAV decode error, ``engine_error`` otherwise.
+    """
+    import av.error
+
+    from stt import transcribe
+
+    if isinstance(error, RuntimeError) and transcribe.is_oom_error(error):
+        reason = "gpu_out_of_memory"
+    elif isinstance(error, av.error.FFmpegError):
+        reason = "unreadable_audio"
+    else:
+        reason = "engine_error"
+    return reason, _DETAILS[reason]
+
+
 def _write_outcome(work_dir: Path, outcome: dict[str, str]) -> None:
     atomic_write_text(work_dir / "outcome.json", json.dumps(outcome))
+
+
+def _write_failure(work_dir: Path, reason: str, detail: str) -> None:
+    """Records a failed verdict and leaves ``out/`` empty."""
+    out = work_dir / "out"
+    if out.exists():
+        shutil.rmtree(out)
+    _write_outcome(work_dir, {"status": "failed", "reason": reason, "detail": detail})
 
 
 def _start_check_failure(diarize: bool) -> str | None:
@@ -64,9 +101,11 @@ def _start_check_failure(diarize: bool) -> str | None:
     hf_home = os.environ.get("HF_HOME")
     if not hf_home:
         raise RuntimeError("HF_HOME is not set in the engine environment.")
-    if models.ref_mismatches(Path(hf_home)):
+    try:
+        mismatched = models.ref_mismatches(Path(hf_home))
+    except (OSError, UnicodeDecodeError):
         return "models_unavailable"
-    return None
+    return "models_unavailable" if mismatched else None
 
 
 def _diarize_args() -> argparse.Namespace:
@@ -105,12 +144,15 @@ def _transcribe(spec: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         )
         terms = ", ".join(hints[: report.applied]) or None
     segments, duration, language = transcribe.transcribe_file(
-        model, media, spec["language"], terms, BEAM_SIZE, word_timestamps=diarize
+        model, media, spec["language"], terms, BEAM_SIZE, word_timestamps=diarize, allow_empty=True
     )
     header = transcribe.build_header(
         spec["original_name"], MODEL_NAME, language, duration, diarized=diarize
     )
-    if diarize:
+    if not segments:
+        body = ""
+        paragraphs: list[dict[str, Any]] = []
+    elif diarize:
         pipeline = dz.load_pipeline(DEVICE)
         blocks = transcribe.diarized_blocks(media, segments, _diarize_args(), pipeline)
         body = dz.render_diarized(blocks, timestamps=True)
@@ -178,7 +220,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Raises:
         RuntimeError: If ``HF_HOME`` is not set in the environment.
-        ValueError: If the produced result violates the result contract.
     """
     parser = argparse.ArgumentParser(prog="python -m stt.server.engine")
     parser.add_argument("work_dir", type=Path, help="job work folder holding spec.json")
@@ -191,12 +232,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     reason = _start_check_failure(spec["diarize"])
     if reason is not None:
-        _write_outcome(
-            work_dir, {"status": "failed", "reason": reason, "detail": _DETAILS[reason]}
-        )
+        _write_failure(work_dir, reason, _DETAILS[reason])
         return 0
-    transcript, result = _transcribe(spec)
-    _write_results(work_dir, transcript, result)
+    try:
+        transcript, result = _transcribe(spec)
+        _write_results(work_dir, transcript, result)
+    except Exception as error:  # Any failure becomes a verdict; its text must not leak.
+        _write_failure(work_dir, *classify_error(error))
+        return 0
     _write_outcome(work_dir, {"status": "done"})
     return 0
 

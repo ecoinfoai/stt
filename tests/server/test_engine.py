@@ -389,3 +389,137 @@ def test_wrong_argument_count_is_a_usage_error() -> None:
 
     assert done.returncode == 2
     assert "usage" in done.stderr.lower()
+
+
+SECRET = "internal secret path"
+OOM_DETAIL = "The GPU ran out of memory while transcribing."
+UNREADABLE_DETAIL = "The engine could not decode the audio."
+ENGINE_ERROR_DETAIL = "The engine stopped because of an unexpected error."
+
+
+def make_raiser(error: BaseException) -> Any:
+    """Returns a stand-in for ``FakeModel.transcribe`` that raises `error`."""
+
+    def raiser(*args: Any, **kwargs: Any) -> None:
+        raise error
+
+    return raiser
+
+
+def assert_engine_failed(harness: Harness, reason: str, detail: str) -> None:
+    """Checks a failed verdict with the fixed `detail`, no result files and no secret."""
+    assert harness.outcome == {"status": "failed", "reason": reason, "detail": detail}
+    assert 0 < len(detail) <= 500
+    assert detail.isascii()
+    assert SECRET not in detail
+    out = harness.work_dir / "out"
+    assert not out.exists() or not list(out.iterdir())
+
+
+def assert_silent_output(capfd: pytest.CaptureFixture[str], *forbidden: str) -> None:
+    """Checks that no error text and no traceback reached stdout or stderr."""
+    captured = capfd.readouterr()
+    for text in (SECRET, *forbidden):
+        assert text not in captured.out + captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_us5_4_out_of_memory_fails_without_smaller_model(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        harness.model, "transcribe", make_raiser(RuntimeError("CUDA failed with error out of memory"))
+    )
+
+    assert harness.run() == 0
+
+    assert_engine_failed(harness, "gpu_out_of_memory", OOM_DETAIL)
+    assert harness.load_calls == [("large-v3", "cuda")]
+    assert_silent_output(capfd, "out of memory")
+
+
+@pytest.mark.parametrize("diarize_speakers", [False, True])
+def test_us5_7_silent_audio_completes_with_zero_paragraphs(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, diarize_speakers: bool
+) -> None:
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("must not be called for silent audio")
+
+    harness.model.segments = []
+    monkeypatch.setattr(transcribe, "render_txt", forbidden)
+    monkeypatch.setattr(transcribe, "diarized_blocks", forbidden)
+    monkeypatch.setattr(diarize, "render_diarized", forbidden)
+    monkeypatch.setattr(diarize, "diarize_wav", forbidden)
+
+    assert harness.run(diarize_speakers=diarize_speakers) == 0
+
+    assert harness.outcome == {"status": "done"}
+    assert harness.result["paragraphs"] == []
+    assert harness.result["summary"]["diarized"] is diarize_speakers
+    header = transcribe.build_header(
+        ORIGINAL_NAME, "large-v3", "en", 12.0, diarized=diarize_speakers
+    )
+    assert harness.transcript == header
+    assert harness.pipeline_devices == []
+    assert harness.wav_destinations == []
+
+
+def test_us5_8_unexpected_error_hides_internal_text(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(harness.model, "transcribe", make_raiser(ValueError(SECRET)))
+
+    assert harness.run() == 0
+
+    assert_engine_failed(harness, "engine_error", ENGINE_ERROR_DETAIL)
+    assert_silent_output(capfd)
+
+
+def test_decode_failure_is_unreadable_audio(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    import av.error
+
+    monkeypatch.setattr(
+        harness.model, "transcribe", make_raiser(av.error.InvalidDataError(1, SECRET))
+    )
+
+    assert harness.run() == 0
+
+    assert_engine_failed(harness, "unreadable_audio", UNREADABLE_DETAIL)
+    assert_silent_output(capfd)
+
+
+def test_classify_error_maps_each_error_to_its_fixed_pair() -> None:
+    import av.error
+
+    assert engine.classify_error(RuntimeError("CUDA failed with error out of memory")) == (
+        "gpu_out_of_memory", OOM_DETAIL,
+    )
+    assert engine.classify_error(av.error.InvalidDataError(1, "x")) == (
+        "unreadable_audio", UNREADABLE_DETAIL,
+    )
+    assert engine.classify_error(RuntimeError("something else")) == (
+        "engine_error", ENGINE_ERROR_DETAIL,
+    )
+
+
+def test_classify_error_ignores_the_message_of_other_errors() -> None:
+    assert engine.classify_error(ValueError("out of memory")) == ("engine_error", ENGINE_ERROR_DETAIL)
+
+
+@pytest.mark.parametrize(
+    "error", [PermissionError(13, "denied"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")]
+)
+def test_corrupt_model_cache_is_models_unavailable(
+    harness: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    error: Exception,
+) -> None:
+    monkeypatch.setattr("stt.server.models.ref_mismatches", make_raiser(error))
+
+    assert harness.run() == 0
+
+    assert_failed(harness, "models_unavailable")
+    assert "Traceback" not in capfd.readouterr().err
