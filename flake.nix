@@ -67,6 +67,11 @@
           python = pkgs.python312;
         };
 
+      nixosModules.default = { lib, pkgs, ... }: {
+        imports = [ ./nix/module.nix ];
+        services.stt.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.server;
+      };
+
       checks.x86_64-linux.server-smoke =
         let
           pkgs = nixpkgs.legacyPackages.x86_64-linux;
@@ -77,5 +82,12 @@
           ${server}/bin/python -c "from stt.server import contract, engine, models; contract.load_schema('request'); import jsonschema, av"
           touch $out
         '';
+
+      checks.x86_64-linux.server-vm = import ./nix/vm-test.nix {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+        module = self.nixosModules.default;
+        # Without the diarization stack: the engine stops at the GPU check in the VM.
+        package = self.packages.x86_64-linux.server-light;
+      };
     };
 }

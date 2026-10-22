@@ -456,14 +456,14 @@ description: "Task list for 001-server-transcription"
   VM 시험용 `server-light`(`server` 묶음만). devShell 은 그대로. 확인: `nix build .#checks.x86_64-linux.server-smoke -L` 통과, `jsonschema`·`rpds-py` 가
   휠로 들어감, 이 호스트에서 `env -i ./result/bin/python -c "import torch; print(torch.cuda.is_available())"` True(드라이버 없을 때 0·False 는 R1 에서
   확인함) — turns T069 GREEN — supports FR-015, R1
-- [ ] T071 `nix/vm-test.nix`(nixosTest) 를 먼저 쓴다 — 모듈이 없으므로 RED: quickstart B 의 1–11(호출하는 쪽 역할 계정이 0640 파일로 맡김 → 수 초 안
+- [X] T071 `nix/vm-test.nix`(nixosTest) 를 먼저 쓴다 — 모듈이 없으므로 RED: quickstart B 의 1–11(호출하는 쪽 역할 계정이 0640 파일로 맡김 → 수 초 안
   `queued`, `gpu_unavailable` 로 끝나고 `after_job` 녹음 삭제; GPU 잠금을 쥔 채 VM 시계 23:59:30 KST 에 맡긴 job → 자정 뒤 1분 안 녹음 없음·
   `failed(audio_deleted)`·`cause: midnight`; 23h58m + 1분 뒤 응답·기록 없음; 지우기 두 가지·남의 것·이미 지움·결과 없음; 중복·잘못된 이름·스키마
   위반·깨진 JSON·0600 요청·심볼릭 링크 첨부·3시간 넘는 녹음(ffmpeg 무음 저비트)·손상 파일·없는 `from_request`; `flock /run/stt/gpu.lock sleep 20`
   동안 `queued`(순서 1); `systemctl show` 의 `MemorySwapMax=0`·`LimitCORE=0`·`PrivateNetwork=yes`·워커 `DeviceAllow`·`RemoveIPC=yes`·
   `TimeoutStartUSec=infinity`·청소 타이머 `AccuracyUSec=1s`·`/var/lib/stt` 751; `journalctl` 에 시험 힌트·요청자 0번; 죽은 워커 흔적 정리; job 이 끝난
   뒤 워커가 다시 깨어나지 않음) — supports US1-1, US2-3, US2-5, US4-2, FR-015, FR-035, FR-037, SC-011 — verify RED(`nix build .#checks.x86_64-linux.server-vm` 실패)
-- [ ] T072 `nix/module.nix` 와 `flake.nix` 의 `nixosModules.default`·`checks.x86_64-linux.server-vm`: contracts/module.md §1–§3 그대로(선택지 셋, 계정·
+- [X] T072 `nix/module.nix` 와 `flake.nix` 의 `nixosModules.default`·`checks.x86_64-linux.server-vm`: contracts/module.md §1–§3 그대로(선택지 셋, 계정·
   그룹, `StateDirectoryMode=0751`, tmpfiles 폴더·권한·inbox 기본 ACL·`/run/stt/gpu.lock`, `environment.variables.STT_GPU_LOCK`, 단위 넷과
   path·timer(`AccuracySec=1s`), 공통 격리 묶음 + `MemorySwapMax=0`·`LimitCORE=0`·`SuccessExitStatus=75`, 워커만 GPU 장치·`RemoveIPC=true`·
   `TimeoutStartSec=infinity`·`after`/`wants` 모델 받기 단위, 모델 받기 단위만 망·조건 없이 부팅마다·`RemainAfterExit=true`·`EnvironmentFile`,
