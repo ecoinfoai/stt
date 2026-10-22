@@ -518,7 +518,8 @@ description: "Task list for 001-server-transcription"
 - [ ] T081 [P] 서버 배포·문서 — `nix/vm-test.nix` 의 요청에서 `delete_audio`·`scope` 를 빼고 지우기 확인을 「다 지우기」로 바꾼다(매일 정리는
   VM 시계를 옮기지 않으면 볼 수 없으므로 pytest 몫); `quickstart.md`·`contracts/README.md`(요청·응답 설명, §7 「응답이 사라지면 만료」 곁에 매일
   정리)·`README.md` 서버 절을 R22 로 고친다. 확인: `nix build .#checks.x86_64-linux.server-vm -L` 통과, `rg -n 'delete_audio|at_midnight|after_job|
-  no_result|retention_limit|RETENTION_DUE|23h58|23 h 58' src tests nix specs/001-server-transcription/{quickstart.md,contracts} README.md` 0건.
+  no_result|retention_limit|RETENTION_DUE|23h58|23 h 58' src nix specs/001-server-transcription/{quickstart.md,contracts} README.md` 0건(`tests` 는 없음을
+  확인하는 시험이 이 낱말을 쓰므로 뺀다), `tests/server/test_contract.py::test_readme_examples_validate` 통과.
   RED 해당 없음 — 배포 선언·문서 (VM 시험이 확인) — supports US2-1, US2-3, FR-005
 
 ### 명령줄: GPU 전용 (US4)
