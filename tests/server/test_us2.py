@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +15,7 @@ from stt.server import contract, intake, lifecycle
 from stt.server.layout import Layout, hold
 from stt.server.records import load_audio, load_job
 
-from .conftest import FAKE_ENGINE, FakeClock, leftovers, make_wav, new_id, run_worker
+from .conftest import FAKE_ENGINE, FakeClock, leftovers, make_wav, new_id, run_worker, write_delete_request
 from .inbox_helpers import make_layout, put_attachment, put_body, read_response, transcribe_body
 
 INTERRUPTED_DETAIL = "The worker stopped before the job finished."
@@ -151,3 +154,240 @@ def test_worker_after_expired_job_still_runs_the_next_one(layout: Layout, wav: P
     assert load_job(layout, expired).state == "failed"
     assert load_job(layout, fresh).state == "done"
     assert leftovers(layout.root) == []
+
+
+
+def submit_delete(layout: Layout, clock: FakeClock, target: str, scope: str = "result", by: str = "professor-a") -> str:
+    request_id = new_id()
+    write_delete_request(layout.inbox, request_id=request_id, requested_by=by, target=target, scope=scope)
+    intake.run_once(layout, clock.now)
+    return request_id
+
+
+def snapshot(layout: Layout, *skip: str) -> dict[Path, bytes]:
+    """Reads every regular file under the state root except the inbox and the named outbox responses."""
+    skipped = {layout.outbox / f"{name}.json" for name in skip}
+    return {
+        path: path.read_bytes()
+        for path in layout.root.rglob("*")
+        if path.is_file() and layout.inbox not in path.parents and path not in skipped
+    }
+
+
+def answer(layout: Layout, delete_id: str, target: str, scope: str, outcome: str) -> dict[str, Any]:
+    doc = assert_valid_response(layout, delete_id)
+    assert doc["kind"] == "delete"
+    assert (doc["target"], doc["scope"], doc["outcome"]) == (target, scope, outcome)
+    return doc
+
+
+def done_job(layout: Layout, wav: Path, clock: FakeClock, **changes: Any) -> str:
+    request_id = submit(layout, wav, clock, **changes)
+    run_worker(layout, clock)
+    clock.advance(60)
+    return request_id
+
+
+def test_us2_6_result_delete_keeps_audio_until_midnight(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    request_id = done_job(layout, wav, clock, delete_audio="at_midnight")
+    assert (layout.outbox / request_id / "transcript.txt").is_file()
+
+    delete_id = submit_delete(layout, clock, request_id)
+
+    answer(layout, delete_id, request_id, "result", "deleted")
+    assert not (layout.outbox / request_id).exists()
+    doc = assert_valid_response(layout, request_id)
+    assert doc["state"] == "done"
+    assert doc["result"]["deleted_at"] == "2026-03-02T01:01:00Z"
+    assert "deleted_at" not in doc["audio"]
+    assert (layout.audio / request_id / "audio.wav").is_file()
+    assert load_job(layout, request_id).result_deleted_at == clock.now()
+    assert list(layout.inbox.iterdir()) == []
+
+
+def test_result_delete_twice_reports_already_deleted(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    request_id = done_job(layout, wav, clock, delete_audio="at_midnight")
+    first = submit_delete(layout, clock, request_id)
+    before = snapshot(layout, first)
+    clock.advance(60)
+
+    second = submit_delete(layout, clock, request_id)
+
+    answer(layout, second, request_id, "result", "already_deleted")
+    assert snapshot(layout, first, second) == before
+
+
+def test_us2_8_delete_everything_on_stored_audio(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    request_id = done_job(layout, wav, clock, delete_audio="at_midnight", hints=["alpha"])
+    before = assert_valid_response(layout, request_id)
+    clock.advance(60)
+
+    delete_id = submit_delete(layout, clock, request_id, "everything")
+
+    answer(layout, delete_id, request_id, "everything", "deleted")
+    doc = assert_valid_response(layout, request_id)
+    assert doc["state"] == "deleted"
+    assert doc["deleted"] == {"at": "2026-03-02T01:02:00Z"}
+    assert doc["audio"]["deleted_at"] == "2026-03-02T01:02:00Z"
+    assert doc["result"]["deleted_at"] == "2026-03-02T01:02:00Z"
+    assert doc["started_at"] == before["started_at"]
+    assert doc["finished_at"] == before["finished_at"]
+    assert "failure" not in doc
+    assert not (layout.outbox / request_id).exists()
+    assert load_audio(layout, request_id).deleted_by == "request"
+    assert leftovers(layout.root) == []
+    again = submit_delete(layout, clock, request_id)
+    answer(layout, again, request_id, "result", "already_deleted")
+
+    failed = submit(layout, wav, clock, delete_audio="at_midnight")
+    run_worker(layout, clock, "fail=engine_error")
+    submit_delete(layout, clock, failed, "everything")
+    doc = assert_valid_response(layout, failed)
+    assert doc["state"] == "deleted"
+    assert "result" not in doc
+    assert "failure" not in doc
+    assert load_job(layout, failed).result_deleted_at is None
+    later = submit_delete(layout, clock, failed)
+    answer(layout, later, failed, "result", "no_result")
+
+
+def test_us2_9_delete_everything_stops_running_job(layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path) -> None:
+    request_id = submit(layout, wav, clock, hints=["alpha"])
+    pid_file = tmp_path / "engine.pid"
+    # exec keeps the pid, so the file names the engine process, which leads its own process group.
+    launcher = "import os, sys; open(sys.argv[1], 'w').write(str(os.getpid())); os.execv(sys.argv[2], sys.argv[2:])"
+    engine_cmd = [sys.executable, "-c", launcher, str(pid_file), sys.executable, str(FAKE_ENGINE), "--mode", "sleep=30"]
+    errors: list[BaseException] = []
+
+    def work() -> None:
+        try:
+            run_worker(layout, clock, engine_cmd=engine_cmd, poll_s=0.05)
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=work)
+    thread.start()
+    partial = layout.work / request_id / "out" / "partial.txt"
+    started = time.monotonic()
+    while not partial.exists() and time.monotonic() - started < 10:
+        time.sleep(0.02)
+    assert partial.exists()
+    engine_group = int(pid_file.read_text(encoding="utf-8"))
+
+    delete_id = submit_delete(layout, clock, request_id, "everything")
+    deleted_at = time.monotonic()
+    while time.monotonic() - deleted_at < 2 and (layout.work / request_id).exists():
+        time.sleep(0.02)
+
+    assert time.monotonic() - deleted_at < 2
+    with pytest.raises(ProcessLookupError):
+        os.killpg(engine_group, 0)
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert not errors
+    answer(layout, delete_id, request_id, "everything", "deleted")
+    assert not (layout.work / request_id).exists()
+    assert not (layout.outbox / request_id).exists()
+    assert not partial.exists()
+    doc = assert_valid_response(layout, request_id)
+    assert doc["state"] == "deleted"
+    assert leftovers(layout.root) == []
+
+
+@pytest.mark.parametrize("scope", ["result", "everything"])
+@pytest.mark.parametrize("case", ["other_requester", "unknown_target"])
+def test_us2_10_other_requester_delete_refused(
+    layout: Layout, wav: Path, clock: FakeClock, scope: str, case: str
+) -> None:
+    request_id = done_job(layout, wav, clock, delete_audio="at_midnight")
+    target = request_id if case == "other_requester" else new_id()
+    before = snapshot(layout)
+
+    delete_id = submit_delete(layout, clock, target, scope, by="professor-b")
+
+    doc = answer(layout, delete_id, target, scope, "refused")
+    assert set(doc) == {
+        "schema_version", "kind", "request_id", "target", "scope", "outcome", "processed_at", "expires_at"
+    }
+    assert snapshot(layout, delete_id) == before
+    assert (layout.audio / request_id / "audio.wav").is_file()
+
+
+def test_us2_11_second_delete_reports_already_deleted(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    request_id = done_job(layout, wav, clock, delete_audio="at_midnight")
+    first = submit_delete(layout, clock, request_id, "everything")
+    before = snapshot(layout, first)
+    clock.advance(60)
+
+    second = submit_delete(layout, clock, request_id, "everything")
+
+    answer(layout, second, request_id, "everything", "already_deleted")
+    assert snapshot(layout, first, second) == before
+
+
+@pytest.mark.parametrize("state", ["queued", "running", "failed"])
+def test_us2_12_result_delete_without_result_reports_no_result(
+    layout: Layout, wav: Path, clock: FakeClock, state: str
+) -> None:
+    request_id = submit(layout, wav, clock, delete_audio="at_midnight")
+    if state == "running":
+        with hold(layout.state_lock):
+            lifecycle.start(layout, load_job(layout, request_id), clock.now())
+    if state == "failed":
+        run_worker(layout, clock, "fail=engine_error")
+    before = snapshot(layout)
+
+    delete_id = submit_delete(layout, clock, request_id)
+
+    answer(layout, delete_id, request_id, "result", "no_result")
+    assert snapshot(layout, delete_id) == before
+    assert load_job(layout, request_id).state == state
+
+
+def test_delete_request_id_mismatch_refused(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    request_id = done_job(layout, wav, clock, delete_audio="at_midnight")
+    before = snapshot(layout)
+    file_id = new_id()
+    path = write_delete_request(layout.inbox, request_id=new_id(), requested_by="professor-a", target=request_id)
+    path.rename(layout.inbox / f"{file_id}.json")
+
+    intake.run_once(layout, clock.now)
+
+    doc = assert_valid_response(layout, file_id)
+    assert doc["kind"] == "invalid"
+    assert doc["failure"]["reason"] == "invalid_request"
+    assert list(layout.inbox.iterdir()) == []
+    assert snapshot(layout, file_id) == before
+    assert (layout.outbox / request_id / "transcript.txt").is_file()
+
+
+def test_duplicate_delete_request_marks_its_response(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    request_id = done_job(layout, wav, clock, delete_audio="at_midnight")
+    delete_id = submit_delete(layout, clock, request_id)
+    clock.advance(60)
+    write_delete_request(
+        layout.inbox, request_id=delete_id, requested_by="professor-a", target=request_id, scope="everything"
+    )
+
+    intake.run_once(layout, clock.now)
+
+    doc = answer(layout, delete_id, request_id, "result", "deleted")
+    assert doc["duplicate_refused_at"] == "2026-03-02T01:02:00Z"
+    assert load_job(layout, request_id).state == "done"
+    assert list(layout.inbox.iterdir()) == []
+
+
+def test_delete_everything_marks_the_result_only_for_a_done_job(layout: Layout, wav: Path, clock: FakeClock) -> None:
+    queued = submit(layout, wav, clock)
+    running = submit(layout, wav, clock)
+    with hold(layout.state_lock):
+        lifecycle.start(layout, load_job(layout, running), clock.now())
+        for request_id in (queued, running):
+            lifecycle.delete_everything(layout, load_job(layout, request_id), clock.now())
+
+    for request_id in (queued, running):
+        job = load_job(layout, request_id)
+        assert job.state == "deleted"
+        assert job.deleted_at == clock.now()
+        assert job.result_deleted_at is None
+        assert "result" not in assert_valid_response(layout, request_id)

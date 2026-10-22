@@ -132,28 +132,6 @@ def test_from_request_is_temporarily_failed_invalid_request(
     assert capfd.readouterr().out.splitlines() == [f"{request_id} failed invalid_request"]
 
 
-def test_delete_request_is_temporarily_refused(layout: Layout, capfd: pytest.CaptureFixture[str]) -> None:
-    request_id = new_id()
-    body = {
-        "schema_version": 1,
-        "kind": "delete",
-        "request_id": request_id,
-        "requested_by": "professor-a",
-        "target": new_id(),
-        "scope": "result",
-    }
-    put_body(layout.inbox, f"{request_id}.json", body)
-
-    intake.run_once(layout, FakeClock().now)
-
-    response = read_response(layout, request_id)
-    assert contract.validate_response(response) is None
-    assert response["kind"] == "invalid"
-    assert response["failure"]["detail"] == "kind: delete requests are not supported yet"
-    assert inbox_names(layout) == []
-    assert capfd.readouterr().out.splitlines() == [f"{request_id} refused"]
-
-
 def test_refusal_log_line_carries_only_id_and_state(layout: Layout, capfd: pytest.CaptureFixture[str]) -> None:
     request_id = new_id()
     (layout.inbox / f"{request_id}.json").write_bytes(b"{")

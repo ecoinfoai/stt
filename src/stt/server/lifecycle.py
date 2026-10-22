@@ -96,9 +96,10 @@ def due_cause(audio: Audio, now: datetime) -> str | None:
 
     Returns:
         ``midnight`` once the policy time has passed (and is not later than the hard
-        deadline), ``retention_limit`` once the hard deadline has passed first.
+        deadline), ``retention_limit`` once the hard deadline has passed first;
+        None for a recording that is already deleted.
     """
-    if now < deadlines.audio_delete_at(audio.policy, audio.hard_deadline):
+    if audio.deleted_at is not None or now < deadlines.audio_delete_at(audio.policy, audio.hard_deadline):
         return None
     if "at" in audio.policy and audio.policy["at"] <= audio.hard_deadline:
         return "midnight"
@@ -122,11 +123,12 @@ def finish(layout: Layout, job: Job, state: EndState, now: datetime, failure: Fa
     """Moves a job to an end state; the only way a job reaches one.
 
     Also removes the job's hints, and deletes its recording when the recording's
-    policy is ``after_job`` for this very job.
+    policy is ``after_job`` for this very job. A job that already ended (``done`` or
+    ``failed``, on its way to ``deleted``) keeps its ``finished_at``.
 
     Args:
         layout: The state root.
-        job: The ``queued`` or ``running`` job.
+        job: The job to end.
         state: ``done``, ``failed`` or ``deleted``.
         now: Finish time.
         failure: Why the job failed; only for ``failed``.
@@ -134,7 +136,8 @@ def finish(layout: Layout, job: Job, state: EndState, now: datetime, failure: Fa
     Returns:
         The saved end-state job.
     """
-    finished = replace(job, state=state, finished_at=now, failure=failure, hints=None)
+    finished_at = now if job.finished_at is None else job.finished_at
+    finished = replace(job, state=state, finished_at=finished_at, failure=failure, hints=None)
     save_job(layout, finished)
     marker_path(layout, job).unlink(missing_ok=True)
     audio = load_audio(layout, job.audio_id)
@@ -146,26 +149,76 @@ def finish(layout: Layout, job: Job, state: EndState, now: datetime, failure: Fa
     return finished
 
 
-def delete_audio(layout: Layout, audio_id: str, cause: str, now: datetime) -> list[Job]:
+def delete_audio(layout: Layout, audio_id: str, cause: str, now: datetime, keep: str | None = None) -> list[Job]:
     """Deletes a recording and fails the jobs still waiting for it.
 
     Only the file folder goes; the audio record stays so responses can report
     ``deleted_at``. A ``running`` job is failed here too; stopping its engine is
-    the worker's business.
+    the worker's business. A recording that is already deleted is left alone.
 
     Args:
         layout: The state root.
         audio_id: The recording to delete.
         cause: ``midnight``, ``retention_limit`` or ``deleted_on_request``.
         now: Deletion time.
+        keep: Request id of a user the caller ends itself, which is not failed here.
 
     Returns:
         The jobs that were failed with ``audio_deleted``.
     """
-    audio = _remove_audio(layout, load_audio(layout, audio_id), _DELETED_BY[cause], now)
+    audio = load_audio(layout, audio_id)
+    if audio.deleted_at is not None:
+        return []
+    audio = _remove_audio(layout, audio, _DELETED_BY[cause], now)
     failure = Failure("audio_deleted", _AUDIO_DELETED_DETAIL, cause)
-    waiting = [job for job in load_jobs(layout) if job.request_id in audio.users and job.state in ("queued", "running")]
+    waiting = [
+        job
+        for job in load_jobs(layout)
+        if job.request_id in audio.users and job.request_id != keep and job.state in ("queued", "running")
+    ]
     return [finish(layout, job, "failed", now, failure) for job in waiting]
+
+
+def delete_result(layout: Layout, job: Job, now: datetime) -> Job:
+    """Deletes the published result of a ``done`` job; the recording follows its own schedule.
+
+    Args:
+        layout: The state root.
+        job: The ``done`` job whose result has not been deleted.
+        now: Deletion time.
+
+    Returns:
+        The saved job with ``result_deleted_at`` set.
+    """
+    shutil.rmtree(layout.outbox / job.request_id)
+    cleared = replace(job, result_deleted_at=now)
+    save_job(layout, cleared)
+    write_job_response(layout, cleared, now)
+    return cleared
+
+
+def delete_everything(layout: Layout, job: Job, now: datetime) -> Job:
+    """Ends a job as ``deleted`` and removes its recording, result and hints.
+
+    Other queued or running users of the same recording fail with
+    ``audio_deleted`` first. A running job's engine is stopped by the worker,
+    which sees the job is no longer ``running``.
+
+    Args:
+        layout: The state root.
+        job: The job in any state but ``deleted``.
+        now: Deletion time.
+
+    Returns:
+        The saved ``deleted`` job.
+    """
+    delete_audio(layout, job.audio_id, "deleted_on_request", now, keep=job.request_id)
+    result = layout.outbox / job.request_id
+    if result.exists():
+        shutil.rmtree(result)
+    had_result = job.state == "done" and job.result_deleted_at is None
+    marked = replace(job, deleted_at=now, result_deleted_at=now if had_result else job.result_deleted_at)
+    return finish(layout, marked, "deleted", now)
 
 
 def clear_dead_worker(layout: Layout, now: datetime) -> list[Job]:

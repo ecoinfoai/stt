@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -57,7 +58,19 @@ def _prepare(layout: Layout, job: Job) -> Path:
     return work_dir
 
 
-def _run_engine(engine_cmd: Sequence[str], work_dir: Path, models_dir: Path, poll_s: float) -> None:
+def _is_running(layout: Layout, request_id: str) -> bool:
+    with hold(layout.state_lock):
+        return load_job(layout, request_id).state == "running"
+
+
+def _run_engine(
+    layout: Layout, request_id: str, engine_cmd: Sequence[str], work_dir: Path, models_dir: Path, poll_s: float
+) -> bool:
+    """Runs the engine until it ends; kills it as soon as the job is no longer ``running``.
+
+    Returns:
+        True if the engine ended by itself, False if it was killed.
+    """
     env = {**os.environ, "TMPDIR": str(work_dir), "HF_HOME": str(models_dir), "HF_HUB_OFFLINE": "1"}
     process = subprocess.Popen(
         [*engine_cmd, str(work_dir)],
@@ -68,7 +81,12 @@ def _run_engine(engine_cmd: Sequence[str], work_dir: Path, models_dir: Path, pol
         start_new_session=True,
     )
     while process.poll() is None:
+        if not _is_running(layout, request_id):
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            return False
         time.sleep(poll_s)
+    return True
 
 
 def _verdict(work_dir: Path) -> Failure | None:
@@ -156,7 +174,7 @@ def run_one(
         layout: The state root.
         engine_cmd: Engine command; the work folder is appended as the last argument.
         now: Clock returning the current UTC time.
-        poll_s: Seconds between checks whether the engine has ended.
+        poll_s: Seconds between checks whether the engine has ended or the job was taken away.
         models_dir: Model cache handed to the engine as ``HF_HOME``.
 
     Returns:
@@ -166,11 +184,13 @@ def run_one(
         job = _pick(layout, now())
         if job is None:
             return False
+        work_dir = _prepare(layout, job)
     _log(job.request_id, "running")
-    work_dir = _prepare(layout, job)
     try:
-        _run_engine(engine_cmd, work_dir, models_dir, poll_s)
-        _settle(layout, job, work_dir, _verdict(work_dir), now)
+        if _run_engine(layout, job.request_id, engine_cmd, work_dir, models_dir, poll_s):
+            _settle(layout, job, work_dir, _verdict(work_dir), now)
+        else:
+            _log(job.request_id, "stopped")
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
     return True
@@ -190,7 +210,7 @@ def run(
         layout: The state root.
         engine_cmd: Engine command; the work folder is appended as the last argument.
         now: Clock returning the current UTC time.
-        poll_s: Seconds between checks whether the engine has ended.
+        poll_s: Seconds between checks whether the engine has ended or the job was taken away.
         models_dir: Model cache handed to the engine as ``HF_HOME``.
 
     Returns:

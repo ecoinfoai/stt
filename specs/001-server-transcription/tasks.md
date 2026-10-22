@@ -294,13 +294,13 @@ description: "Task list for 001-server-transcription"
   녹음 기록은 마지막 사용 job 의 `expires_at`, 기록 없는 응답은 그 `expires_at`, ctime 으로 1시간 지난 inbox 잔여물·임시 파일·게시 중간 폴더·기록 없는
   녹음 폴더 — 지울 때 파일 이름 없는 로그 한 줄); `clear_dead_worker(layout, now)` — `running` 을 `finish(failed(interrupted))`, 그 job 의
   `outbox/<id>/`(게시 뒤 마무리 전에 죽은 경우)·`work/*`·게시 중간 폴더 삭제 — T040–T042 와 함께 turns `test_us2_1`…`_8`, `_10`…`_12`, T036 GREEN — closes US2-1, US2-3, US2-5, US2-7, US2-8
-- [ ] T040 [US2] `src/stt/server/intake.py`: delete 요청 — 같은 요청자의 transcribe 가 아니면 `refused`(없음과 같은 답); `scope: result` → 결과가 있으면
+- [X] T040 [US2] `src/stt/server/intake.py`: delete 요청 — 같은 요청자의 transcribe 가 아니면 `refused`(없음과 같은 답); `scope: result` → 결과가 있으면
   `delete_result`·`deleted`, 이미 지워졌으면 `already_deleted`, 생긴 적 없으면 `no_result`; `scope: everything` → 이미 `deleted` 면 `already_deleted`,
   아니면 `delete_everything`·`deleted`; `deleted` job 에 `scope: result` 는 `result_deleted_at` 이 있으면 `already_deleted`, 없으면 `no_result`;
   본문 `request_id` 가 파일 이름과 다르면 `refusal`; delete 요청 자신의 응답 `outbox/<delete_request_id>.json`. US1 의 임시 `refusal` 을 없앤다 —
   turns `test_us2_6`, `_8`, `_10`, `_11`, `_12`, `test_result_delete_twice_reports_already_deleted`, `test_delete_request_id_mismatch_refused`,
   `test_duplicate_delete_request_marks_its_response` GREEN (T035) — closes US2-6, US2-8, US2-10, US2-11, US2-12
-- [ ] T041 [US2] `src/stt/server/worker.py`: 매 `poll_s` 마다 상태 잠금 아래 job 이 아직 `running` 인지 봐서 아니면 `os.killpg(SIGKILL)`·작업 폴더 삭제·
+- [X] T041 [US2] `src/stt/server/worker.py`: 매 `poll_s` 마다 상태 잠금 아래 job 이 아직 `running` 인지 봐서 아니면 `os.killpg(SIGKILL)`·작업 폴더 삭제·
   게시하지 않음; 시작할 때(`worker.lock` 을 쥔 뒤) `clear_dead_worker`; job 을 고를 때 그 녹음의 삭제 시각이 지났으면 시작하지 않고 그 원인으로
   `lifecycle.delete_audio`(R21-7) — turns `test_us2_1`, `_2`, `_4`, `_9`, `test_edge_8_queued_job_past_deadline_not_started` GREEN (T035) — closes US2-1, US2-2, US2-4, US2-9, 경계 사례 8(워커 쪽)
 - [ ] T042 [US2] `src/stt/server/sweep.py` `run_once(layout, now) -> None` — 정책 시각·`hard_deadline` 이 지난 녹음을 `delete_audio`(원인 `midnight`·

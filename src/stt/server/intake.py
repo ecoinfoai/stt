@@ -33,7 +33,7 @@ from stt.server.records import (
     save_audio,
     save_job,
 )
-from stt.server.responses import job_status, refusal, rejected_status
+from stt.server.responses import delete_outcome, job_status, refusal, rejected_status
 
 _AUDIO_FOLDER_MODE = 0o700
 _AUDIO_FILE_MODE = 0o600
@@ -54,7 +54,6 @@ _ATTACHMENT_NAME_DETAIL = "audio.file: name must start with the request id"
 _ATTACHMENT_DETAIL = "audio.file: attachment is missing or not a safe regular file"
 _LANGUAGE_DETAIL = "language: language is not supported"
 _FROM_REQUEST_DETAIL = "from_request is not supported."
-_DELETE_DETAIL = "kind: delete requests are not supported yet"
 
 
 def probe_duration(path: Path) -> float:
@@ -135,6 +134,32 @@ def _refuse(layout: Layout, request_id: str, detail: str, now: datetime) -> None
 def _reject(layout: Layout, request_id: str, detail: str, now: datetime) -> None:
     _answer(layout, rejected_status(request_id, "invalid_request", detail, now))
     _log(request_id, "failed invalid_request")
+
+
+def _delete_outcome(layout: Layout, body: dict[str, Any], now: datetime) -> str:
+    """Applies a delete request to its target and returns the outcome; the state lock is held."""
+    target = layout.jobs / body["target"] / "job.json"
+    job = load_job(layout, body["target"]) if target.exists() else None
+    if job is None or job.requested_by != body["requested_by"]:
+        return "refused"
+    if body["scope"] == "everything":
+        if job.state == "deleted":
+            return "already_deleted"
+        lifecycle.delete_everything(layout, job, now)
+        return "deleted"
+    if job.result_deleted_at is not None:
+        return "already_deleted"
+    if job.state != "done":
+        return "no_result"
+    lifecycle.delete_result(layout, job, now)
+    return "deleted"
+
+
+def _process_delete(layout: Layout, request_id: str, body: dict[str, Any], now: datetime) -> None:
+    with hold(layout.state_lock):
+        outcome = _delete_outcome(layout, body, now)
+        lifecycle.write_response(layout, delete_outcome(request_id, body["target"], body["scope"], outcome, now))
+    _log(request_id, f"delete {outcome}")
 
 
 def _copy_attachment(source: BinaryIO, folder: Path, extension: str) -> Path:
@@ -248,7 +273,7 @@ def _process(layout: Layout, path: Path, now: Callable[[], datetime]) -> None:
             _reject(layout, request_id, _NAME_MISMATCH_DETAIL, moment)
         return
     if body["kind"] == "delete":
-        _refuse(layout, request_id, _DELETE_DETAIL, moment)
+        _process_delete(layout, request_id, body, moment)
         return
     _process_transcribe(layout, request_id, body, moment)
 
