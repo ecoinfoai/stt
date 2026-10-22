@@ -350,7 +350,7 @@ class TestGpuOnlyCommandLine:
         assert stopped.value.code == 1
         captured = capsys.readouterr()
         assert captured.err.strip() == NO_GPU_MESSAGE
-        assert "장치:" not in captured.out
+        assert captured.out == ""
         assert loaded == []
         assert not (tmp_path / "talk.txt").exists()
 
