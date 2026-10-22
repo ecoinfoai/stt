@@ -469,7 +469,7 @@ description: "Task list for 001-server-transcription"
   `TimeoutStartSec=infinity`·`after`/`wants` 모델 받기 단위, 모델 받기 단위만 망·조건 없이 부팅마다·`RemainAfterExit=true`·`EnvironmentFile`,
   **`HF_HOME`·`HF_HUB_OFFLINE` 을 단위 환경에 두지 않음**(워커가 엔진에만 넣는다), `LD_LIBRARY_PATH` 없음). 확인: `nix build
   .#checks.x86_64-linux.server-vm -L` 통과 — turns T071 GREEN — supports FR-015, FR-035, FR-037, SC-011
-- [ ] T073 [P] `README.md` 에 서버 절(영어): 하는 일·하지 않는 일, 요청함 규약은 `specs/001-server-transcription/contracts/README.md` 로 연결,
+- [X] T073 [P] `README.md` 에 서버 절(영어): 하는 일·하지 않는 일, 요청함 규약은 `specs/001-server-transcription/contracts/README.md` 로 연결,
   `stt server` 명령, `STT_GPU_LOCK`, 호스트의 몫(module.md §4 — 전용 토큰 비밀, `nvidia_uvm`), 개인정보 삭제 약속. RED 해당 없음 — 문서 — supports FR-023
 
 ---

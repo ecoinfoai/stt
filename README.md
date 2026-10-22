@@ -47,6 +47,9 @@ src/stt/fetch.py        download audio + metadata from a URL list
 src/stt/transcribe.py   transcription CLI
 src/stt/metadata.py     info.json + run info → .meta.yaml
 src/stt/batch.py        transcribe a curated list, per-item options
+src/stt/gpu_lock.py     shared GPU lock for the command line (STT_GPU_LOCK)
+src/stt/server/         `stt server` stages: intake, worker, sweep, engine
+nix/                    server package, NixOS module `services.stt`, VM test
 
 run_all.bat/.sh     fetch + transcribe in one go
 run_list.bat/.sh    transcribe from a list file
@@ -220,6 +223,95 @@ transcription starts, so a typo surfaces in seconds rather than an
 hour in. `--dry-run` prints the resolved plan and stops. Items
 sharing the same options are grouped so the model loads once per
 group; see `list_example.yaml` for per-item overrides.
+
+## Server (bhu-llm inbox)
+
+`stt server` turns the machine into a transcription back end for
+bhu-llm. The only channel is files: bhu-llm writes a request into an
+inbox folder and reads the answer from an outbox folder. There is no
+open port. The protocol, folder permissions, checks and JSON schemas
+are the contract:
+[specs/001-server-transcription/contracts/README.md](specs/001-server-transcription/contracts/README.md).
+
+### What it does and does not do
+
+- Accepts or refuses each request, transcribes jobs one at a time in
+  arrival order with the pinned `large-v3` model, and writes a
+  response plus the transcript, a paragraph list and a run summary.
+  Optional speaker labels are `화자N` only; hint terms are used in
+  the order received.
+- Never touches the network while processing, and never swaps in a
+  smaller model or the CPU: a job that cannot run on the GPU fails
+  with a fixed reason.
+- Does not validate, select or reorder the hint vocabulary, does not
+  accept a reference vocabulary, does not put real names on speakers
+  (no voice enrollment), and does not call an LLM. That work belongs
+  to the caller.
+- Keeps no per-user vocabulary, history or statistics. Logs carry
+  only the request ID, state, failure reason and times.
+
+### Personal-data deletion promise
+
+Recordings are personal data. A recording, the audio made while
+processing it and the hint copy are deleted when the job asks
+(`after_job`: right after the job ends; `at_midnight`: next 00:00
+KST) and in every case within 24 hours of first receipt, including
+after a crash. A result is deleted on request or 24 hours after
+receipt. Two delete requests exist: `scope: result` removes only the
+result (the recording follows the job's own schedule, so a second
+pass can reuse it); `scope: everything` removes the recording,
+working audio, hint copy and result at once and stops a running job.
+Details: contract README §5.
+
+### Commands
+
+Each run drains its queue and exits; systemd path and timer units
+start them. Defaults: `--root /var/lib/stt`,
+`--models /var/lib/stt-models`.
+
+| Command | Does | Exit codes |
+|---|---|---|
+| `stt server intake [--root DIR]` | process the inbox once: accept, refuse, delete | 0, 2 usage, 75 another intake is running |
+| `stt server work [--root DIR] [--models DIR] --gpu-lock FILE` | run queued jobs one at a time | 0, 2, 75 another worker is running |
+| `stt server sweep [--root DIR]` | delete what is due, clean up stopped jobs | 0, 2, 75 another sweep is running |
+| `stt server fetch-models --models DIR` | download the pinned model commits; instant when already complete | 0, 2, 1 download failed |
+
+`fetch-models` is the only command that needs network access and
+`HF_TOKEN`; the engine reads the models offline. Full reference:
+[contracts/cli.md](specs/001-server-transcription/contracts/cli.md).
+
+### One GPU, one queue — `STT_GPU_LOCK`
+
+The worker holds an exclusive lock on `--gpu-lock FILE` while a model
+is on the GPU. If `STT_GPU_LOCK` names a file, `stt transcribe`,
+`stt batch` and `stt enroll` on `cuda` take the same lock and print
+`GPU is in use by another stt job; waiting for it to finish.` while
+they wait. Unset, nothing changes (other machines, Windows). Set to a
+missing file, the command stops with exit 2. On `cpu` it does not lock.
+
+### What the host provides
+
+The NixOS module (`nixosModules.default`, option `services.stt`) is in
+`nix/`; wiring it into a host is the host configuration's job
+([module.md](specs/001-server-transcription/contracts/module.md) §4):
+
+- `services.stt.enable = true`, and `huggingFaceTokenFile` pointing at
+  a **dedicated** agenix secret holding a single `HF_TOKEN=...` line,
+  never a shared API-key file.
+- `boot.kernelModules = [ "nvidia_uvm" ]`; the unprivileged worker
+  cannot load it, and without it the first job after a reboot fails
+  with `gpu_unavailable`.
+- The bhu-llm service account in group `stt-requests`, with write
+  access to the inbox and read access to the outbox.
+- `/var/lib` on an encrypted root, `/var/lib/stt` excluded from
+  backups and snapshots, and swap encryption (the units set
+  `MemorySwapMax=0` and `LimitCORE=0` regardless).
+- The first boot or deploy after enabling waits for the model download
+  (up to 2 hours); if that unit fails it retries at each worker start,
+  and jobs end with `models_unavailable` meanwhile.
+
+Models are pinned to fixed commits and prefetched by
+`stt-models.service`; the engine refuses to run on any other revision.
 
 ## Note metadata (`.meta.yaml`)
 
