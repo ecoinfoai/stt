@@ -524,13 +524,13 @@ description: "Task list for 001-server-transcription"
 
 ### 명령줄: GPU 전용 (US4)
 
-- [ ] T082 [US4] 명령줄 시험 — RED: `tests/test_transcribe.py` 에 `--device cpu` → argparse 오류(종료 2); GPU 없음(`ctranslate2.get_cuda_device_count`
+- [X] T082 [US4] 명령줄 시험 — RED: `tests/test_transcribe.py` 에 `--device cpu` → argparse 오류(종료 2); GPU 없음(`ctranslate2.get_cuda_device_count`
   → 0)에서 `--device auto`·`cuda` 모두 모델을 올리기 전에 stderr 에 `No usable GPU was found; stt runs on the GPU only.` 를 내고 종료 1(모델 적재
   함수가 불리지 않음), GPU 잠금은 장치와 상관없이 쥠; `tests/test_diarize.py` 에 torch 가 CUDA 를 못 쓰면 `load_pipeline` 이 `RuntimeError(
   "Speaker diarization needs a GPU, but torch cannot use CUDA; stt runs on the GPU only.")` 을 내고 CPU 경고는 없음; `enroll`(torch CUDA 없음 →
   같은 문구, 종료 1)·`batch`(설정 `device: cpu` → 실행 전에 거절) 시험. 기존 시험 가운데 CPU 실행을 전제한 것(CPU 경고·`small` 기본 모델·`detect_device("cpu")`
   등)만 GPU 전용 동작에 맞게 바꾸고 보고서에 이름과 까닭을 적는다(SC-013) — closes US4-5, US4-6, SC-014 — verify RED
-- [ ] T083 [US4] 명령줄 구현 — `transcribe`·`enroll` 의 `--device` 는 `auto`·`cuda` 만, `detect_device` 는 CUDA 장치가 없으면 위 문구로 멈춤(CPU 를
+- [X] T083 [US4] 명령줄 구현 — `transcribe`·`enroll` 의 `--device` 는 `auto`·`cuda` 만, `detect_device` 는 CUDA 장치가 없으면 위 문구로 멈춤(CPU 를
   돌려주지 않음), `CPU_DEFAULT_MODEL`·CPU 갈래·CPU 경고·`--device cpu` 안내 문구를 없앰, `diarize.load_pipeline` 은 CUDA 가 없으면 위 오류,
   `batch` 는 `device` 설정을 같은 두 값으로 검사; 고치는 함수의 docstring 은 영어로. GPU 메모리 부족 때 작은 모델로 넘어가는 폴백은 그대로(FR-040).
   `README.md`·`INSTALL.md` 의 CPU 안내(CPU-only 서버 절, `--device` 표, 문제 해결 표)를 GPU 전용으로 고친다 — turns T082 GREEN

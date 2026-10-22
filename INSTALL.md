@@ -3,7 +3,8 @@
 Setup guide for the stt pipeline. Downloading needs `ffmpeg`
 (yt-dlp uses it to extract audio). GPU transcription needs NVIDIA
 cuBLAS for CUDA 12 and cuDNN 9 (faster-whisper/CTranslate2
-requirement). CPU-only transcription needs none of that.
+requirement). stt runs on the GPU only: there is no CPU mode, and
+every command stops with a reason when no usable GPU is found.
 
 ## 1. Windows 11
 
@@ -139,15 +140,6 @@ The devShell keeps `UV_PYTHON_PREFERENCE=only-system`: uv's own
 downloadable interpreters are linked against `/lib64/ld-linux`,
 which NixOS does not provide.
 
-### CPU-only servers
-
-No NVIDIA libraries needed:
-
-```sh
-uv sync
-uv run stt transcribe data/ --model small --beam 1
-```
-
 Re-running is safe: existing transcripts are skipped, which makes
 folder-watching cron jobs trivial. The same holds for downloads —
 `data/archive.txt` records what has already been fetched.
@@ -165,8 +157,10 @@ small 0.5 GB. Interrupted downloads resume on retry.
 |---|---|
 | `cublas`/`cudnn` DLL error | DLLs must sit directly in `.venv\Scripts\` (Windows) or be on `LD_LIBRARY_PATH` (Linux); re-copy them after any `uv sync` that recreated `.venv` |
 | `GPU: 0` | update the NVIDIA driver, re-check `nvidia-smi` |
-| repeated out-of-memory | run with `--model small` or `--device cpu` (auto-fallback usually handles this) |
-| too slow | `--beam 1` or `--model large-v3-turbo`; on CPU use `--model small` |
+| `No usable GPU was found; stt runs on the GPU only.` | stt has no CPU mode; install the NVIDIA driver and the CUDA libraries above, then check `nvidia-smi` |
+| `Speaker diarization needs a GPU, but torch cannot use CUDA; stt runs on the GPU only.` | install a CUDA-enabled torch (`uv sync --extra diarize` on a GPU machine) and check `nvidia-smi` |
+| repeated out-of-memory | run with `--model small` (auto-fallback usually handles this) |
+| too slow | `--beam 1` or `--model large-v3-turbo` |
 | "empty transcription" error | file may be silent; retry with `--language auto` |
 | model download fails | check network and re-run (resumes) |
 | `yt-dlp를 찾지 못했습니다` | run `uv sync` in the repository folder |

@@ -28,7 +28,8 @@ are processed.
   metadata sidecar; `[videoID]` in the filename keeps audio,
   metadata and transcript reliably paired
 - **Transcribe** — automatic GPU detection with VRAM-aware model
-  fallback (`large-v3` → `large-v3-turbo` → `small`); CPU works too
+  fallback (`large-v3` → `large-v3-turbo` → `small`); GPU only, with
+  no CPU mode
 - Built-in VAD (skips silence/music, prevents Whisper
   hallucinations), Korean by default (`--language auto` available)
 - Terms file (hotwords) to steer spelling of domain jargon and
@@ -133,7 +134,7 @@ stt transcribe PATH [PATH ...] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--model` | auto | `auto` = large-v3 → large-v3-turbo → small fallback |
-| `--device` | auto | `cuda` if available, else `cpu` (with a stderr warning); `cuda` fails if no GPU is found |
+| `--device` | auto | `auto` or `cuda`, both run on the GPU; there is no CPU option, and without a usable GPU the command stops with `No usable GPU was found; stt runs on the GPU only.` (exit 1) |
 | `--language` | ko | language code, `auto` to detect |
 | `--terms FILE` | — | hotwords file (one term per line, `#` comments) |
 | `--no-timestamps` | off | plain text without `[MM:SS]` markers |
@@ -150,8 +151,8 @@ stt transcribe PATH [PATH ...] [options]
 | `--voice-db FILE` | — | enrolled voices; writes real names instead of 화자N |
 | `--voice-threshold` | 0.75 | min cosine similarity to accept a match |
 
-CPU-only servers: `--model small --beam 1` is the practical
-combination for batch automation.
+For quick batch automation on a small GPU, `--model small --beam 1`
+is the practical combination.
 
 `--terms` has a hard budget: faster-whisper keeps only the first 223
 tokens of the hotwords string and silently ignores the rest, which in
@@ -295,10 +296,10 @@ start them. Defaults: `--root /var/lib/stt`,
 
 The worker holds an exclusive lock on `--gpu-lock FILE` while a model
 is on the GPU. If `STT_GPU_LOCK` names a file, `stt transcribe`,
-`stt batch` and `stt enroll` on `cuda` take the same lock and print
+`stt batch` and `stt enroll` take the same lock and print
 `GPU is in use by another stt job; waiting for it to finish.` while
 they wait. Unset, nothing changes (other machines, Windows). Set to a
-missing file, the command stops with exit 2. On `cpu` it does not lock.
+missing file, the command stops with exit 2.
 
 ### What the host provides
 
