@@ -246,7 +246,7 @@ description: "Task list for 001-server-transcription"
 
 ## Phase 4: User Story 2 - 원본과 결과는 정한 때에 반드시 지워진다 (Priority: P1)
 
-**Goal**: 「끝나면 바로」·「자정」·24시간·「결과 지우기」·「지금 지우기」·죽은 워커의 흔적을 정한 때에 집행한다.
+**Goal**: 「다 지우기」·매일 23:58 정리·죽은 워커의 흔적을 정한 때에 집행한다(처음 목표는 삭제 시기 고르기·「결과 지우기」였으나 R22 · Phase 10 이 바꿨다).
 
 **Independent Test**: 삭제 시기 × 종료 방식(정상·실패·강제 종료) 조합으로 job 을 돌리고 주입한 시계로 시각을 넘긴 뒤 `leftovers(root)` 가 비었는지 본다.
 

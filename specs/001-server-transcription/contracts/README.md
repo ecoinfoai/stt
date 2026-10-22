@@ -5,7 +5,7 @@
   stt 패키지는 같은 파일을 `stt/server/schemas/` 에 싣고, 시험이 두 사본의 바이트 일치를 확인한다.
 - 계약 판: `schema_version: 1`. 호환되지 않게 바꾸면 판을 올리고 핸드오프 문서로 알린다(헌법 VI). 필드 추가도 판을 올린다 —
   스키마가 `additionalProperties: false` 라서 받는 쪽 검사가 깨지기 때문이다.
-  계약 판: 처음 내놓기 전(T076·T077 전)이라 schema_version 1 을 그 자리에서 고쳤다. 001 을 처음 배포할 때 /var/lib/stt 는 비어 있어야 한다(옛 모양 기록은 읽지 못한다).
+  다만 처음 내놓기 전(T076·T077 전)이라 schema_version 1 을 그 자리에서 고쳤다. 001 을 처음 배포할 때 /var/lib/stt 는 비어 있어야 한다(옛 모양 기록은 읽지 못한다).
 - 뜻·시각 계산·상태 변화는 [`../data-model.md`](../data-model.md), 명령은 [`cli.md`](cli.md), 호스트 배치는 [`module.md`](module.md).
 - 통로는 파일뿐이다. 열린 포트는 없다(tech-notes §1, geo-scout 요청함과 같은 모양).
 
