@@ -38,9 +38,11 @@ def _clear_dead_worker(layout: Layout, now: datetime) -> None:
 def run_once(layout: Layout, now: Callable[[], datetime]) -> None:
     """Runs one sweep.
 
-    Deletes recordings whose scheduled time or hard deadline has passed (failing the
-    jobs still waiting for them), removes expired responses, results and records and
-    stale leftovers, and, when no worker is alive, cleans up after a dead one.
+    First, when no worker is alive, cleans up after a dead one, so a job it left
+    ``running`` ends as ``interrupted`` with its published result removed even if its
+    recording is also due. Then deletes recordings whose scheduled time or hard
+    deadline has passed (failing the jobs still waiting for them), and last removes
+    expired responses, results and records and stale leftovers.
 
     Args:
         layout: The state root.
@@ -48,6 +50,6 @@ def run_once(layout: Layout, now: Callable[[], datetime]) -> None:
     """
     moment = now()
     with hold(layout.state_lock):
+        _clear_dead_worker(layout, moment)
         _delete_due_audio(layout, moment)
         lifecycle.purge_expired(layout, moment)
-        _clear_dead_worker(layout, moment)

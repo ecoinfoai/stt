@@ -672,3 +672,22 @@ def test_sc003_deletion_matrix(layout: Layout, wav: Path, clock: FakeClock, scen
     for folder in (layout.jobs, layout.audio, layout.queue, layout.work, layout.inbox):
         assert list(folder.iterdir()) == []
     assert [path for path in layout.outbox.iterdir()] == []
+
+
+@pytest.mark.parametrize("published", [False, True], ids=["worker_killed", "died_after_publish"])
+def test_sc003_dead_worker_first_swept_after_the_scheduled_time(
+    layout: Layout, wav: Path, clock: FakeClock, published: bool
+) -> None:
+    request_id = submit(layout, wav, clock, hints=["alpha"], delete_audio="at_midnight")
+    plant_dead_worker_traces(layout, clock, request_id, published=published)
+    clock.set("2026-03-02T15:00:30Z")
+
+    run_sweep(layout, clock)
+
+    doc = assert_valid_response(layout, request_id)
+    assert doc["state"] == "failed"
+    assert doc["failure"] == {"reason": "interrupted", "detail": INTERRUPTED_DETAIL}
+    assert doc["audio"]["deleted_at"] == "2026-03-02T15:00:30Z"
+    assert "result" not in doc
+    assert not (layout.outbox / request_id).exists()
+    assert leftovers(layout.root) == []
