@@ -117,6 +117,15 @@ class TestAssignBlocks:
         assert blocks[0].uncertain is True
         assert blocks[1].uncertain is False
 
+    def test_assign_blocks_uncertain_is_plain_bool_for_numpy_times(self):
+        """faster-whisper word times are numpy floats; the result schema needs a JSON boolean."""
+        np = pytest.importorskip("numpy")
+        turns = [Turn(0.0, 3.0, "SPEAKER_00"), Turn(3.0, 9.0, "SPEAKER_01")]
+        words = [word(np.float64(0.0), np.float64(0.4), "네. "),
+                 word(np.float64(4.0), np.float64(8.0), "그러니까 말이죠. ")]
+        blocks = assign_blocks(words, turns, min_seconds=1.0)
+        assert [type(b.uncertain) for b in blocks] == [bool, bool]
+
     def test_assign_blocks_falls_back_to_nearest_speaker(self):
         """겹치는 화자 턴이 없는 단어도 미배정으로 남기지 않는다."""
         turns = [Turn(10.0, 12.0, "SPEAKER_00")]

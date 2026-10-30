@@ -243,7 +243,8 @@ def assign_blocks(
             end=p["end"],
             speaker=p["speaker"],
             text=p["text"].strip(),
-            uncertain=(p["end"] - p["start"]) < min_seconds,
+            # Word times may be numpy floats; the result document needs a JSON boolean.
+            uncertain=bool((p["end"] - p["start"]) < min_seconds),
         )
         for p in parts
         if p["text"].strip()
