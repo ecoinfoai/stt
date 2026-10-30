@@ -567,6 +567,8 @@ def load_pipeline(device: str):
                 "pyannote/speaker-diarization-community-1 세 모델에 동의한 뒤 "
                 "HF_TOKEN 환경변수로 넘기세요."
             )
+    # pyannote.audio 4 otherwise sends usage metrics to otel.pyannote.ai; stt makes no outside calls.
+    os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
     try:
         import torch
         from pyannote.audio import Pipeline

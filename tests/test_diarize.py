@@ -417,6 +417,24 @@ def test_load_pipeline_online_passes_token(fake_pyannote, monkeypatch):
     assert fake_pyannote.calls == [(diarize.PIPELINE_NAME, "fake-token")]
 
 
+def test_load_pipeline_turns_off_pyannote_telemetry(fake_pyannote, monkeypatch):
+    """pyannote.audio 4 sends usage metrics to otel.pyannote.ai unless told not to."""
+    import os
+
+    from stt import diarize
+
+    seen: list[str | None] = []
+    monkeypatch.setattr(
+        fake_pyannote,
+        "from_pretrained",
+        classmethod(lambda cls, name, token=None: seen.append(os.environ.get("PYANNOTE_METRICS_ENABLED")) or cls()),
+    )
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("PYANNOTE_METRICS_ENABLED", "true")
+    diarize.load_pipeline("cuda")
+    assert seen == ["false"]
+
+
 NO_CUDA_MESSAGE = (
     "Speaker diarization needs a GPU, but torch cannot use CUDA; "
     "stt runs on the GPU only."
