@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 import stat
 import sys
 import threading
@@ -287,6 +289,26 @@ def test_published_result_folder_and_file_modes(layout: Layout, wav: Path, clock
     for path in folder.iterdir():
         assert stat.S_IMODE(path.stat().st_mode) == 0o640
     assert not list(layout.outbox.glob(".*.tmp"))
+
+
+def test_job_is_published_when_setid_mode_changes_are_refused(
+    layout: Layout, wav: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The worker unit runs with RestrictSUIDSGID=yes: any chmod asking for setuid or setgid fails with EPERM.
+    real_chmod = os.chmod
+
+    def restricted_chmod(path: Any, mode: int, *args: Any, **kwargs: Any) -> None:
+        if mode & (stat.S_ISUID | stat.S_ISGID):
+            raise PermissionError(errno.EPERM, "Operation not permitted", str(path))
+        real_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "chmod", restricted_chmod)
+    request_id = submit(layout, wav, clock)
+
+    run_worker(layout, clock)
+
+    assert read_response(layout, request_id)["state"] == "done"
+    assert sorted(path.name for path in (layout.outbox / request_id).iterdir()) == ["result.json", "transcript.txt"]
 
 
 def test_job_deleted_while_running_is_not_published(layout: Layout, wav: Path, clock: FakeClock) -> None:

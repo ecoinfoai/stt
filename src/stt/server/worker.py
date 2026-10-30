@@ -26,7 +26,8 @@ from stt.server.records import Failure, Job, load_audio, load_job, load_jobs, qu
 DEFAULT_ENGINE_CMD: tuple[str, ...] = (sys.executable, "-m", "stt.server.engine")
 
 _WORK_FOLDER_MODE = 0o700
-_RESULT_FOLDER_MODE = 0o2750
+# The setgid bit comes from outbox at mkdir: RestrictSUIDSGID refuses a chmod that asks for it.
+_RESULT_FOLDER_MODE = 0o750
 _RESULT_FILE_MODE = 0o640
 _RESULT_FILES = ("transcript.txt", "result.json")
 _ENGINE_REASONS = frozenset(
@@ -148,12 +149,11 @@ def _publish(layout: Layout, work_dir: Path, request_id: str) -> None:
     """Copies the result files to ``outbox/<request_id>/`` through a temporary folder."""
     staging = layout.outbox / f".{request_id}.tmp"
     try:
-        staging.mkdir(mode=0o700)
+        staging.mkdir(mode=_RESULT_FOLDER_MODE)
         for name in _RESULT_FILES:
             target = staging / name
             shutil.copyfile(work_dir / "out" / name, target)
             os.chmod(target, _RESULT_FILE_MODE)
-        os.chmod(staging, _RESULT_FOLDER_MODE)
         staging.rename(layout.outbox / request_id)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
