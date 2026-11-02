@@ -408,7 +408,7 @@ class TestGpuOnlyCommandLine:
         self, tmp_path, monkeypatch
     ):
         from stt import transcribe
-        from tests.test_cli_integration import FakeModel
+        from test_cli_integration import FakeModel
 
         monkeypatch.setattr(
             transcribe, "load_model",

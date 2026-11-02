@@ -12,7 +12,7 @@ from typing import Any, Iterator
 import pytest
 
 from stt import batch, diarize, enroll, gpu_lock, transcribe
-from tests.test_cli_integration import FakeModel
+from test_cli_integration import FakeModel
 
 HOLD_SECONDS = 1.0
 HOLDER_SCRIPT = (
