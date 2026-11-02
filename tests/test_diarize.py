@@ -87,15 +87,40 @@ class TestGroupSentences:
 class TestAssignBlocks:
     """Tests for assign_blocks."""
 
-    def test_assign_blocks_keeps_sentence_whole_across_boundary(self):
-        """문장이 화자 경계에 걸쳐도 다수 화자로 통째 배정돼야 한다."""
+    def test_assign_blocks_gives_each_word_the_speaker_it_overlaps_most(self):
+        """A sentence that crosses a turn boundary is split at the word level."""
         turns = [Turn(0.0, 1.2, "SPEAKER_01"), Turn(1.2, 10.0, "SPEAKER_00")]
         words = [word(0.0, 1.0, "저는 "), word(1.0, 2.0, "그럼 "),
                  word(2.0, 6.0, "여쭤보고 싶은데요. ")]
         blocks = assign_blocks(words, turns, min_seconds=0.0)
-        assert len(blocks) == 1
-        assert blocks[0].speaker == "SPEAKER_00"
-        assert blocks[0].text == "저는 그럼 여쭤보고 싶은데요."
+        assert [(b.speaker, b.text) for b in blocks] == [
+            ("SPEAKER_01", "저는"),
+            ("SPEAKER_00", "그럼 여쭤보고 싶은데요."),
+        ]
+
+    def test_assign_blocks_splits_unpunctuated_speech_at_speaker_changes(self):
+        """Korean transcripts often drop the sentence ending where speakers hand over."""
+        turns = [Turn(0.0, 3.0, "SPEAKER_00"), Turn(3.0, 6.0, "SPEAKER_01"),
+                 Turn(6.0, 10.0, "SPEAKER_02")]
+        words = [word(0.0, 2.8, "창업을 할 수 있는 "),
+                 word(3.1, 5.8, "세무사시기 때문에 어때요 "),
+                 word(6.2, 9.0, "통계를 보면 ")]
+        blocks = assign_blocks(words, turns, min_seconds=0.0)
+        assert [(b.speaker, b.text) for b in blocks] == [
+            ("SPEAKER_00", "창업을 할 수 있는"),
+            ("SPEAKER_01", "세무사시기 때문에 어때요"),
+            ("SPEAKER_02", "통계를 보면"),
+        ]
+
+    def test_assign_blocks_keeps_short_interjection_as_uncertain_paragraph(self):
+        turns = [Turn(0.0, 5.0, "SPEAKER_00"), Turn(5.0, 5.6, "SPEAKER_01"),
+                 Turn(5.6, 10.0, "SPEAKER_00")]
+        words = [word(0.0, 4.9, "철물점에서도 팔더라고요 "), word(5.0, 5.5, "아 진짜요 "),
+                 word(5.7, 9.0, "네 위생검사 받고서는 ")]
+        blocks = assign_blocks(words, turns, min_seconds=1.0)
+        assert [(b.speaker, b.uncertain) for b in blocks] == [
+            ("SPEAKER_00", False), ("SPEAKER_01", True), ("SPEAKER_00", False),
+        ]
 
     def test_assign_blocks_merges_consecutive_same_speaker(self):
         turns = [Turn(0.0, 20.0, "SPEAKER_00")]

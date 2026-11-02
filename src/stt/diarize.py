@@ -180,9 +180,11 @@ def assign_blocks(
 ) -> list[Block]:
     """단어와 화자 턴을 맞물려 화자별 문단 목록을 만든다.
 
-    문장 단위로 화자를 정하고(그 문장 전체와 가장 많이 겹치는 화자),
-    같은 화자의 문장이 이어지면 한 문단으로 합친다. 겹치는 턴이 없는
-    문장은 시간상 가장 가까운 화자로 배정해 미배정을 남기지 않는다.
+    Speakers are chosen per word (the turn that overlaps the word most;
+    the nearest turn in time when none overlaps), and a sentence is cut
+    wherever the speaker changes: Korean transcripts often drop the
+    sentence ending where speakers hand over. Consecutive pieces of the
+    same speaker are merged into one paragraph.
 
     화자가 바뀌지 않아도 말의 쉼(gap_s 이상)이나 길이(max_chars)에서
     문단을 나눈다 — 단독 강연이 통짜 한 덩어리가 되는 것을 막기 위해서다.
@@ -221,22 +223,8 @@ def assign_blocks(
         )
     parts: list[dict] = []
     for sentence in group_sentences(words):
-        start, end = sentence[0].start, sentence[-1].end
-        speaker = speaker_at(start, end, turns)
-        if speaker is None:
-            speaker = nearest_speaker(start, turns)
-        text = "".join(item.word for item in sentence)
-        same_speaker = bool(parts) and parts[-1]["speaker"] == speaker
-        if same_speaker:
-            paused = (start - parts[-1]["end"]) >= gap_s
-            too_long = len(parts[-1]["text"]) >= max_chars
-        if same_speaker and not paused and not too_long:
-            parts[-1]["text"] += text
-            parts[-1]["end"] = end
-        else:
-            parts.append(
-                {"start": start, "end": end, "speaker": speaker, "text": text}
-            )
+        for speaker, piece in _speaker_runs(sentence, turns):
+            _append_piece(parts, speaker, piece, gap_s, max_chars)
     return [
         Block(
             start=p["start"],
@@ -249,6 +237,45 @@ def assign_blocks(
         for p in parts
         if p["text"].strip()
     ]
+
+
+def _speaker_runs(
+    sentence: Sequence[WordLike], turns: Sequence[Turn]
+) -> list[tuple[str, list[WordLike]]]:
+    """Splits a sentence into runs of consecutive words with the same speaker."""
+    runs: list[tuple[str, list[WordLike]]] = []
+    for item in sentence:
+        speaker = speaker_at(item.start, item.end, turns)
+        if speaker is None:
+            speaker = nearest_speaker(item.start, turns)
+        if runs and runs[-1][0] == speaker:
+            runs[-1][1].append(item)
+        else:
+            runs.append((speaker, [item]))
+    return runs
+
+
+def _append_piece(
+    parts: list[dict],
+    speaker: str,
+    piece: Sequence[WordLike],
+    gap_s: float,
+    max_chars: int,
+) -> None:
+    """Adds one same-speaker piece, joining the last paragraph when it may."""
+    start, end = piece[0].start, piece[-1].end
+    text = "".join(item.word for item in piece)
+    same_speaker = bool(parts) and parts[-1]["speaker"] == speaker
+    if same_speaker:
+        paused = (start - parts[-1]["end"]) >= gap_s
+        too_long = len(parts[-1]["text"]) >= max_chars
+    if same_speaker and not paused and not too_long:
+        parts[-1]["text"] += text
+        parts[-1]["end"] = end
+    else:
+        parts.append(
+            {"start": start, "end": end, "speaker": speaker, "text": text}
+        )
 
 
 def speaker_label(speaker: str) -> str:
