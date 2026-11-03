@@ -535,6 +535,19 @@ description: "Task list for 001-server-transcription"
   `batch` 는 `device` 설정을 같은 두 값으로 검사; 고치는 함수의 docstring 은 영어로. GPU 메모리 부족 때 작은 모델로 넘어가는 폴백은 그대로(FR-040).
   `README.md`·`INSTALL.md` 의 CPU 안내(CPU-only 서버 절, `--device` 표, 문제 해결 표)를 GPU 전용으로 고친다 — turns T082 GREEN
 
+### 화자 배정: 호스트 시험 9단계 (US1-9 ~ US1-12)
+
+- [X] T085 [US1] 낱말 단위 화자(FR-013a) — RED: `tests/test_diarize.py` 에 문장 부호 없이 이어진 말이 화자 바뀌는 곳에서 나뉨, 낱말마다 가장 많이
+  겹치는 화자, 짧은 맞장구는 불확실 문단으로 남음; GREEN: `assign_blocks` 가 문장 대신 낱말마다 화자를 정한다(`2fbe68b`) — closes US1-9 — verify RED
+- [X] T086 [US1] 문장 목소리 재배정 시험(FR-013b) — RED: `tests/test_diarize.py` 에 `pick_voice`(첫째가 둘째보다 문턱 이상 가까우면 그 화자, 문턱
+  미만·화자 하나·임베딩 없음은 None, 음수 문턱은 ValueError), `assign_blocks(sentence_speakers=…)`(정해진 문장은 통째로 그 화자, None 인 문장은
+  낱말 단위, 개수가 다르면 ValueError), `diarize_wav` 가 턴과 화자별 대표 목소리(영벡터 빼고, 실명 사전이 있으면 실명으로)를 함께 돌려줌,
+  `sentence_embeddings`(최소 길이 미만 문장은 None); `tests/test_transcribe.py` 에 화자 둘 이상이면 문장 목소리로 재배정, 하나면 임베딩을 재지 않음
+  — closes US1-10, US1-11, US1-12 — verify RED
+- [X] T087 [US1] 문장 목소리 재배정 구현 — `diarize.Diarization`·`pick_voice`·`sentence_embeddings`·`DEFAULT_VOICE_MARGIN = 0.1`, `diarize_wav` 가
+  `Diarization` 을 돌려줌, `transcribe.diarized_blocks` 가 화자 둘 이상일 때 문장마다 목소리를 재어 `assign_blocks` 에 넘김. 확인: EP.11 에서
+  판독 구간 낱말 정확도가 실험 값(99.0%)에 닿음 — 실측 98.7%(381/386, v2 92.5%), 문단 110 → 163 — turns T086 GREEN
+
 ### 확인
 
 - [X] T084 언어 규칙(T074 와 같은 `rg`) 0건, `uv run python -m pytest -q` 전부 통과, 개정 spec 의 시나리오(US1 8 · US2 10 · US3 4 · US4 6 · US5 9 = 37개)
