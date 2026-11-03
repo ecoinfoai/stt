@@ -13,6 +13,7 @@ import pytest
 
 from stt.diarize import (
     Block,
+    Diarization,
     Turn,
     assign_blocks,
     cosine_similarity,
@@ -21,9 +22,11 @@ from stt.diarize import (
     label_for_display,
     merge_voice,
     nearest_speaker,
+    pick_voice,
     rename_turns,
     render_diarized,
     resolve_speaker_names,
+    sentence_embeddings,
     speaker_at,
     speaker_label,
 )
@@ -98,7 +101,7 @@ class TestAssignBlocks:
             ("SPEAKER_00", "그럼 여쭤보고 싶은데요."),
         ]
 
-    def test_assign_blocks_splits_unpunctuated_speech_at_speaker_changes(self):
+    def test_us1_9_splits_unpunctuated_speech_at_speaker_changes(self):
         """Korean transcripts often drop the sentence ending where speakers hand over."""
         turns = [Turn(0.0, 3.0, "SPEAKER_00"), Turn(3.0, 6.0, "SPEAKER_01"),
                  Turn(6.0, 10.0, "SPEAKER_02")]
@@ -121,6 +124,34 @@ class TestAssignBlocks:
         assert [(b.speaker, b.uncertain) for b in blocks] == [
             ("SPEAKER_00", False), ("SPEAKER_01", True), ("SPEAKER_00", False),
         ]
+
+    def test_us1_10_sentence_goes_wholly_to_its_voice_speaker(self):
+        """Turns cut the sentence, but its voice is clearly one speaker's."""
+        turns = [Turn(0.0, 1.0, "SPEAKER_02"), Turn(1.0, 4.0, "SPEAKER_00")]
+        words = [word(0.0, 1.0, "소름 끼칠 "), word(1.0, 3.8, "정도로 망하는 특징이. ")]
+        blocks = assign_blocks(words, turns, min_seconds=0.0,
+                               sentence_speakers=["SPEAKER_02"])
+        assert [(b.speaker, b.text) for b in blocks] == [
+            ("SPEAKER_02", "소름 끼칠 정도로 망하는 특징이."),
+        ]
+
+    def test_us1_11_sentence_without_clear_voice_keeps_word_speakers(self):
+        turns = [Turn(0.0, 3.0, "SPEAKER_00"), Turn(3.0, 6.0, "SPEAKER_01")]
+        words = [word(0.0, 2.8, "창업을 할 수 있는 "), word(3.1, 5.8, "세무사시기 때문에. "),
+                 word(6.0, 6.5, "네. ")]
+        blocks = assign_blocks(words, turns, min_seconds=0.0,
+                               sentence_speakers=[None, "SPEAKER_00"])
+        assert [(b.speaker, b.text) for b in blocks] == [
+            ("SPEAKER_00", "창업을 할 수 있는"),
+            ("SPEAKER_01", "세무사시기 때문에."),
+            ("SPEAKER_00", "네."),
+        ]
+
+    def test_assign_blocks_rejects_sentence_speakers_of_wrong_length(self):
+        words = [word(0.0, 1.0, "하나. "), word(1.0, 2.0, "둘. ")]
+        with pytest.raises(ValueError, match="sentence_speakers"):
+            assign_blocks(words, [Turn(0.0, 2.0, "SPEAKER_00")], 0.0,
+                          sentence_speakers=["SPEAKER_00"])
 
     def test_assign_blocks_merges_consecutive_same_speaker(self):
         turns = [Turn(0.0, 20.0, "SPEAKER_00")]
@@ -164,6 +195,28 @@ class TestAssignBlocks:
     def test_assign_blocks_negative_min_seconds_raises(self):
         with pytest.raises(ValueError):
             assign_blocks([], [], -1.0)
+
+
+class TestPickVoice:
+    """Tests for pick_voice."""
+
+    CENTROIDS = {"SPEAKER_00": [1.0, 0.0], "SPEAKER_01": [0.0, 1.0]}
+
+    def test_pick_voice_returns_clearly_closest_speaker(self):
+        assert pick_voice([0.9, 0.1], self.CENTROIDS, 0.1) == "SPEAKER_00"
+
+    def test_pick_voice_returns_none_below_margin(self):
+        assert pick_voice([1.0, 0.95], self.CENTROIDS, 0.1) is None
+
+    def test_us1_12_single_speaker_has_no_voice_choice(self):
+        assert pick_voice([1.0, 0.0], {"SPEAKER_00": [1.0, 0.0]}, 0.1) is None
+
+    def test_us1_12_unmeasured_sentence_has_no_voice_choice(self):
+        assert pick_voice(None, self.CENTROIDS, 0.1) is None
+
+    def test_pick_voice_negative_margin_raises(self):
+        with pytest.raises(ValueError, match="margin"):
+            pick_voice([1.0, 0.0], self.CENTROIDS, -0.1)
 
 
 class TestSpeakerLabel:
@@ -522,3 +575,138 @@ def test_us4_6_pipeline_moves_to_cuda_when_available(
     assert _MovablePipeline.moved_to == ["cuda"]
     assert captured.err == ""
     assert captured.out == ""
+
+
+def _write_wav(path: Path, seconds: float, rate: int = 16000) -> Path:
+    """Writes a silent 16-bit mono WAV."""
+    import wave
+
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(b"\x00\x00" * int(seconds * rate))
+    return path
+
+
+class _FakeAnnotation:
+    """The two pyannote Annotation methods diarize_wav reads."""
+
+    def __init__(self, tracks: list[tuple[float, float, str]]) -> None:
+        self.tracks = tracks
+
+    def itertracks(self, yield_label: bool = False):
+        for start, end, label in self.tracks:
+            yield SimpleNamespace(start=start, end=end), None, label
+
+    def labels(self) -> list[str]:
+        return sorted({label for _, _, label in self.tracks})
+
+
+def _fake_diarizer(tracks, embeddings):
+    """A pipeline stand-in that returns fixed turns and speaker embeddings."""
+    output = SimpleNamespace(
+        speaker_diarization=_FakeAnnotation(tracks), speaker_embeddings=embeddings
+    )
+    return lambda audio, **kwargs: output
+
+
+class TestDiarizeWav:
+    """Tests for diarize_wav."""
+
+    def test_diarize_wav_returns_turns_with_each_speakers_voice(self, tmp_path):
+        np = pytest.importorskip("numpy")
+        pytest.importorskip("torch")
+        from stt.diarize import diarize_wav
+
+        wav = _write_wav(tmp_path / "a.wav", 1.0)
+        pipeline = _fake_diarizer(
+            [(2.0, 3.0, "SPEAKER_01"), (0.0, 2.0, "SPEAKER_00")],
+            np.array([[1.0, 0.0], [0.0, 1.0]]),
+        )
+        result = diarize_wav(pipeline, wav)
+        assert result == Diarization(
+            turns=[Turn(0.0, 2.0, "SPEAKER_00"), Turn(2.0, 3.0, "SPEAKER_01")],
+            centroids={"SPEAKER_00": [1.0, 0.0], "SPEAKER_01": [0.0, 1.0]},
+        )
+
+    def test_diarize_wav_leaves_out_speakers_without_a_voice(self, tmp_path):
+        """pyannote pads missing centroids with zero rows."""
+        np = pytest.importorskip("numpy")
+        pytest.importorskip("torch")
+        from stt.diarize import diarize_wav
+
+        wav = _write_wav(tmp_path / "a.wav", 1.0)
+        pipeline = _fake_diarizer(
+            [(0.0, 2.0, "SPEAKER_00"), (2.0, 3.0, "SPEAKER_01")],
+            np.array([[1.0, 0.0], [0.0, 0.0]]),
+        )
+        assert diarize_wav(pipeline, wav).centroids == {"SPEAKER_00": [1.0, 0.0]}
+
+    def test_diarize_wav_keys_voices_by_enrolled_name(self, tmp_path):
+        np = pytest.importorskip("numpy")
+        pytest.importorskip("torch")
+        from stt.diarize import diarize_wav
+
+        wav = _write_wav(tmp_path / "a.wav", 1.0)
+        pipeline = _fake_diarizer(
+            [(0.0, 2.0, "SPEAKER_00"), (2.0, 3.0, "SPEAKER_01")],
+            np.array([[1.0, 0.0], [0.0, 1.0]]),
+        )
+        result = diarize_wav(pipeline, wav, voices={"한석준": [1.0, 0.0]}, threshold=0.5)
+        assert [t.speaker for t in result.turns] == ["한석준", "SPEAKER_01"]
+        assert result.centroids == {"한석준": [1.0, 0.0], "SPEAKER_01": [0.0, 1.0]}
+
+    def test_diarize_wav_without_embeddings_has_no_voices(self, tmp_path):
+        pytest.importorskip("torch")
+        from stt.diarize import diarize_wav
+
+        wav = _write_wav(tmp_path / "a.wav", 1.0)
+        pipeline = _fake_diarizer([(0.0, 2.0, "SPEAKER_00")], None)
+        assert diarize_wav(pipeline, wav).centroids == {}
+
+
+class _FakeEmbedding:
+    """Records the waveform lengths it embeds; returns NaN for one length."""
+
+    min_num_samples = 8000
+
+    def __init__(self, nan_length: int | None = None) -> None:
+        self.lengths: list[int] = []
+        self.nan_length = nan_length
+
+    def __call__(self, waveforms):
+        import numpy as np
+
+        length = waveforms.shape[-1]
+        self.lengths.append(length)
+        value = float("nan") if length == self.nan_length else 1.0
+        return np.array([[float(length), value]])
+
+
+class TestSentenceEmbeddings:
+    """Tests for sentence_embeddings."""
+
+    def test_sentence_embeddings_measures_each_sentence_span(self, tmp_path):
+        pytest.importorskip("torch")
+        wav = _write_wav(tmp_path / "a.wav", 4.0)
+        embedding = _FakeEmbedding()
+        pipeline = SimpleNamespace(_embedding=embedding)
+        sentences = [[word(0.0, 0.5, "하나 "), word(0.5, 1.0, "둘. ")],
+                     [word(1.5, 3.0, "셋. ")]]
+        assert sentence_embeddings(pipeline, wav, sentences) == [[16000.0, 1.0], [24000.0, 1.0]]
+        assert embedding.lengths == [16000, 24000]
+
+    def test_us1_12_too_short_sentence_is_not_measured(self, tmp_path):
+        pytest.importorskip("torch")
+        wav = _write_wav(tmp_path / "a.wav", 2.0)
+        embedding = _FakeEmbedding()
+        pipeline = SimpleNamespace(_embedding=embedding)
+        assert sentence_embeddings(pipeline, wav, [[word(1.0, 1.2, "네. ")]]) == [None]
+        assert embedding.lengths == []
+
+    def test_sentence_embeddings_drops_nan_vectors(self, tmp_path):
+        pytest.importorskip("torch")
+        wav = _write_wav(tmp_path / "a.wav", 2.0)
+        pipeline = SimpleNamespace(_embedding=_FakeEmbedding(nan_length=16000))
+        assert sentence_embeddings(pipeline, wav, [[word(0.0, 1.0, "네. ")]]) == [None]

@@ -3,8 +3,8 @@
 
 pyannote.audio가 찾은 화자 구간(턴)과 faster-whisper의 단어 단위
 타임스탬프를 시간으로 맞물려, 화자가 바뀌는 지점에서 끊은 문단
-목록을 만든다. 배정은 단어가 아니라 문장 단위로 한다 — 화자 경계에
-걸친 문장이 중간에서 잘리는 것을 막기 위해서다.
+목록을 만든다. 화자는 낱말마다 정하고, 목소리가 한 화자에게 뚜렷이
+가까운 문장은 통째로 그 화자에게 준다.
 
 화자 턴이 짧으면 분리 정확도가 떨어지므로, 일정 길이 미만인 문단은
 '(?)'로 표시해 인용 근거로 쓰지 않도록 남긴다.
@@ -37,6 +37,10 @@ DEFAULT_MIN_SECONDS: float = 1.5
 
 #: 등록된 목소리와 같은 사람으로 볼 최소 코사인 유사도.
 DEFAULT_VOICE_THRESHOLD: float = 0.75
+
+#: A sentence goes wholly to its closest voice only when that speaker's cosine
+#: similarity beats the runner-up's by at least this much.
+DEFAULT_VOICE_MARGIN: float = 0.1
 
 #: Message of the error raised when torch cannot use CUDA.
 NO_CUDA_MESSAGE: str = (
@@ -88,6 +92,20 @@ class Block:
     speaker: str
     text: str
     uncertain: bool
+
+
+@dataclass(frozen=True)
+class Diarization:
+    """Speaker turns and each speaker's mean voice.
+
+    Attributes:
+        turns: Speaker turns in start order.
+        centroids: Speaker name -> mean voice embedding; speakers
+            without one are left out.
+    """
+
+    turns: list[Turn]
+    centroids: dict[str, list[float]]
 
 
 def speaker_at(start: float, end: float, turns: Sequence[Turn]) -> str | None:
@@ -177,6 +195,7 @@ def assign_blocks(
     min_seconds: float = DEFAULT_MIN_SECONDS,
     gap_s: float = 2.0,
     max_chars: int = 800,
+    sentence_speakers: Sequence[str | None] | None = None,
 ) -> list[Block]:
     """단어와 화자 턴을 맞물려 화자별 문단 목록을 만든다.
 
@@ -184,7 +203,8 @@ def assign_blocks(
     the nearest turn in time when none overlaps), and a sentence is cut
     wherever the speaker changes: Korean transcripts often drop the
     sentence ending where speakers hand over. Consecutive pieces of the
-    same speaker are merged into one paragraph.
+    same speaker are merged into one paragraph. A sentence with a speaker
+    in sentence_speakers goes wholly to that speaker instead.
 
     화자가 바뀌지 않아도 말의 쉼(gap_s 이상)이나 길이(max_chars)에서
     문단을 나눈다 — 단독 강연이 통짜 한 덩어리가 되는 것을 막기 위해서다.
@@ -195,12 +215,16 @@ def assign_blocks(
         min_seconds: 이 길이 미만인 문단에 uncertain 표시를 단다.
         gap_s: 같은 화자 안에서 문단을 나누는 무음 길이(초).
         max_chars: 같은 화자 안에서 문단을 나누는 글자 수 기준.
+        sentence_speakers: One entry per group_sentences(words) sentence:
+            the speaker its voice is clearly closest to, or None to keep
+            per-word speakers. None keeps per-word speakers everywhere.
 
     Returns:
         (시작, 끝, 화자, 본문, 불확실) 문단 목록.
 
     Raises:
-        ValueError: min_seconds가 음수이거나 gap_s·max_chars가 0 이하일 때.
+        ValueError: min_seconds가 음수이거나 gap_s·max_chars가 0 이하일 때,
+            or when sentence_speakers does not have one entry per sentence.
 
     Examples:
         >>> assign_blocks([], [Turn(0.0, 1.0, "SPEAKER_00")], 1.0)
@@ -221,9 +245,18 @@ def assign_blocks(
             f"잘못된 max_chars: {max_chars}. assign_blocks()의 "
             f"max_chars는 0보다 큰 정수여야 합니다."
         )
+    sentences = group_sentences(words)
+    if sentence_speakers is None:
+        sentence_speakers = [None] * len(sentences)
+    elif len(sentence_speakers) != len(sentences):
+        raise ValueError(
+            f"Got {len(sentence_speakers)} sentence_speakers for "
+            f"{len(sentences)} sentences; assign_blocks() needs one per sentence."
+        )
     parts: list[dict] = []
-    for sentence in group_sentences(words):
-        for speaker, piece in _speaker_runs(sentence, turns):
+    for sentence, voiced in zip(sentences, sentence_speakers):
+        runs = [(voiced, list(sentence))] if voiced else _speaker_runs(sentence, turns)
+        for speaker, piece in runs:
             _append_piece(parts, speaker, piece, gap_s, max_chars)
     return [
         Block(
@@ -434,6 +467,43 @@ def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
             "없습니다. 화자 임베딩이 비어 있는지 확인하세요."
         )
     return sum(x * y for x, y in zip(a, b)) / (norm_a * norm_b)
+
+
+def pick_voice(
+    embedding: Sequence[float] | None,
+    centroids: dict[str, list[float]],
+    margin: float = DEFAULT_VOICE_MARGIN,
+) -> str | None:
+    """Returns the speaker whose voice an embedding is clearly closest to.
+
+    Args:
+        embedding: Voice embedding of one sentence, or None if unmeasured.
+        centroids: Speaker name -> mean voice embedding.
+        margin: Least cosine similarity lead over the runner-up.
+
+    Returns:
+        The closest speaker, or None when there is no embedding, fewer
+        than two speakers, or a lead below margin.
+
+    Raises:
+        ValueError: If margin is negative.
+
+    Examples:
+        >>> pick_voice([0.9, 0.1], {"A": [1.0, 0.0], "B": [0.0, 1.0]}, 0.1)
+        'A'
+    """
+    if margin < 0:
+        raise ValueError(
+            f"Invalid margin: {margin}. pick_voice() needs a margin of 0 or more."
+        )
+    if embedding is None or len(centroids) < 2:
+        return None
+    ranked = sorted(
+        ((cosine_similarity(embedding, vector), name) for name, vector in centroids.items()),
+        reverse=True,
+    )
+    (best, name), (second, _) = ranked[0], ranked[1]
+    return name if best - second >= margin else None
 
 
 def resolve_speaker_names(
@@ -765,8 +835,8 @@ def diarize_wav(
     num_speakers: int | None = None,
     voices: VoiceDB | None = None,
     threshold: float = DEFAULT_VOICE_THRESHOLD,
-) -> list[Turn]:
-    """WAV 파일에서 화자 턴 목록을 뽑는다.
+) -> Diarization:
+    """WAV 파일에서 화자 턴 목록과 화자별 대표 목소리를 뽑는다.
 
     Args:
         pipeline: load_pipeline()이 적재한 파이프라인.
@@ -776,7 +846,8 @@ def diarize_wav(
         threshold: 같은 사람으로 볼 최소 코사인 유사도.
 
     Returns:
-        시작 시각 순으로 정렬된 화자 턴 목록.
+        Turns in start order, and each speaker's mean voice under the same
+        names as the turns (speakers pyannote gave no voice are left out).
 
     Raises:
         RuntimeError: 화자 구간을 하나도 찾지 못했을 때.
@@ -795,12 +866,55 @@ def diarize_wav(
             f"빈 화자 분리 결과: '{wav.name}'에서 화자 구간을 찾지 "
             f"못했습니다. 무음 파일이 아닌지 확인하세요."
         )
-    if voices and output.speaker_embeddings is not None:
-        labels = list(annotation.labels())
-        embeddings = [
-            [float(x) for x in row] for row in output.speaker_embeddings
-        ]
-        turns = rename_turns(
-            turns, resolve_speaker_names(labels, embeddings, voices, threshold)
+    centroids: dict[str, list[float]] = {}
+    if output.speaker_embeddings is not None:
+        # pyannote pads speakers it has no centroid for with zero rows.
+        centroids = {
+            label: [float(x) for x in row]
+            for label, row in zip(annotation.labels(), output.speaker_embeddings)
+            if any(row)
+        }
+    if voices and centroids:
+        mapping = resolve_speaker_names(
+            list(centroids), list(centroids.values()), voices, threshold
         )
-    return sorted(turns, key=lambda t: t.start)
+        turns = rename_turns(turns, mapping)
+        centroids = {mapping[label]: vector for label, vector in centroids.items()}
+    return Diarization(sorted(turns, key=lambda t: t.start), centroids)
+
+
+def sentence_embeddings(
+    pipeline, wav: Path, sentences: Sequence[Sequence[WordLike]]
+) -> list[list[float] | None]:
+    """Measures the voice of each sentence with the pipeline's embedding model.
+
+    Args:
+        pipeline: Pipeline loaded by load_pipeline().
+        wav: 16-bit PCM WAV file path.
+        sentences: Sentences from group_sentences().
+
+    Returns:
+        One embedding per sentence; None where the sentence is shorter than
+        the model's minimum or the model returns NaN.
+
+    Examples:
+        >>> sentence_embeddings(p, Path("a.wav"), [])  # doctest: +SKIP
+        []
+    """
+    import numpy as np
+
+    # The diarization centroids come from this model, so only its vectors
+    # are comparable to them; pyannote does not expose it publicly.
+    model = pipeline._embedding
+    waveform, sample_rate = read_wav(wav)
+    mono = waveform.mean(dim=0, keepdim=True)
+    vectors: list[list[float] | None] = []
+    for sentence in sentences:
+        start = max(0, int(sentence[0].start * sample_rate))
+        end = int(sentence[-1].end * sample_rate)
+        if end - start < model.min_num_samples:
+            vectors.append(None)
+            continue
+        vector = model(mono[:, start:end].unsqueeze(0))[0]
+        vectors.append(None if np.isnan(vector).any() else [float(x) for x in vector])
+    return vectors

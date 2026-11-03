@@ -620,7 +620,7 @@ def fake_diarization(monkeypatch):
         dz.Turn(3.0, 9.0, "SPEAKER_01"),
     ]
     monkeypatch.setattr(dz, "to_wav", lambda src, dst: dst)
-    monkeypatch.setattr(dz, "diarize_wav", lambda *a, **k: turns)
+    monkeypatch.setattr(dz, "diarize_wav", lambda *a, **k: dz.Diarization(turns, {}))
     segments = [
         SimpleNamespace(
             start=0.0, end=2.0, text="Question.",
@@ -654,6 +654,49 @@ def test_diarized_blocks_split_from_rendering(
     assert body == dz.render_diarized(blocks, timestamps=True)
     assert body.startswith("[00:00] " + dz.speaker_label("SPEAKER_00"))
     assert capsys.readouterr().out != ""
+
+
+def test_us1_10_diarized_blocks_gives_sentences_to_their_voice(
+    fake_diarization, monkeypatch, tmp_path
+):
+    from stt import diarize as dz
+
+    turns = [dz.Turn(0.0, 3.0, "SPEAKER_00"), dz.Turn(3.0, 9.0, "SPEAKER_01")]
+    centroids = {"SPEAKER_00": [1.0, 0.0], "SPEAKER_01": [0.0, 1.0]}
+    monkeypatch.setattr(dz, "diarize_wav", lambda *a, **k: dz.Diarization(turns, centroids))
+    measured = []
+
+    def fake_embeddings(pipeline, wav, sentences):
+        measured.append([len(s) for s in sentences])
+        return [[0.0, 1.0], [0.0, 1.0]]
+
+    monkeypatch.setattr(dz, "sentence_embeddings", fake_embeddings)
+    blocks = transcribe.diarized_blocks(
+        tmp_path / "talk.m4a", fake_diarization, _diarize_args(), None
+    )
+    assert measured == [[1, 1]]
+    assert [b.speaker for b in blocks] == ["SPEAKER_01", "SPEAKER_01"]
+
+
+def test_us1_12_single_speaker_is_not_measured_by_voice(
+    fake_diarization, monkeypatch, tmp_path
+):
+    from stt import diarize as dz
+
+    turns = [dz.Turn(0.0, 9.0, "SPEAKER_00")]
+    monkeypatch.setattr(
+        dz, "diarize_wav",
+        lambda *a, **k: dz.Diarization(turns, {"SPEAKER_00": [1.0, 0.0]}),
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("one speaker needs no voice measure")
+
+    monkeypatch.setattr(dz, "sentence_embeddings", forbidden)
+    blocks = transcribe.diarized_blocks(
+        tmp_path / "talk.m4a", fake_diarization, _diarize_args(), None
+    )
+    assert [b.speaker for b in blocks] == ["SPEAKER_00", "SPEAKER_00"]
 
 
 def test_diarized_blocks_without_words_raises(tmp_path):

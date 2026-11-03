@@ -900,17 +900,23 @@ def diarized_blocks(
             f"빈 단어 타임스탬프: '{media.name}'에서 단어 단위 시각을 "
             f"받지 못했습니다. 화자 분리에는 word_timestamps가 필요합니다."
         )
+    voiced = None
     with tempfile.TemporaryDirectory() as tmp:
         wav = dz.to_wav(media, Path(tmp) / "audio.wav")
         voices = (
             dz.load_voice_db(args.voice_db) if args.voice_db else None
         )
-        turns = dz.diarize_wav(
+        diarization = dz.diarize_wav(
             pipeline, wav, args.speakers, voices, args.voice_threshold
         )
+        if len(diarization.centroids) > 1:
+            embeddings = dz.sentence_embeddings(
+                pipeline, wav, dz.group_sentences(words)
+            )
+            voiced = [dz.pick_voice(e, diarization.centroids) for e in embeddings]
     return dz.assign_blocks(
-        words, turns, args.min_speaker_seconds,
-        gap_s=args.gap, max_chars=args.max_chars,
+        words, diarization.turns, args.min_speaker_seconds,
+        gap_s=args.gap, max_chars=args.max_chars, sentence_speakers=voiced,
     )
 
 

@@ -76,7 +76,9 @@ class Harness:
         monkeypatch.setattr(transcribe, "load_model", self._load_model)
         monkeypatch.setattr(diarize, "load_pipeline", self._load_pipeline)
         monkeypatch.setattr(diarize, "to_wav", self._to_wav)
-        monkeypatch.setattr(diarize, "diarize_wav", lambda *args, **kwargs: list(self.turns))
+        monkeypatch.setattr(
+            diarize, "diarize_wav", lambda *args, **kwargs: diarize.Diarization(list(self.turns), {})
+        )
 
     def _load_model(self, name: str, device: str) -> FakeModel:
         self.load_calls.append((name, device))
