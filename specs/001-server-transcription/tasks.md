@@ -558,8 +558,8 @@ description: "Task list for 001-server-transcription"
 - [ ] T089 [US4] 명령줄 GPU 잠금 기본 파일(FR-011) — RED: `tests/test_gpu_lock.py` 에 변수가 없거나 비었을 때 기본 파일이 있으면 그 경로, 없으면 None;
   `tests/test_cli_gpu_lock.py` 에 변수 없는 셸에서 기본 파일로 줄을 섬; `tests/conftest.py` 에 호스트의 `/run/stt/gpu.lock` 을 시험에서 가리는 자동
   고정물; GREEN: `gpu_lock.DEFAULT_PATH`, `hold_gpu_lock` 이 언제나 경로를 정한다 — closes US4-7 — verify RED
-- [ ] T090 [US5] 녹음 형식 허용목록(FR-004a) — RED: `tests/server/test_intake.py` 에 목록의 형식(m4a·mp4·mp3·flac·ogg·opus·webm·aac·amr·wav)은
-  길이를 재고 목록 밖(aiff·au)은 `UnreadableAudioError`; `tests/server/test_us5.py` 에 목록 밖 녹음은 `failed(unreadable_audio)`; GREEN:
+- [ ] T090 [US5] 녹음 형식 허용목록(FR-004a) — RED: `tests/server/test_intake.py` 에 스키마 확장자의 형식(m4a·mp3·flac·ogg·opus·aac·wma, wav 는 기존 시험)은
+  길이를 재고 목록 밖(aiff·au·webm)은 `UnreadableAudioError`; `tests/server/test_us5.py` 에 목록 밖 녹음은 `failed(unreadable_audio)`; GREEN:
   `probe_duration` 이 `format_whitelist` 로 연다 — closes US5-10 — verify RED
 - [ ] T091 받기 요청 단위 격리(FR-032a) — RED: `tests/server/test_edge_cases.py` 에 처리 중 예외(디스크 부족·EMFILE·기타)가 난 요청은 응답 없이
   요청·첨부가 지워지고 로그 한 줄, 뒤 요청은 처리, 실패 수를 돌려줌; 비어 있지 않은 `<id>.json/` 폴더는 거절 뒤 지워짐; 지울 수 없는 항목은
