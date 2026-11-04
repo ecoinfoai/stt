@@ -155,8 +155,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point: extract voices following the enroll map into the database.
 
-    Runs on the GPU only. With STT_GPU_LOCK set, the shared GPU lock is
-    held from before the pipeline load until all entries are done.
+    Runs on the GPU only. When the machine has a GPU lock (STT_GPU_LOCK or
+    the server's lock file), it is held from before the pipeline load
+    until all entries are done.
 
     Args:
         argv: Argument list for tests (sys.argv is used when None).

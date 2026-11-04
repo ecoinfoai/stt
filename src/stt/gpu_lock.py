@@ -12,6 +12,9 @@ from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
 ENV_VAR = "STT_GPU_LOCK"
+#: The server's lock file; the command line queues on it even without ENV_VAR,
+#: so a shell opened before the server was deployed does not share the GPU.
+DEFAULT_PATH = Path("/run/stt/gpu.lock")
 WAIT_MESSAGE = "GPU is in use by another stt job; waiting for it to finish."
 
 
@@ -23,9 +26,15 @@ class MissingGpuLockError(Exception):
 
 
 def lock_path_from_env(environ: Mapping[str, str]) -> Path | None:
-    """Returns the GPU lock file named by ``STT_GPU_LOCK``, or None if unset or empty."""
+    """Returns the GPU lock file to queue on.
+
+    That is the file named by ``STT_GPU_LOCK``; when the variable is unset or
+    empty, ``DEFAULT_PATH`` if it exists, else None (no lock on this machine).
+    """
     value = environ.get(ENV_VAR, "")
-    return Path(value) if value else None
+    if value:
+        return Path(value)
+    return DEFAULT_PATH if DEFAULT_PATH.exists() else None
 
 
 def _open(path: Path) -> int:

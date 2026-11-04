@@ -617,6 +617,7 @@ def release_cached_gpu_memory() -> None:
     """
     torch = sys.modules.get("torch")
     if torch is None:
+        # intentional-skip: a run that never loaded PyTorch holds no GPU cache.
         return
     gc.collect()
     if torch.cuda.is_available():
@@ -625,11 +626,13 @@ def release_cached_gpu_memory() -> None:
 
 @contextmanager
 def hold_gpu_lock() -> Iterator[None]:
-    """Holds the shared GPU lock while STT_GPU_LOCK is set.
+    """Holds the shared GPU lock, if this machine has one.
 
-    The lock module is imported only when the variable is set, so runs
-    without it (other machines, Windows) behave exactly as before. Waits
-    while another process holds the lock and tells the user once on stderr.
+    The lock file is the one STT_GPU_LOCK names or, without the variable,
+    the server's lock file when it exists. Runs without either (other
+    machines, Windows) behave exactly as before; fcntl is imported only to
+    lock. Waits while another process holds the lock and tells the user
+    once on stderr.
     Before the lock is released, cached PyTorch GPU memory is returned so
     the next lock holder does not share the GPU with this idle process;
     callers must drop their own GPU objects (such as the pipeline) first.
@@ -638,13 +641,11 @@ def hold_gpu_lock() -> Iterator[None]:
         SystemExit: With code 2 when STT_GPU_LOCK names a missing file.
             It is not an Exception, so 'stt batch --keep-going' stops too.
     """
-    if "STT_GPU_LOCK" not in os.environ:
-        yield
-        return
     from stt import gpu_lock
 
     path = gpu_lock.lock_path_from_env(os.environ)
     if path is None:
+        # intentional-skip: no lock file here, so no server shares this GPU.
         yield
         return
     try:
@@ -1211,9 +1212,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point: validate arguments, collect files, transcribe, save.
 
-    Runs on the GPU only. With STT_GPU_LOCK set, the shared GPU lock is
-    held from before the speaker pipeline and model load until all files
-    are done.
+    Runs on the GPU only. When the machine has a GPU lock (STT_GPU_LOCK or
+    the server's lock file), it is held from before the speaker pipeline
+    and model load until all files are done.
 
     Args:
         argv: Argument list for tests (sys.argv is used when None).

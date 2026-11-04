@@ -217,6 +217,30 @@ def test_us4_1_lock_is_taken_with_device_auto(
     assert recorder.lock_busy_during_load == [True]
 
 
+@pytest.mark.parametrize("value", [None, ""], ids=["unset", "empty"])
+def test_us4_7_cli_without_the_variable_queues_on_the_server_lock_file(
+    value: str | None,
+    lock_file: Path,
+    holder: Holder,
+    media: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+) -> None:
+    if value is None:
+        monkeypatch.delenv("STT_GPU_LOCK", raising=False)
+    else:
+        monkeypatch.setenv("STT_GPU_LOCK", value)
+    monkeypatch.setattr(gpu_lock, "DEFAULT_PATH", lock_file)
+    recorder = LoadRecorder(lock_file)
+    monkeypatch.setattr(transcribe, "load_model", recorder)
+
+    assert transcribe.main([str(media), "--device", "cuda"]) == 0
+
+    assert capsys.readouterr().err.count(gpu_lock.WAIT_MESSAGE) == 1
+    assert recorder.times[0] >= holder.released_at()
+    assert recorder.lock_busy_during_load == [True]
+
+
 def test_empty_gpu_lock_variable_means_no_lock(
     media: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:

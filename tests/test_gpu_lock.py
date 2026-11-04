@@ -96,6 +96,31 @@ def test_lock_path_from_env_is_none_when_missing_or_empty(environ: dict[str, str
     assert lock_path_from_env(environ) is None
 
 
+@pytest.mark.parametrize("environ", [{}, {"STT_GPU_LOCK": ""}])
+def test_us4_7_lock_path_falls_back_to_the_server_lock_file(
+    environ: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from stt import gpu_lock
+
+    server_lock = tmp_path / "gpu.lock"
+    server_lock.touch()
+    monkeypatch.setattr(gpu_lock, "DEFAULT_PATH", server_lock)
+
+    assert lock_path_from_env(environ) == server_lock
+
+
+def test_lock_path_from_env_prefers_the_variable_over_the_server_lock_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from stt import gpu_lock
+
+    server_lock = tmp_path / "gpu.lock"
+    server_lock.touch()
+    monkeypatch.setattr(gpu_lock, "DEFAULT_PATH", server_lock)
+
+    assert lock_path_from_env({"STT_GPU_LOCK": "/elsewhere.lock"}) == Path("/elsewhere.lock")
+
+
 def test_acquire_on_free_lock_does_not_call_on_wait_and_releases_on_exit(lock_file: Path) -> None:
     calls: list[int] = []
     with acquire(lock_file, lambda: calls.append(1)):
@@ -204,6 +229,8 @@ def test_module_imports_without_fcntl() -> None:
         "from pathlib import Path\n"
         "import stt.gpu_lock as module\n"
         "assert module.lock_path_from_env({'STT_GPU_LOCK': 'x'}) == Path('x')\n"
+        "assert module.DEFAULT_PATH == Path('/run/stt/gpu.lock')\n"
+        "module.DEFAULT_PATH = Path(sys.argv[1])\n"
         "assert module.lock_path_from_env({}) is None\n"
     )
-    subprocess.run([sys.executable, "-c", script], check=True)
+    subprocess.run([sys.executable, "-c", script, "/nonexistent/stt/gpu.lock"], check=True)
