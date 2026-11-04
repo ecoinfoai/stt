@@ -69,7 +69,8 @@ systemctl show stt-worker.service -p PrivateNetwork -p MemorySwapMax -p LimitCOR
 findmnt -T /var/lib/stt                        # LUKS 위 루트인가
 ```
 
-시험 요청은 stt 계정으로 inbox 에 쓴다(`sudo -u stt`). 녹음은 운영자의 시험 녹음을 쓰고, 끝나면 남은 것이 없는지 본다.
+시험 요청은 stt 계정으로 inbox 에 쓴다(`sudo -u stt`). 서버 단계를 손으로 돌릴 때는 `systemctl start stt-<단계>.service` 를 쓴다 — 다른
+계정으로 `stt server` 를 직접 부르면 멈추고(FR-038), `sudo -u stt` 로 직접 부르면 단위의 스왑·덤프 금지가 빠진다. 녹음은 운영자의 시험 녹음을 쓰고, 끝나면 남은 것이 없는지 본다.
 
 1. **60초, 1차**: 힌트 없음·화자 구분 없음 → `done`. `result.json` 이 스키마를 통과하고 문단마다 시작·끝 시각이 있다(US1-1·3).
    결과를 가져가도 녹음은 남는다(`audio.delete_at` = 그날 23:58 KST, US3-1).

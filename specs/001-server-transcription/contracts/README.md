@@ -65,13 +65,32 @@
 | 본문의 `request_id` = 파일 이름 | transcribe → `failed(invalid_request)`, delete → `refusal` |
 | `audio.file` 의 앞부분 = `request_id`, 첨부가 inbox 에 있고 일반 파일(심볼릭 링크 아님, 링크 수 1)이며 stt 가 읽을 수 있음 | `failed(invalid_request)` |
 | `language` 가 엔진의 언어 목록에 있음 | `failed(invalid_request)` |
+| 녹음 형식이 아래 목록에 있음(확장자가 아니라 내용으로 판정, FR-004a) | `failed(unreadable_audio)` |
 | 녹음을 열 수 있고 음성 흐름이 있음 | `failed(unreadable_audio)` |
 | 녹음 길이 ≤ 3시간 | `failed(audio_too_long)` |
 | `from_request`: 같은 요청자의 transcribe 이고 녹음이 남아 있음(매일 정리 시각이 지났으면 청소 전이라도 없는 것으로 본다) | `failed(source_unavailable)`(없음·남의 것·지워짐을 가르지 않는다) |
 | delete 의 `target`: 같은 요청자의 transcribe | 응답 `outcome: refused`(없음·남의 것을 가르지 않는다) |
 
+받는 녹음 형식(FFmpeg 의 형식 이름, 흔한 확장자):
+
+| 형식 | 흔한 확장자 |
+|---|---|
+| `mov`·`mp4` 계열 | `.m4a` `.mp4` `.mov` `.3gp` |
+| `wav` | `.wav` |
+| `mp3` | `.mp3` |
+| `flac` | `.flac` |
+| `ogg` | `.ogg` `.opus` `.oga` |
+| `matroska`·`webm` | `.webm` `.mka` |
+| `aac`(ADTS) | `.aac` |
+| `amr` | `.amr` |
+
+목록 밖의 형식은 내용을 따라 읽지 않고 거절한다 — 형식 자동 판정은 다른 파일을 가리키는 재생 목록 같은 것까지 열기 때문이다. 호출하는 쪽의
+업로드 허용목록을 이 표와 맞추면 이용자가 올린 파일이 접수 뒤에 거절되는 일이 없다.
+
 받기는 본 `*.json` 을 하나도 inbox 에 남기지 않는다. 거절된 요청의 첨부는 그 자리에서 지운다 — 지우는 것은 언제나 **파일 이름 앞부분**의
-`<request_id>.audio.*` 뿐이고, 본문의 `audio.file` 이 다른 이름을 가리켜도 그 파일은 건드리지 않는다.
+`<request_id>.audio.*` 뿐이고, 본문의 `audio.file` 이 다른 이름을 가리켜도 그 파일은 건드리지 않는다. 받기 중 내부 오류(디스크 부족 등)가
+난 요청은 응답 없이 요청과 첨부를 지우고 다음 요청으로 간다(FR-032a) — 호출하는 쪽에는 §7 의 5분 무응답으로 보인다. 지울 수 없는
+inbox 항목은 `<이름>.unremovable` 로 이름을 바꿔 처리 대상에서 빼고, 청소가 1시간 뒤 지운다.
 
 ## 5. 지우기
 
@@ -130,8 +149,8 @@
 
 - `request_id` 는 요청마다 새 UUID 다. 다시 쓰면 그 요청은 버려지고 `duplicate_refused_at` 만 남는다.
 - 요청 파일은 반드시 `.tmp` 로 쓰고 이름을 바꾼다. 첨부는 요청보다 먼저 다 쓴다. 두 파일 모두 그룹이 읽을 수 있는 일반 파일이어야 한다(§3).
-- 요청을 맡긴 뒤 5분 안에 `outbox/<request_id>.json` 이 생기지 않으면 실패로 보고 운영자에게 알린다(받기 단위가 멈춘 것이다). 1시간 넘게
-  처리되지 못한 inbox 파일은 청소가 지운다.
+- 요청을 맡긴 뒤 5분 안에 `outbox/<request_id>.json` 이 생기지 않으면 실패로 보고 운영자에게 알린다 — 받기 단위가 멈췄거나, 받기가 그
+  요청을 내부 오류로 처리하지 못해 치운 것이다(§4). 이용자에게는 나중에 다시 맡기라고 알린다. 1시간 넘게 처리되지 못한 inbox 파일은 청소가 지운다.
 - 응답 파일이 사라졌으면 그 job 은 만료된 것이다(`expires_at`). 매일 정리는 대기·처리 중인 job 도 `failed(audio_deleted)` 로 만든 뒤 곧바로
   응답째 지우므로, 그 실패가 응답에 보이지 않고 사라질 수 있다 — 응답이 사라진 것을 만료로 본다.
 - 매일 정리는 23:58(KST)에 그날 받은 모든 것을 지운다. 호출하는 쪽은 이용자에게 「자정에 유지관리로 작업 결과물과 자료가 사라질 수 있으니

@@ -41,8 +41,9 @@ nixos-config 가 한다 — geo-scout 와 같은 모양이다(`nixos-config:flak
 - 워커만: `RemoveIPC=true` — 엔진이 강제 종료돼도 stt 계정의 IPC 객체(공유 메모리 등)가 남지 않게. 계정의 객체를 모두 지우는 설정이라 다른
   단위에는 두지 않는다(그 단위가 멈출 때 돌고 있는 워커의 것까지 지운다, research R20-17).
 - 받기·워커: `StartLimitIntervalSec=0` — path 단위가 깨우는 단위라 요청이 몰리면 systemd 기본 시작 상한(10초에 5번)에 걸리고, 그러면 path 단위까지
-  `unit-start-limit-hit` 로 멈춰 다시는 깨우지 않는다(VM 시험에서 요청 6개로 드러났다). 상한을 없애는 대가: 지우지 못하는 파일에서 단계가 거듭 죽으면
-  멈추지 않고 되풀이해 돈다 — 계약 §7 의 「5분 안에 응답 없음」이 그것을 드러낸다.
+  `unit-start-limit-hit` 로 멈춰 다시는 깨우지 않는다(VM 시험에서 요청 6개로 드러났다). 상한을 없애는 대가: 단계가 거듭 죽으면
+  멈추지 않고 되풀이해 돈다 — 계약 §7 의 「5분 안에 응답 없음」이 그것을 드러낸다. 받기는 지울 수 없는 inbox 항목을 처리 대상이 아닌 이름으로
+  바꿔 이 되풀이를 끊는다(FR-032a). 청소는 기록 없이 남은 대기 표시를 지워 워커의 되풀이를 끊는다(FR-032b).
 - 워커만: `KillSignal=SIGKILL`, `restartIfChanged=false` — 워커는 `PrivatePIDs` 의 PID 1 이라 처리기 없는 SIGTERM 을 받지 않는다. 기본 정지는
   SIGTERM 을 묶음 전체에 보내 엔진만 죽이고, 워커는 판정 없는 엔진을 `engine_error` 로 게시한 뒤 다음 job 을 시작한다. SIGKILL 로 바로 멈추면
   처리 중인 job 은 다음 워커 시작이나 청소에서 `interrupted` 가 된다. 배포(`nixos-rebuild switch`)는 도는 전사를 끊지 않고, 다음 path 시작이 새

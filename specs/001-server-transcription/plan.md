@@ -106,7 +106,7 @@ tests/
 │                        #   test_server_cli·test_logging, 수용 시나리오 test_us1.py … test_us5.py, test_edge_cases.py
 ├── test_gpu_lock.py     # 새
 ├── test_cli_gpu_lock.py # 새 — 명령줄 잠금(transcribe·batch·enroll), fcntl 없는 환경
-└── test_transcribe.py · test_diarize.py   # 새 시험만 더함(기존 시험은 고치지 않는다 — 출력 동일은 기존 시험이 지킨다)
+└── test_transcribe.py · test_diarize.py   # 새 시험만 더함(기존 시험은 고치지 않는다 — 출력 동일은 기존 시험이 지킨다. 예외: 화자 배정 규칙 FR-013a·b 가 바꾼 문장 단위 배정 시험)
 
 nix/
 ├── package.nix          # 새: uv2nix 서버 환경 (R1)

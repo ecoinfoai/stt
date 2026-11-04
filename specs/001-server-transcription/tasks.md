@@ -548,9 +548,41 @@ description: "Task list for 001-server-transcription"
   `Diarization` 을 돌려줌, `transcribe.diarized_blocks` 가 화자 둘 이상일 때 문장마다 목소리를 재어 `assign_blocks` 에 넘김. 확인: EP.11 에서
   판독 구간 낱말 정확도가 실험 값(99.0%)에 닿음 — 실측 98.7%(381/386, v2 92.5%), 문단 110 → 163 — turns T086 GREEN
 
+### 최종 감사(T078) 반영 — 2026-11-04
+
+감사 결과: qa-engineer PASS(Medium 3), adversary FAIL(High 4). 운영자가 권한 묶음을 승인했다. 계약이 바뀌는 곳은 명령줄 GPU 잠금 기본값(cli.md §2)과
+녹음 형식 허용목록(README §4)이고, 요청·응답·결과 스키마는 그대로다.
+
+- [ ] T088 [US1] 문장 목소리 60초 상한(FR-013b) — RED: `tests/test_diarize.py` `TestSentenceEmbeddings` 에 60초보다 긴 문장은 모델을 부르지 않고
+  None(경계: 정확히 60초는 잰다); GREEN: `diarize.MAX_VOICE_SECONDS = 60.0` 를 `sentence_embeddings` 가 지킨다 — closes US1-12 — verify RED
+- [ ] T089 [US4] 명령줄 GPU 잠금 기본 파일(FR-011) — RED: `tests/test_gpu_lock.py` 에 변수가 없거나 비었을 때 기본 파일이 있으면 그 경로, 없으면 None;
+  `tests/test_cli_gpu_lock.py` 에 변수 없는 셸에서 기본 파일로 줄을 섬; `tests/conftest.py` 에 호스트의 `/run/stt/gpu.lock` 을 시험에서 가리는 자동
+  고정물; GREEN: `gpu_lock.DEFAULT_PATH`, `hold_gpu_lock` 이 언제나 경로를 정한다 — closes US4-7 — verify RED
+- [ ] T090 [US5] 녹음 형식 허용목록(FR-004a) — RED: `tests/server/test_intake.py` 에 목록의 형식(m4a·mp4·mp3·flac·ogg·opus·webm·aac·amr·wav)은
+  길이를 재고 목록 밖(aiff·au)은 `UnreadableAudioError`; `tests/server/test_us5.py` 에 목록 밖 녹음은 `failed(unreadable_audio)`; GREEN:
+  `probe_duration` 이 `format_whitelist` 로 연다 — closes US5-10 — verify RED
+- [ ] T091 받기 요청 단위 격리(FR-032a) — RED: `tests/server/test_edge_cases.py` 에 처리 중 예외(디스크 부족·EMFILE·기타)가 난 요청은 응답 없이
+  요청·첨부가 지워지고 로그 한 줄, 뒤 요청은 처리, 실패 수를 돌려줌; 비어 있지 않은 `<id>.json/` 폴더는 거절 뒤 지워짐; 지울 수 없는 항목은
+  `.unremovable` 로 비켜 남; 앞 시험 `test_non_empty_directory_named_like_a_request_propagates_after_the_refusal`·
+  `test_non_file_os_error_propagates_and_leaves_the_request`·`test_probe_failure_leaves_no_audio_copy_and_no_record` 를 새 규칙으로 바꾼다;
+  GREEN: `intake.run_once` — closes 경계 사례 9, 10 — verify RED
+- [ ] T092 청소 항목 단위 격리(FR-032a) — RED: `tests/server/test_edge_cases.py` 에 한 녹음·한 만료 job·한 남은 파일이 실패해도 나머지는 지워지고
+  항목마다 로그 한 줄, 실패 수를 돌려줌; 사라진 파일과의 경합은 실패가 아님; 비어 있는 읽기 금지 폴더도 지움; 앞 시험
+  `test_an_unremovable_inbox_entry_does_not_stop_the_other_stale_cleanups` 를 새 규칙으로 바꾼다; GREEN: `sweep.run_once` 의 항목 가드 —
+  closes 경계 사례 11 — verify RED
+- [ ] T093 남은 대기 표시(FR-032b) — RED: `tests/server/test_edge_cases.py` 에 기록 없는 표시·끝난 job 의 표시는 청소 한 번 뒤 사라지고 대기 중
+  job 의 표시는 남음; GREEN: `lifecycle.clear_stale_markers` 를 청소가 부른다 — closes 경계 사례 12 — verify RED
+- [ ] T094 실행 계정 확인(FR-038) — RED: `tests/server/test_server_cli.py` 에 상태 폴더 주인이 아닌 계정이면 종료 2·메시지·아무것도 만들지 않음,
+  받기·청소가 실패 항목이 있으면 종료 1; GREEN: `server/cli.main` — closes 경계 사례 13 — verify RED
+- [ ] T095 작은 지적 — 워커의 작업 폴더 지우기 실패를 로그로(`ignore_errors` 대신, RED: `tests/server/test_us2.py`), 죽은 워커 정리의 결과 폴더
+  지우기는 없는 것만 넘어감, `intake.py` 의 쓰지 않는 import, 의도적으로 건너뛰는 곳의 `# intentional-skip:` 주석, 엔진 시험에 목소리 재배정 경로
+  (`tests/server/test_engine.py`, 결과가 스키마를 통과) — closes 감사 M-f·L2·L3·silent-skip
+- [ ] T096 확인 — 언어 규칙 0건, 전체 시험 통과, 시나리오(US1 12 · US2 10 · US3 4 · US4 7 · US5 10 = 43개)와 경계 사례 13개가 각각 시험 하나
+  이상에 대응, `nix flake check --no-build`. 감사 결과(고침·미룸과 사유)를 `handoff/2026-10-31.md` 에 적고 T078 을 닫는다 — 확인
+
 ### 확인
 
-- [X] T084 언어 규칙(T074 와 같은 `rg`) 0건, `uv run python -m pytest -q` 전부 통과, 개정 spec 의 시나리오(US1 8 · US2 10 · US3 4 · US4 6 · US5 9 = 37개)
+- [X] T084 언어 규칙(T074 와 같은 `rg`) 0건, `uv run python -m pytest -q` 전부 통과, 개정 spec 의 시나리오(US1 8 · US2 10 · US3 4 · US4 6 · US5 9 = 37개, 11-02 당시 — 11-04 기준은 T096)
   와 경계 사례 8개가 각각 시험 하나 이상에 대응(`rg -o 'def test_(us[1-5]_[0-9]+|edge_[1-8])_' tests`), Python 3.10 환경에서도 전부 통과,
   `nix flake check --no-build` 통과. RED 해당 없음 — 확인 — supports SC-012, SC-013
 
@@ -623,6 +655,6 @@ T025 src/stt/transcribe.py (R8-1)   T027 src/stt/diarize.py (R8-4)   T028 src/st
 ## Notes
 
 - 시나리오 ↔ 과제: US1-1·7·8 → T018 · US1-2…6 → T020 · US5-5 → T020 · US5-6 → T019 · US2-* → T035 · US3-* → T044 · US4-1·4 → T049 ·
-  US4-5 → T050 · US4-2·3 → T051 · US5-1·2·3·9 → T057 · US5-4·7·8 → T058 · 경계 사례 1 → T019, 2·3 → T036, 4·5 → T020, 6 → T021(토큰)·T076(망 없는 완료), 7 → T045, 8 → T035(워커)·T044(받기).
+  US4-5 → T050 · US4-2·3 → T051 · US5-1·2·3·9 → T057 · US5-4·7·8 → T058 · 경계 사례 1 → T019, 2·3 → T036, 4·5 → T020, 6 → T021(토큰)·T076(망 없는 완료), 7 → T045, 8 → T035(워커)·T044(받기) · US1-12(60초) → T088 · US4-7 → T089 · US5-10 → T090 · 경계 사례 9·10 → T091, 11 → T092, 12 → T093, 13 → T094.
 - spec 이 바뀌면 spec 을 먼저 고치고 과제를 고친다(전역 §3.5).
 - 과제 하나 또는 논리 묶음마다 커밋(Conventional Commits, 영어).
