@@ -42,6 +42,10 @@ DEFAULT_VOICE_THRESHOLD: float = 0.75
 #: similarity beats the runner-up's by at least this much.
 DEFAULT_VOICE_MARGIN: float = 0.1
 
+#: Longest sentence whose voice is measured. The embedding model takes a
+#: sentence in one pass, so its GPU memory grows with the sentence length.
+MAX_VOICE_SECONDS: float = 60.0
+
 #: Message of the error raised when torch cannot use CUDA.
 NO_CUDA_MESSAGE: str = (
     "Speaker diarization needs a GPU, but torch cannot use CUDA; "
@@ -895,7 +899,8 @@ def sentence_embeddings(
 
     Returns:
         One embedding per sentence; None where the sentence is shorter than
-        the model's minimum or the model returns NaN.
+        the model's minimum, longer than MAX_VOICE_SECONDS, or the model
+        returns NaN.
 
     Examples:
         >>> sentence_embeddings(p, Path("a.wav"), [])  # doctest: +SKIP
@@ -912,7 +917,7 @@ def sentence_embeddings(
     for sentence in sentences:
         start = max(0, int(sentence[0].start * sample_rate))
         end = int(sentence[-1].end * sample_rate)
-        if end - start < model.min_num_samples:
+        if end - start < model.min_num_samples or end - start > MAX_VOICE_SECONDS * sample_rate:
             vectors.append(None)
             continue
         vector = model(mono[:, start:end].unsqueeze(0))[0]

@@ -705,6 +705,25 @@ class TestSentenceEmbeddings:
         assert sentence_embeddings(pipeline, wav, [[word(1.0, 1.2, "네. ")]]) == [None]
         assert embedding.lengths == []
 
+    def test_us1_12_sentence_longer_than_the_cap_is_not_measured(self, tmp_path):
+        pytest.importorskip("torch")
+        from stt import diarize
+
+        cap = diarize.MAX_VOICE_SECONDS
+        wav = _write_wav(tmp_path / "a.wav", cap + 2.0)
+        embedding = _FakeEmbedding()
+        pipeline = SimpleNamespace(_embedding=embedding)
+        sentences = [[word(0.0, cap + 1.0, "too long. ")], [word(0.0, cap, "just fits. ")]]
+        vectors = sentence_embeddings(pipeline, wav, sentences)
+        assert vectors[0] is None
+        assert vectors[1] is not None
+        assert embedding.lengths == [int(cap * 16000)]
+
+    def test_voice_cap_is_sixty_seconds(self):
+        from stt import diarize
+
+        assert diarize.MAX_VOICE_SECONDS == 60.0
+
     def test_sentence_embeddings_drops_nan_vectors(self, tmp_path):
         pytest.importorskip("torch")
         wav = _write_wav(tmp_path / "a.wav", 2.0)
