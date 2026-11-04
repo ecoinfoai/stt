@@ -7,6 +7,7 @@ import fcntl
 import os
 import re
 import secrets
+import shutil
 import stat
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
@@ -96,8 +97,30 @@ def _make_folder(folder: Path, mode: int) -> None:
     try:
         folder.mkdir()
     except FileExistsError:
+        # intentional-skip: an existing folder keeps the mode it was given when made.
         return
     os.chmod(folder, mode)
+
+
+def remove_tree(folder: Path) -> None:
+    """Removes `folder` and everything in it.
+
+    An empty folder goes with ``rmdir``, which needs no access to the folder
+    itself: a caller may leave a folder this account cannot read.
+    """
+    try:
+        os.rmdir(folder)
+    except OSError as error:
+        if error.errno != errno.ENOTEMPTY:
+            raise
+        shutil.rmtree(folder)
+
+
+def describe_error(error: BaseException) -> str:
+    """Names an error for a log line: the errno name of an OSError, else the exception class."""
+    if isinstance(error, OSError) and error.errno in errno.errorcode:
+        return errno.errorcode[error.errno]
+    return type(error).__name__
 
 
 def is_request_name(name: str) -> bool:

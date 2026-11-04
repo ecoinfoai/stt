@@ -9,13 +9,14 @@ import errno
 import json
 import os
 import shutil
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from stt.server.deadlines import parse_time
-from stt.server.layout import Layout, atomic_write_text, is_request_name
+from stt.server.layout import Layout, atomic_write_text, is_request_name, remove_tree
 from stt.server.records import (
     Audio,
     DeletedBy,
@@ -34,6 +35,9 @@ _RESPONSE_MODE = 0o640
 _MARKER_MODE = 0o600
 
 EndState = Literal["done", "failed", "deleted"]
+#: Wraps the cleanup of one item; given a log label (a job or recording id, or a
+#: fixed name for a path). The sweep's guard logs and swallows the item's error.
+Guard = Callable[[str], AbstractContextManager[None]]
 
 _AUDIO_DELETED = Failure("audio_deleted", "The recording was deleted before the job finished.")
 _STALE_AFTER = timedelta(hours=1)
@@ -41,6 +45,12 @@ _LOG_INBOX = "removed an inbox file older than one hour"
 _LOG_TEMP = "removed a stale temporary file or folder"
 _LOG_AUDIO_FOLDER = "removed a recording folder without a record"
 _INTERRUPTED = Failure("interrupted", "The worker stopped before the job finished.")
+_LOG_MARKER = "removed a queue marker of a job that is not queued"
+
+
+def unguarded(label: str) -> AbstractContextManager[None]:
+    """A guard that lets every error propagate."""
+    return nullcontext()
 
 
 def write_response(layout: Layout, doc: dict[str, Any]) -> None:
@@ -122,10 +132,12 @@ def _remove_while_engine_may_write(folder: Path) -> None:
     try:
         shutil.rmtree(folder)
     except FileNotFoundError:
+        # intentional-skip: the folder is already gone.
         pass
     except OSError as error:
         if error.errno != errno.ENOTEMPTY:
             raise
+        # intentional-skip: the worker removes the refilled folder again after the kill.
 
 
 def finish(layout: Layout, job: Job, state: EndState, now: datetime, failure: Failure | None = None) -> Job:
@@ -204,7 +216,7 @@ def delete_everything(layout: Layout, job: Job, now: datetime) -> None:
             finish(layout, marked, "deleted", now)
 
 
-def clear_dead_worker(layout: Layout, now: datetime) -> list[Job]:
+def clear_dead_worker(layout: Layout, now: datetime, guard: Guard = unguarded) -> list[Job]:
     """Cleans up after a worker that died; the caller knows no worker is alive.
 
     Running jobs become ``failed(interrupted)`` and lose a result published just
@@ -214,6 +226,7 @@ def clear_dead_worker(layout: Layout, now: datetime) -> list[Job]:
     Args:
         layout: The state root.
         now: Cleanup time.
+        guard: Wraps each job and each folder.
 
     Returns:
         The jobs that were failed with ``interrupted``.
@@ -221,57 +234,71 @@ def clear_dead_worker(layout: Layout, now: datetime) -> list[Job]:
     interrupted = []
     for job in load_jobs(layout):
         if job.state == "running":
-            shutil.rmtree(layout.outbox / job.request_id, ignore_errors=True)
-            interrupted.append(finish(layout, job, "failed", now, _INTERRUPTED))
+            with guard(job.request_id):
+                _remove(layout.outbox / job.request_id)
+                interrupted.append(finish(layout, job, "failed", now, _INTERRUPTED))
     for entry in layout.work.iterdir():
-        if entry.is_dir():
-            shutil.rmtree(entry)
-        else:
-            entry.unlink()
+        with guard("work entry"):
+            _remove(entry)
     for staging in layout.outbox.glob(".*.tmp"):
         if staging.is_dir():
-            shutil.rmtree(staging)
+            with guard("staging folder"):
+                _remove(staging)
     return interrupted
 
 
 def _remove(path: Path) -> None:
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path)
-    else:
-        path.unlink(missing_ok=True)
+    """Removes a file, link or folder; one that is already gone is fine."""
+    try:
+        if path.is_dir() and not path.is_symlink():
+            remove_tree(path)
+        else:
+            path.unlink(missing_ok=True)
+    except FileNotFoundError:
+        # intentional-skip: removed meanwhile (intake, or the caller renaming its file), which is the goal.
+        return
 
 
 def _is_stale(path: Path, now: datetime) -> bool:
-    """True once `path` was last changed more than an hour before `now`, by inode change time."""
-    return now - datetime.fromtimestamp(os.lstat(path).st_ctime, now.tzinfo) > _STALE_AFTER
+    """True once `path` was last changed more than an hour before `now`, by inode change time; False if gone."""
+    try:
+        changed = os.lstat(path).st_ctime
+    except FileNotFoundError:
+        # intentional-skip: removed meanwhile, so nothing is left to clean.
+        return False
+    return now - datetime.fromtimestamp(changed, now.tzinfo) > _STALE_AFTER
 
 
-def _remove_stale(paths: list[Path], now: datetime, message: str) -> None:
+def _remove_stale(paths: list[Path], now: datetime, message: str, label: str, guard: Guard) -> None:
     for path in paths:
-        if _is_stale(path, now):
-            _remove(path)
-            print(message, flush=True)
+        with guard(label):
+            if _is_stale(path, now):
+                _remove(path)
+                print(message, flush=True)
 
 
-def _purge_records(layout: Layout, now: datetime) -> None:
+def _purge_records(layout: Layout, now: datetime, guard: Guard) -> None:
     """Removes the response, result and record of every expired job, then audio records nobody uses."""
     jobs = load_jobs(layout)
     for job in jobs:
         if job.expires_at <= now:
-            _remove(layout.outbox / job.request_id)
-            (layout.outbox / f"{job.request_id}.json").unlink(missing_ok=True)
-            shutil.rmtree(layout.jobs / job.request_id)
+            with guard(job.request_id):
+                _remove(layout.outbox / job.request_id)
+                (layout.outbox / f"{job.request_id}.json").unlink(missing_ok=True)
+                shutil.rmtree(layout.jobs / job.request_id)
     alive = {job.request_id for job in jobs if job.expires_at > now}
     for audio in load_audios(layout):
         if alive.isdisjoint(audio.users):
-            (layout.audio / f"{audio.audio_id}.json").unlink()
+            with guard(audio.audio_id):
+                (layout.audio / f"{audio.audio_id}.json").unlink()
     for response in layout.outbox.glob("*.json"):
         if is_request_name(response.name) and not (layout.jobs / response.stem / "job.json").exists():
-            if parse_time(json.loads(response.read_text(encoding="utf-8"))["expires_at"]) <= now:
-                response.unlink()
+            with guard(response.stem):
+                if parse_time(json.loads(response.read_text(encoding="utf-8"))["expires_at"]) <= now:
+                    response.unlink()
 
 
-def purge_expired(layout: Layout, now: datetime) -> None:
+def purge_expired(layout: Layout, now: datetime, guard: Guard) -> None:
     """Removes everything whose time has come; the caller holds ``state.lock``.
 
     Expired jobs lose their response, result and record; a recording's record goes
@@ -284,18 +311,37 @@ def purge_expired(layout: Layout, now: datetime) -> None:
     Args:
         layout: The state root.
         now: The current time.
+        guard: Wraps each job, record and path.
     """
-    _purge_records(layout, now)
+    _purge_records(layout, now, guard)
     temporary = [
         *layout.outbox.glob(".*.tmp"),
         *layout.jobs.glob("*/.*.tmp"),
         *layout.audio.glob(".*.tmp"),
     ]
-    _remove_stale(temporary, now, _LOG_TEMP)
+    _remove_stale(temporary, now, _LOG_TEMP, "temporary entry", guard)
     unrecorded = [
         folder
         for folder in layout.audio.iterdir()
         if folder.is_dir() and not (layout.audio / f"{folder.name}.json").exists()
     ]
-    _remove_stale(unrecorded, now, _LOG_AUDIO_FOLDER)
-    _remove_stale(list(layout.inbox.iterdir()), now, _LOG_INBOX)
+    _remove_stale(unrecorded, now, _LOG_AUDIO_FOLDER, "recording folder", guard)
+    _remove_stale(list(layout.inbox.iterdir()), now, _LOG_INBOX, "inbox entry", guard)
+
+
+def clear_stale_markers(layout: Layout, guard: Guard) -> None:
+    """Removes every queue marker whose job is gone or no longer ``queued``; the caller holds ``state.lock``.
+
+    Such a marker is left when a process dies between saving a job's new state
+    and removing the marker; left alone, it would wake the worker forever.
+
+    Args:
+        layout: The state root.
+        guard: Wraps each marker.
+    """
+    waiting = {marker_path(layout, job).name for job in load_jobs(layout) if job.state == "queued"}
+    for marker in layout.queue.iterdir():
+        if marker.name not in waiting:
+            with guard("queue marker"):
+                _remove(marker)
+                print(_LOG_MARKER, flush=True)

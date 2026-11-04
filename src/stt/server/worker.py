@@ -20,7 +20,7 @@ from typing import Callable, Literal, Sequence
 
 from stt import gpu_lock as gpu_lock_module
 from stt.server import deadlines, lifecycle
-from stt.server.layout import Layout, hold
+from stt.server.layout import Layout, describe_error, hold
 from stt.server.records import Failure, Job, load_audio, load_job, load_jobs, queued_in_order
 
 DEFAULT_ENGINE_CMD: tuple[str, ...] = (sys.executable, "-m", "stt.server.engine")
@@ -168,6 +168,7 @@ def _settle(layout: Layout, job: Job, work_dir: Path, failure: Failure | None, n
             return
         current = load_job(layout, job.request_id)
         if current.state != "running":
+            # intentional-skip: a delete or the daily purge ended the job and logged it.
             return
         if failure is None:
             _publish(layout, work_dir, job.request_id)
@@ -244,7 +245,18 @@ def _run_job(
         else:
             _log(job.request_id, "stopped")
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        _remove_work_folder(job.request_id, work_dir)
+
+
+def _remove_work_folder(request_id: str, work_dir: Path) -> None:
+    """Removes the job's work folder, logging a failure instead of raising over a propagating error."""
+    try:
+        shutil.rmtree(work_dir)
+    except FileNotFoundError:
+        # intentional-skip: finishing the job already removed it.
+        return
+    except OSError as error:
+        _log(request_id, f"work folder removal failed {describe_error(error)}")
 
 
 def run_one(

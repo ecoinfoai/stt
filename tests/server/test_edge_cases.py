@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import pytest
 
@@ -185,17 +186,93 @@ def test_directory_named_like_a_request_is_refused_and_removed(layout: Layout) -
     assert inbox_names(layout) == []
 
 
-def test_non_empty_directory_named_like_a_request_propagates_after_the_refusal(layout: Layout) -> None:
+def test_edge_10_non_empty_directory_named_like_a_request_is_refused_and_removed(layout: Layout) -> None:
     request_id = new_id()
     folder = layout.inbox / f"{request_id}.json"
     folder.mkdir()
     (folder / "inner").write_text("x", encoding="utf-8")
 
-    with pytest.raises(OSError):
-        intake.run_once(layout, FakeClock().now)
+    assert intake.run_once(layout, FakeClock().now) == 0
 
     assert read_response(layout, request_id)["kind"] == "invalid"
-    assert folder.is_dir()
+    assert inbox_names(layout) == []
+
+
+def _submit_only(layout: Layout, wav: Path, mtime: float | None = None) -> str:
+    request_id = new_id()
+    put_attachment(layout.inbox, f"{request_id}.audio.wav", wav)
+    put_body(layout.inbox, f"{request_id}.json", transcribe_body(request_id))
+    if mtime is not None:
+        os.utime(layout.inbox / f"{request_id}.json", (mtime, mtime))
+    return request_id
+
+
+def test_edge_9_disk_full_while_copying_drops_the_request_and_its_attachment(
+    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    full_id = _submit_only(layout, wav, mtime=1)
+    good_id = _submit_only(layout, wav)
+    real_copy = intake._copy_attachment
+
+    def copy_until_full(source: Any, folder: Path, extension: str) -> Path:
+        if folder.name == full_id:
+            folder.mkdir()
+            (folder / f"audio.{extension}").write_bytes(b"RIFF")
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_copy(source, folder, extension)
+
+    monkeypatch.setattr(intake, "_copy_attachment", copy_until_full)
+    capfd.readouterr()
+
+    assert intake.run_once(layout, FakeClock().now) == 1
+
+    assert not (layout.outbox / f"{full_id}.json").exists()
+    assert not (layout.audio / full_id).exists()
+    assert not (layout.jobs / full_id).exists()
+    assert read_response(layout, good_id)["state"] == "queued"
+    assert inbox_names(layout) == []
+    assert f"{full_id} intake error ENOSPC" in capfd.readouterr().out.splitlines()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+def test_edge_10_unremovable_entry_is_set_aside_and_the_next_request_still_runs(
+    layout: Layout, wav: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    stuck_id = new_id()
+    stuck = layout.inbox / f"{stuck_id}.json"
+    stuck.mkdir()
+    (stuck / "inner").write_text("x", encoding="utf-8")
+    os.utime(stuck, (1, 1))
+    stuck.chmod(0)
+    good_id = _submit_only(layout, wav)
+    capfd.readouterr()
+    try:
+        assert intake.run_once(layout, FakeClock().now) == 1
+
+        assert read_response(layout, stuck_id)["kind"] == "invalid"
+        assert read_response(layout, good_id)["state"] == "queued"
+        assert inbox_names(layout) == [f"{stuck_id}.json.unremovable"]
+        assert list(layout.inbox.glob("*.json")) == []
+        assert "set aside an inbox entry that could not be removed" in capfd.readouterr().out.splitlines()
+    finally:
+        for entry in layout.inbox.iterdir():
+            entry.chmod(0o700)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+def test_edge_10_empty_unreadable_directory_named_like_a_request_is_removed(layout: Layout) -> None:
+    request_id = new_id()
+    folder = layout.inbox / f"{request_id}.json"
+    folder.mkdir()
+    folder.chmod(0)
+    try:
+        assert intake.run_once(layout, FakeClock().now) == 0
+
+        assert read_response(layout, request_id)["kind"] == "invalid"
+        assert inbox_names(layout) == []
+    finally:
+        if folder.exists():
+            folder.chmod(0o700)
 
 
 def test_directory_with_non_uuid_name_is_removed_silently(
@@ -302,12 +379,94 @@ def test_an_unremovable_inbox_entry_does_not_stop_the_other_stale_cleanups(
 
     with hold(layout.worker_lock):
         set_to_ctime_plus(clock, orphan_audio, 61)
-        with pytest.raises(PermissionError):
-            run_sweep(layout, clock)
+        assert run_sweep(layout, clock) == 1
 
     assert stuck.exists()
     assert not record_tmp.exists()
     assert not orphan_audio.exists()
+
+
+def test_edge_11_one_failing_recording_does_not_stop_the_daily_purge(
+    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    clock = FakeClock()
+    stuck_id = _submit(layout, wav, clock)
+    other_id = _submit(layout, wav, clock)
+    real_rmtree = shutil.rmtree
+
+    def rmtree_except_stuck(path: object, *args: object, **kwargs: object) -> None:
+        if Path(str(path)) == layout.audio / stuck_id:
+            raise PermissionError(errno.EACCES, "Permission denied")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", rmtree_except_stuck)
+    clock.set("2026-03-02T15:00:00Z")
+    capfd.readouterr()
+
+    assert run_sweep(layout, clock) == 1
+
+    assert not (layout.audio / other_id).exists()
+    assert not (layout.jobs / other_id).exists()
+    assert not (layout.outbox / f"{other_id}.json").exists()
+    assert not (layout.jobs / stuck_id).exists()
+    assert list(layout.queue.iterdir()) == []
+    assert f"{stuck_id} cleanup failed EACCES" in capfd.readouterr().out.splitlines()
+
+
+def test_edge_11_an_entry_that_vanished_is_not_stale(layout: Layout) -> None:
+    assert lifecycle._is_stale(layout.inbox / "gone.json.tmp", FakeClock().now()) is False
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+def test_edge_11_empty_unreadable_inbox_folder_is_removed_after_one_hour(layout: Layout) -> None:
+    clock = FakeClock()
+    folder = layout.inbox / "staging"
+    folder.mkdir()
+    folder.chmod(0)
+    try:
+        set_to_ctime_plus(clock, folder, 61)
+        assert run_sweep(layout, clock) == 0
+
+        assert inbox_names(layout) == []
+    finally:
+        if folder.exists():
+            folder.chmod(0o700)
+
+
+def test_edge_12_queue_marker_without_a_job_is_removed(
+    layout: Layout, capfd: pytest.CaptureFixture[str]
+) -> None:
+    (layout.queue / f"{7:08d}-{new_id()}").touch()
+    capfd.readouterr()
+
+    assert run_sweep(layout, FakeClock()) == 0
+
+    assert list(layout.queue.iterdir()) == []
+    assert capfd.readouterr().out.splitlines() == ["removed a queue marker of a job that is not queued"]
+
+
+def test_edge_12_queue_marker_of_an_ended_job_is_removed(layout: Layout, wav: Path) -> None:
+    clock = FakeClock()
+    request_id = _submit(layout, wav, clock)
+    run_worker(layout, clock)
+    job = load_job(layout, request_id)
+    assert job.state == "done"
+    lifecycle.create_marker(layout, job)
+
+    run_sweep(layout, clock)
+
+    assert list(layout.queue.iterdir()) == []
+
+
+def test_edge_12_queue_marker_of_a_waiting_job_stays(layout: Layout, wav: Path) -> None:
+    clock = FakeClock()
+    _submit(layout, wav, clock)
+    markers = list(layout.queue.iterdir())
+    assert len(markers) == 1
+
+    run_sweep(layout, clock)
+
+    assert list(layout.queue.iterdir()) == markers
 
 
 def test_staging_folder_is_removed_at_once_when_no_worker_runs(layout: Layout) -> None:

@@ -16,6 +16,7 @@ DEFAULT_ROOT = Path("/var/lib/stt")
 DEFAULT_MODELS = Path("/var/lib/stt-models")
 
 EXIT_FETCH_FAILED = 1
+EXIT_SOME_FAILED = 1
 EXIT_USAGE = 2
 EXIT_BUSY = 75
 
@@ -102,15 +103,30 @@ def _work(args: argparse.Namespace, layout: Layout) -> int:
 def _intake(args: argparse.Namespace, layout: Layout) -> int:
     from stt.server import intake
 
-    intake.run_once(layout, _utc_now)
-    return 0
+    return EXIT_SOME_FAILED if intake.run_once(layout, _utc_now) else 0
 
 
 def _sweep(args: argparse.Namespace, layout: Layout) -> int:
     from stt.server import sweep
 
-    sweep.run_once(layout, _utc_now)
-    return 0
+    return EXIT_SOME_FAILED if sweep.run_once(layout, _utc_now) else 0
+
+
+def _wrong_account(command: str, root: Path) -> str | None:
+    """Says why this account must not run `command` on `root`, or None when it may.
+
+    Files a stage creates belong to whoever runs it; the service account cannot
+    read records made by root, which would stop every stage and the daily purge.
+    """
+    if not root.exists():
+        return None
+    owner, me = root.stat().st_uid, os.geteuid()
+    if owner == me:
+        return None
+    return (
+        f"stt server {command} must run as the owner of {root} (uid {owner}), not uid {me}; "
+        "start it through its systemd unit."
+    )
 
 
 # Stage modules load inside the stage functions: they need the optional `server`
@@ -130,8 +146,9 @@ def main(argv: Sequence[str]) -> int:
         argv: Arguments after ``server``.
 
     Returns:
-        0 when the stage finished or the models are in place, 1 when a model download failed, 2 for a usage
-        error or a missing GPU lock file, 75 when another run of the same stage holds its lock.
+        0 when the stage finished or the models are in place, 1 when a model download failed or intake or
+        sweep could not handle some items (the rest are done), 2 for a usage error, a missing GPU lock file
+        or an account other than the state root's owner, 75 when another run of the same stage holds its lock.
     """
     parser = build_parser()
     try:
@@ -140,6 +157,10 @@ def main(argv: Sequence[str]) -> int:
         return stop.code if isinstance(stop.code, int) else EXIT_USAGE
     if args.command == "fetch-models":
         return _fetch_models(args)
+    problem = _wrong_account(args.command, args.root)
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return EXIT_USAGE
     from stt.server.layout import Layout, try_hold
 
     layout = Layout(args.root)

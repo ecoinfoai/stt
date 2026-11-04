@@ -19,10 +19,12 @@ from stt.server.layout import (
     Layout,
     UnsafeFileError,
     atomic_write_text,
+    describe_error,
     hold,
     is_request_name,
     open_attachment,
     read_request_bytes,
+    remove_tree,
 )
 from stt.server.records import (
     Audio,
@@ -34,14 +36,21 @@ from stt.server.records import (
     save_audio,
     save_job,
 )
-from stt.server.responses import delete_outcome, job_status, refusal, rejected_status
+from stt.server.responses import delete_outcome, refusal, rejected_status
 
 _AUDIO_FOLDER_MODE = 0o700
 _AUDIO_FILE_MODE = 0o600
 _REQUEST_SUFFIX = ".json"
 _ATTACHMENT_INFIX = ".audio."
+_SET_ASIDE_SUFFIX = ".unremovable"
+# FFmpeg demuxers of the attachment extensions the request schema allows
+# (m4a, mp3, wav, flac, ogg, opus, aac, wma). Probing any other format could
+# follow references to other files, such as a playlist's.
+_AUDIO_FORMATS = "mov,mp3,wav,flac,ogg,aac,asf"
 
 _NOT_A_REQUEST_LOG = "dropped an inbox file whose name is not a request id"
+_SET_ASIDE_LOG = "set aside an inbox entry that could not be removed"
+_LEFT_LOG = "left an inbox entry that could not be removed"
 _UNSAFE_DETAILS = {
     "symlink": "request: file is a symbolic link",
     "hardlink": "request: file has more than one link",
@@ -70,8 +79,9 @@ class AudioTooLongError(Exception):
 def probe_duration(path: Path) -> float:
     """Returns the length of a recording in seconds.
 
-    Uses the container duration; when the container has none, sums the audio
-    packet durations without decoding.
+    Only the formats in ``_AUDIO_FORMATS`` are opened; FFmpeg refuses any other
+    before it reads past the format probe. Uses the container duration; when
+    the container has none, sums the audio packet durations without decoding.
 
     Args:
         path: The recording.
@@ -80,12 +90,15 @@ def probe_duration(path: Path) -> float:
         Duration in seconds.
 
     Raises:
-        UnreadableAudioError: If the file cannot be opened, has no audio stream or fails to demux or parse.
+        UnreadableAudioError: If the file is not in a listed format, cannot be opened, has no audio stream or
+            fails to demux or parse.
     """
     import av
 
     try:
-        with av.open(str(path), metadata_errors="ignore") as container:
+        with av.open(
+            str(path), metadata_errors="ignore", container_options={"format_whitelist": _AUDIO_FORMATS}
+        ) as container:
             if not container.streams.audio:
                 raise UnreadableAudioError
             if container.duration is not None:
@@ -104,16 +117,50 @@ def _log(request_id: str, state: str) -> None:
     print(f"{request_id} {state}", flush=True)
 
 
-def _discard(layout: Layout, stem: str) -> None:
-    """Removes ``<stem>.json`` and every ``<stem>.audio.*`` from the inbox."""
+def _remove_entry(entry: os.DirEntry[str]) -> None:
+    try:
+        if entry.is_dir(follow_symlinks=False):
+            remove_tree(Path(entry.path))
+        else:
+            os.unlink(entry.path)
+    except FileNotFoundError:
+        # intentional-skip: the entry is already gone, which is all this wants.
+        return
+
+
+def _set_aside(path: Path) -> None:
+    """Renames a request entry that could not be removed out of the ``*.json`` pattern; the sweep removes it later."""
+    try:
+        path.rename(path.with_name(f"{path.name}{_SET_ASIDE_SUFFIX}"))
+    except OSError:
+        print(_LEFT_LOG, flush=True)
+        return
+    print(_SET_ASIDE_LOG, flush=True)
+
+
+def _discard(layout: Layout, stem: str) -> bool:
+    """Removes ``<stem>.json`` and every ``<stem>.audio.*`` from the inbox.
+
+    An entry that cannot be removed is logged without its name; the request
+    entry is also renamed so the path unit stops waking intake for it.
+
+    Returns:
+        True if every entry was removed.
+    """
     request_name = f"{stem}{_REQUEST_SUFFIX}"
     attachment_prefix = f"{stem}{_ATTACHMENT_INFIX}"
+    removed_all = True
     for entry in os.scandir(layout.inbox):
         if entry.name == request_name or entry.name.startswith(attachment_prefix):
-            if entry.is_dir(follow_symlinks=False):
-                os.rmdir(entry.path)
-            else:
-                os.unlink(entry.path)
+            try:
+                _remove_entry(entry)
+            except OSError:
+                removed_all = False
+                if entry.name == request_name:
+                    _set_aside(Path(entry.path))
+                else:
+                    print(_LEFT_LOG, flush=True)
+    return removed_all
 
 
 def _pending(layout: Layout) -> list[Path]:
@@ -359,17 +406,30 @@ def _process(layout: Layout, path: Path, now: Callable[[], datetime]) -> None:
     _process_transcribe(layout, request_id, body, moment)
 
 
-def run_once(layout: Layout, now: Callable[[], datetime]) -> None:
+def run_once(layout: Layout, now: Callable[[], datetime]) -> int:
     """Processes every ``*.json`` in the inbox and removes each one it saw.
 
     Files (and directories) named ``*.json`` are taken in (mtime, name) order. A request that cannot be used is
-    answered and its attachment (named by the request file's own name) removed.
-    Non-file ``OSError``s propagate and leave the file in place.
+    answered and its attachment (named by the request file's own name) removed. A request whose processing
+    raises is logged with its id and the error's name, gets no answer, and is removed like any other, so one
+    bad request never holds up the ones behind it.
 
     Args:
         layout: The state root.
         now: Clock returning the current UTC time.
+
+    Returns:
+        The number of failures (a request that raised, a request that left an entry behind); 0 if none.
     """
+    failures = 0
     for path in _pending(layout):
-        _process(layout, path, now)
-        _discard(layout, path.name[: -len(_REQUEST_SUFFIX)])
+        stem = path.name[: -len(_REQUEST_SUFFIX)]
+        try:
+            _process(layout, path, now)
+        except Exception as error:
+            failures += 1
+            label = stem if is_request_name(path.name) else "inbox entry"
+            _log(label, f"intake error {describe_error(error)}")
+        if not _discard(layout, stem):
+            failures += 1
+    return failures

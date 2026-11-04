@@ -93,6 +93,36 @@ def make_wav(path: Path, seconds: float, silent: bool = True) -> Path:
     return path
 
 
+def encode_tone(path: Path, container: str, codec: str, rate: int = 16000, seconds: float = 2.0) -> Path:
+    """Writes a mono 440 Hz tone with PyAV.
+
+    Args:
+        path: Destination file.
+        container: FFmpeg muxer name, such as ``ipod`` or ``adts``.
+        codec: FFmpeg encoder name, such as ``aac``; encoded at 64 kbit/s where the codec takes a bit rate.
+        rate: Sample rate in Hz.
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+    """
+    import av
+    import numpy as np
+
+    samples = int(rate * seconds)
+    tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(samples) / rate)).astype(np.float32)
+    with av.open(str(path), "w", format=container) as output:
+        stream = output.add_stream(codec, rate=rate, layout="mono")
+        stream.bit_rate = 64000
+        frame = av.AudioFrame.from_ndarray(tone.reshape(1, -1), format="flt", layout="mono")
+        frame.sample_rate = rate
+        for packet in stream.encode(frame):
+            output.mux(packet)
+        for packet in stream.encode(None):
+            output.mux(packet)
+    return path
+
+
 def new_id() -> str:
     """Returns a new lowercase UUID string."""
     return str(uuid.uuid4())
@@ -306,18 +336,21 @@ def run_worker_once(layout: Any, clock: FakeClock, mode: str = "done", **kwargs:
         return worker.run_one(layout, options.pop("engine_cmd"), options.pop("now"), **options)
 
 
-def run_sweep(layout: Any, clock: FakeClock) -> None:
+def run_sweep(layout: Any, clock: FakeClock) -> int:
     """Runs ``sweep.run_once``, holding ``sweep.lock`` like the CLI.
 
     Args:
         layout: A ``stt.server.layout.Layout``.
         clock: The injected clock.
+
+    Returns:
+        What ``sweep.run_once`` returns: the number of items it could not clean.
     """
     from stt.server import sweep
     from stt.server.layout import hold
 
     with hold(layout.sweep_lock):
-        sweep.run_once(layout, clock.now)
+        return sweep.run_once(layout, clock.now)
 
 
 @pytest.fixture

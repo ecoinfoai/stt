@@ -14,7 +14,7 @@ from stt.server import contract, deadlines, intake
 from stt.server.layout import Layout
 from stt.server.records import load_job
 
-from .conftest import FakeClock, leftovers_besides_recordings, make_wav, new_id, run_worker
+from .conftest import FakeClock, encode_tone, leftovers_besides_recordings, make_wav, new_id, run_worker
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, put_bytes, read_response, transcribe_body
 from .test_us2 import assert_group_gone, pid_engine
 
@@ -187,6 +187,19 @@ def test_us5_2_unreadable_file_refused(layout: Layout, tmp_path: Path) -> None:
     assert "accepted_at" not in response
     assert response["failure"] == {"reason": "unreadable_audio", "detail": UNREADABLE_AUDIO_DETAIL}
     assert str(layout.root) not in response["failure"]["detail"]
+    assert inbox_names(layout) == []
+    assert list(layout.audio.iterdir()) == []
+    assert not (layout.jobs / request_id).exists()
+
+
+def test_us5_10_recording_outside_the_format_list_refused(layout: Layout, tmp_path: Path) -> None:
+    aiff = encode_tone(tmp_path / "tone.aiff", "aiff", "pcm_s16be")
+
+    request_id = _submit_wav(layout, aiff, FakeClock())
+
+    response = read_response(layout, request_id)
+    assert contract.validate_response(response) is None
+    assert response["failure"] == {"reason": "unreadable_audio", "detail": UNREADABLE_AUDIO_DETAIL}
     assert inbox_names(layout) == []
     assert list(layout.audio.iterdir()) == []
     assert not (layout.jobs / request_id).exists()

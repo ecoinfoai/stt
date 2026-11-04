@@ -56,6 +56,7 @@ def fetch(models_dir: Path, token: str | None, download: Callable[..., object]) 
         if complete.read_text(encoding="utf-8") == expected:
             return
     except FileNotFoundError:
+        # intentional-skip: no record yet means nothing was downloaded; fetch below.
         pass
     complete.unlink(missing_ok=True)
     for repo, commit in PINNED:

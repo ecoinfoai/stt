@@ -14,7 +14,7 @@ from stt.server.deadlines import purge_time
 from stt.server.layout import Layout
 from stt.server.records import load_audio, load_job, load_jobs
 
-from .conftest import FakeClock, make_wav, new_id
+from .conftest import FakeClock, encode_tone, make_wav, new_id
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, read_response, transcribe_body
 
 
@@ -133,22 +133,28 @@ def test_refusal_log_line_carries_only_id_and_state(layout: Layout, capfd: pytes
     assert capfd.readouterr().out.splitlines() == [f"{request_id} refused"]
 
 
-def test_non_file_os_error_propagates_and_leaves_the_request(
-    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch
+def test_edge_9_os_error_drops_only_that_request_without_an_answer(
+    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    request_id = submit(layout, wav)
+    broken_id = submit(layout, wav)
+    os.utime(layout.inbox / f"{broken_id}.json", (1, 1))
+    good_id = submit(layout, wav)
+    real_read = intake.read_request_bytes
 
     def too_many_files(path: Path) -> bytes:
-        raise OSError(errno.EMFILE, "Too many open files")
+        if path.name.startswith(broken_id):
+            raise OSError(errno.EMFILE, "Too many open files")
+        return real_read(path)
 
     monkeypatch.setattr(intake, "read_request_bytes", too_many_files)
+    capfd.readouterr()
 
-    with pytest.raises(OSError) as raised:
-        intake.run_once(layout, FakeClock().now)
+    assert intake.run_once(layout, FakeClock().now) == 1
 
-    assert raised.value.errno == errno.EMFILE
-    assert (layout.inbox / f"{request_id}.json").exists()
-    assert not (layout.outbox / f"{request_id}.json").exists()
+    assert not (layout.outbox / f"{broken_id}.json").exists()
+    assert read_response(layout, good_id)["state"] == "queued"
+    assert inbox_names(layout) == []
+    assert capfd.readouterr().out.splitlines() == [f"{broken_id} intake error EMFILE", f"{good_id} queued"]
 
 
 def test_probe_failure_leaves_no_audio_copy_and_no_record(
@@ -161,11 +167,49 @@ def test_probe_failure_leaves_no_audio_copy_and_no_record(
 
     monkeypatch.setattr(intake, "probe_duration", broken)
 
-    with pytest.raises(RuntimeError):
-        intake.run_once(layout, FakeClock().now)
+    assert intake.run_once(layout, FakeClock().now) == 1
 
     assert list(layout.audio.iterdir()) == []
     assert not (layout.jobs / request_id).exists()
+    assert inbox_names(layout) == []
+
+
+LISTED_FORMATS = [
+    ("m4a", "ipod", "aac", 16000),
+    ("mp3", "mp3", "libmp3lame", 16000),
+    ("flac", "flac", "flac", 16000),
+    ("ogg", "ogg", "libopus", 48000),
+    ("opus", "opus", "libopus", 48000),
+    ("aac", "adts", "aac", 16000),
+    ("wma", "asf", "wmav2", 16000),
+]
+
+
+@pytest.mark.parametrize(("extension", "muxer", "codec", "rate"), LISTED_FORMATS, ids=[case[0] for case in LISTED_FORMATS])
+def test_us5_10_formats_of_the_schema_extensions_are_measured(
+    tmp_path: Path, extension: str, muxer: str, codec: str, rate: int
+) -> None:
+    recording = encode_tone(tmp_path / f"tone.{extension}", muxer, codec, rate)
+    assert intake.probe_duration(recording) == pytest.approx(2.0, abs=0.2)
+
+
+@pytest.mark.parametrize(
+    ("extension", "muxer", "codec", "rate"),
+    [("aiff", "aiff", "pcm_s16be", 16000), ("au", "au", "pcm_s16be", 16000), ("webm", "webm", "libopus", 48000)],
+    ids=["aiff", "au", "webm"],
+)
+def test_us5_10_formats_outside_the_list_are_unreadable(
+    tmp_path: Path, extension: str, muxer: str, codec: str, rate: int
+) -> None:
+    recording = encode_tone(tmp_path / f"tone.{extension}", muxer, codec, rate)
+    with pytest.raises(intake.UnreadableAudioError):
+        intake.probe_duration(recording)
+
+
+def test_us5_10_format_outside_the_list_is_refused_even_with_a_listed_extension(tmp_path: Path) -> None:
+    recording = encode_tone(tmp_path / "tone.m4a", "aiff", "pcm_s16be")
+    with pytest.raises(intake.UnreadableAudioError):
+        intake.probe_duration(recording)
 
 
 def test_probe_duration_reads_container_duration(wav: Path) -> None:

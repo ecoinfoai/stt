@@ -167,6 +167,25 @@ def plant_dead_worker_traces(layout: Layout, clock: FakeClock, request_id: str, 
         (layout.outbox / request_id / "transcript.txt").write_text("published before the worker died\n", encoding="utf-8")
 
 
+def test_work_folder_removal_failure_is_logged_not_hidden(
+    layout: Layout, wav: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    import errno
+    from types import SimpleNamespace
+
+    def refuse(path: object) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(worker, "shutil", SimpleNamespace(rmtree=refuse, copyfile=shutil.copyfile))
+    request_id = submit(layout, wav, clock)
+    capfd.readouterr()
+
+    run_worker(layout, clock)
+
+    assert load_job(layout, request_id).state == "done"
+    assert f"{request_id} work folder removal failed EACCES" in capfd.readouterr().out.splitlines()
+
+
 def test_us2_1_delete_request_on_a_done_job_leaves_nothing(layout: Layout, wav: Path, clock: FakeClock) -> None:
     request_id = done_job(layout, wav, clock, hints=["alpha"])
     before = assert_valid_response(layout, request_id)

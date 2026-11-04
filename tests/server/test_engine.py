@@ -239,6 +239,38 @@ def test_edge_4_short_backchannel_marked_uncertain_not_dropped(harness: Harness)
     assert "(?): Yes." in harness.transcript
 
 
+def test_us1_10_engine_gives_a_sentence_to_its_voice_and_the_result_validates(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness.model.segments = [
+        make_segment(0.0, 4.0, "Is the sample ready."),
+        make_segment(4.2, 8.0, "It is ready now."),
+        make_segment(10.0, 12.0, "A new paragraph."),
+    ]
+    harness.turns = [
+        diarize.Turn(0.0, 8.0, "SPEAKER_00"),
+        diarize.Turn(10.0, 12.0, "SPEAKER_01"),
+    ]
+    centroids = {"SPEAKER_00": [1.0, 0.0], "SPEAKER_01": [0.0, 1.0]}
+    monkeypatch.setattr(
+        diarize, "diarize_wav", lambda *args, **kwargs: diarize.Diarization(list(harness.turns), centroids)
+    )
+    monkeypatch.setattr(
+        diarize, "sentence_embeddings", lambda pipeline, wav, sentences: [[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]]
+    )
+
+    assert harness.run(diarize_speakers=True) == 0
+
+    speaker_of = {
+        sentence: paragraph["speaker"]
+        for paragraph in harness.result["paragraphs"]
+        for sentence in ("Is the sample ready.", "It is ready now.", "A new paragraph.")
+        if sentence in paragraph["text"]
+    }
+    assert speaker_of["It is ready now."] == speaker_of["A new paragraph."]
+    assert speaker_of["It is ready now."] != speaker_of["Is the sample ready."]
+
+
 def test_edge_5_single_overlong_hint_dropped_job_done(harness: Harness) -> None:
     hint = "x" * 300
 

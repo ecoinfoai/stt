@@ -169,6 +169,36 @@ def test_sweep_runs_the_stage_under_its_lock_with_a_utc_clock(root: Path, monkey
     assert seen["lock"] is None
 
 
+@pytest.mark.parametrize("stage", ["intake", "sweep"])
+def test_stage_exits_1_when_some_items_failed(root: Path, monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+    monkeypatch.setattr(f"stt.server.{stage}.run_once", lambda layout, now: 2)
+
+    assert cli.main(["server", stage, "--root", str(root)]) == 1
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["intake"], ["sweep"], ["work", "--gpu-lock", "{gpu_lock}"]],
+    ids=["intake", "sweep", "work"],
+)
+def test_edge_13_stage_run_by_another_account_stops_before_touching_the_root(
+    root: Path, gpu_lock: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    import os
+
+    owner = root.stat().st_uid
+    monkeypatch.setattr(os, "geteuid", lambda: owner + 1)
+    args = [part.replace("{gpu_lock}", str(gpu_lock)) for part in argv]
+
+    assert cli.main(["server", *args, "--root", str(root)]) == 2
+
+    assert list(root.iterdir()) == []
+    assert capsys.readouterr().err.strip() == (
+        f"stt server {argv[0]} must run as the owner of {root} (uid {owner}), not uid {owner + 1}; "
+        "start it through its systemd unit."
+    )
+
+
 def test_sweep_help_exits_0_with_english_text(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["server", "sweep", "--help"]) == 0
 
