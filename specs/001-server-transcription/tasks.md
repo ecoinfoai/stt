@@ -482,12 +482,12 @@ description: "Task list for 001-server-transcription"
   아니면 고친다(R19). RED 해당 없음 — 확인 — supports 헌법 언어 규칙
 - [X] T075 quickstart A: `uv sync --locked --extra server && uv run python -m pytest -q` 전부 통과, 시나리오 40개 + 경계 사례 8개가 각각 시험 하나
   이상에 대응하는지 `rg -o 'def test_(us[1-5]_[0-9]+|edge_[1-8])_' tests` 로 세어 빠짐이 없음. RED 해당 없음 — 확인 — supports SC-012, SC-013
-- [ ] T076 quickstart C(호스트 시험, 운영자와 함께, 배포 뒤): 1–11 을 실행하고(11 은 고정 모델 목록을 처음 바꾸는 배포 때) `specs/001-server-transcription/handoff/<날짜>.md` 에 기록 — SC-001 실측
+- [X] T076 quickstart C(호스트 시험, 운영자와 함께, 배포 뒤): 1–11 을 실행하고(11 은 고정 모델 목록을 처음 바꾸는 배포 때) `specs/001-server-transcription/handoff/<날짜>.md` 에 기록 — SC-001 실측
   (1시간 녹음 1차·2차), SC-002 connect 시도 0(strace), R2 `[VERIFY]`(GPU 장치 넷으로 엔진이 GPU 를 봄) 닫기, 재부팅 뒤 첫 job(`nvidia_uvm`),
-  SC-005·SC-007·SC-010, FR-037, 경계 사례 6(C-7: 망 없는 환경에서 화자 구분 전사 완료), 모델 받기 단위가 판이 바뀐 배포에서 다시 도는지(R9 `[VERIFY]`). RED 해당 없음 — 운영 확인 — closes 경계 사례 6, supports SC-001, SC-002, SC-007
-- [ ] T077 `docs/handoff/bhu-llm-2026-10-15.md` §7 의 S1–S11 칸을 T076 결과와 계약 위치로 채우고, 호출하는 쪽에 넘길 계약 요점(응답 꼴 두 가지,
+  SC-005·SC-007·SC-010, FR-037, 경계 사례 6(C-7: 망 없는 환경에서 화자 구분 전사 완료), 모델 받기 단위가 판이 바뀐 배포에서 다시 도는지(R9 `[VERIFY]`). 11-06: 1–10 통과, 11 은 고정 모델 목록을 바꾸는 배포가 아직 없어 그때 한다 — 기록 `handoff/2026-10-31.md`. RED 해당 없음 — 운영 확인 — closes 경계 사례 6, supports SC-001, SC-002, SC-007
+- [X] T077 `docs/handoff/bhu-llm-2026-10-15.md` §7 의 S1–S11 칸을 T076 결과와 계약 위치로 채우고, 호출하는 쪽에 넘길 계약 요점(응답 꼴 두 가지,
   파일 권한 0640·0660, 5분 응답 없음 = 실패, 응답이 사라지면 만료, 지우기는 「다 지우기」와 매일 23:58 정리뿐(R22), 「GPU 없음」과 매일 정리의
-  이용자 안내는 호출하는 쪽 몫)을 적는다. RED 해당 없음 — 문서 — supports 헌법 VI
+  이용자 안내는 호출하는 쪽 몫)을 적는다. 11-06: 10단계 결과까지 반영. RED 해당 없음 — 문서 — supports 헌법 VI
 - [X] T078 T-Verify-Final: `project-audit` 을 한 번 돌리고, 지적을 고치거나 이유와 함께 기록한다(헌법 「개발 환경과 흐름」). 11-04: 고친 것은 T088–T095, 고침·미룸과 사유는 `handoff/2026-10-31.md` 「최종 감사」. RED 해당 없음 — 감사 — supports 헌법 「개발 환경과 흐름」
 
 ---
