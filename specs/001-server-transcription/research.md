@@ -99,11 +99,11 @@ lib.genAttrs (lib.filter (lib.hasPrefix "nvidia-") (lib.attrNames prev))
     녹음을 푼 PCM(1시간 16kHz float32 ≈ 230MB)이 스왑에 내려가면 「모든 저장 위치에서 삭제」가 거짓이 된다 → FR-035 에 명시(R14).
   - 오류 덤프(core)에도 녹음이 담긴다 → `LimitCORE=0`.
   - 🟢 이 호스트의 GPU 장치: `/dev/nvidiactl`·`/dev/nvidia0`·`/dev/nvidia-uvm`·`/dev/nvidia-uvm-tools`·`/dev/nvidia-modeset`(모두 0666).
-    CUDA 계산에 modeset 은 필요 없다 → 앞의 넷만 허용. `[VERIFY]` 호스트 시험 C 에서 이 넷만으로 엔진이 GPU 를 보는지.
+    CUDA 계산에 modeset 은 필요 없다 → 앞의 넷만 허용. ~~`[VERIFY]`~~ 호스트 시험 C 에서 이 넷만으로 엔진이 GPU 를 보는지 → 확인(10-31 1단계, 11-06 10단계 `device: cuda`; `handoff/2026-10-31.md`).
   - 🟢 `nvidia_uvm` 은 부팅 때 올라오지 않는다(analyze C11): `/etc/modules-load.d` 에는 `nvidia`·`nvidia_drm`·`nvidia_modeset` 뿐이고,
     udev 규칙(`/etc/udev/rules.d/99-local.rules:14-15`)은 모듈이 올라온 뒤 `/dev/nvidia-uvm*` 를 만들 뿐이다. 지금 올라와 있는 것은 부팅
     (2026-09-07) 뒤 권한 있는 프로세스가 CUDA 를 처음 쓸 때 올린 것으로 본다. 워커는 모듈을 올릴 수 없다(`NoNewPrivileges`, 능력 없음) →
-    호스트가 `boot.kernelModules = [ "nvidia_uvm" ]` 로 부팅 때 올린다(module.md §4). 호스트 시험 C 가 재부팅 뒤 첫 job 으로 확인한다.
+    호스트가 `boot.kernelModules = [ "nvidia_uvm" ]` 로 부팅 때 올린다(module.md §4). 호스트 시험 C 가 재부팅 뒤 첫 job 으로 확인한다 → 확인(11-06 10단계: 부팅 때 올라옴, 첫 job `done`).
   - 🟢 망을 막아도 CUDA 전사·화자 구분이 된다(2026-10-22 네트워크 네임스페이스 시험, tech-notes §5). → `PrivateNetwork=true`.
   - 🟢 systemd 261 — `PrivatePIDs` 를 쓸 수 있다(geo-scout 가 쓴다).
 - **대안**: 상주 데몬 하나(→ R10에서 기각), 단위 없이 cron(→ 잠금·격리·재시작을 손으로 짜야 한다).
