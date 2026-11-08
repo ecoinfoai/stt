@@ -1,10 +1,12 @@
 # Feature Specification: 녹음 해독 격리
 
-**Feature Branch**: `002-decoder-isolation` (아직 만들지 않음 — spec 은 master 에서 작성)
+**Feature Branch**: `002-decoder-isolation`
 
 **Created**: 2026-11-08
 
 **Status**: Draft
+
+**Revised**: 2026-11-09 — plan: P2 뒤로는 SC-001 의 서버 단위에 읽기 단위가 들어간다(research R12).
 
 **Input**: User description: "idea/decoder-isolation/idea.md" — 짝 문서 `idea/decoder-isolation/tech-notes.md`(구현 수단, `/speckit-plan` 입력).
 출처 인계: `docs/handoff-stt-decoder-security-20261108.md`(이하 「인계」)
@@ -210,7 +212,7 @@ P2 와 같이 배포되므로 같은 우선순위다.
 
 ### Measurable Outcomes
 
-- **SC-001**: 설정 조회에서 stt 의 서버 단위 4개 모두 시스템 호출 제한과 아키텍처 제한이 켜져 있고(지금 0개), 기록에 없는 예외 허용이 0개다. 쓰기·실행 메모리 금지는 4개 단위 모두 상태와 근거가 기록돼 있다.
+- **SC-001**: 설정 조회에서 stt 의 서버 단위 4개 모두(P2 뒤로는 읽기 단위를 더해 5개) 시스템 호출 제한과 아키텍처 제한이 켜져 있고(지금 0개), 기록에 없는 예외 허용이 0개다. 쓰기·실행 메모리 금지는 모든 단위의 상태와 근거가 기록돼 있다.
 - **SC-002**: 권한 점검에서 읽기 프로세스의 권한으로 다른 작업의 자료(녹음·해독된 음성·힌트 사본·결과·요청·응답·상태 기록)를 읽기·쓰기·지우기 한 시도의 성공이 0건이고, GPU 장치 열기·망 접속 시도의 성공도 0건이다.
 - **SC-003**: GPU 단계에 넘어간 입력에서 원래 녹음 파일이 나온 경우가 모든 시험 작업에서 0건이다.
 - **SC-004**: 녹음 확장자를 붙인 텍스트 파일은 100% `unreadable_audio` 로 끝나고, 같은 때 맡긴 정상 녹음은 100% 완료된다.
