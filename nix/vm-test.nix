@@ -696,7 +696,7 @@ pkgs.testers.runNixOSTest {
         no_reader_instance()
         assert not failed_stt_units(), failed_stt_units()
 
-    with subtest("a reader instance reaches nothing but its own recording, and probe and decode run as different one-off users (B-P2-4)"):
+    with subtest("a reader instance reaches nothing but its own recording, and overlapping reads cannot see each other (B-P2-4)"):
         for node_name, major, minor in (("nvidia0", 195, 0), ("nvidiactl", 195, 255), ("nvidia-uvm", 510, 0)):
             server.succeed(f"mknod -m 0666 /dev/{node_name} c {major} {minor}")
         switch_to("reader-check")
@@ -777,10 +777,11 @@ pkgs.testers.runNixOSTest {
             record = json.loads(server.succeed(f"cat {STATE}/jobs/{request_id}/job.json"))
             packed = round(record["duration_s"] * 2**30)
             return {
-                "uid": packed & 0x1FFFF,
-                "own_fd_readable": bool(packed >> 17 & 1),
-                "successes": packed >> 18 & 0x7F,
-                "control": packed >> 25 & 1,
+                "uid": packed & 0xFFFF,
+                "own_fd_readable": bool(packed >> 16 & 1),
+                "successes": packed >> 17 & 0x1F,
+                "control": packed >> 22 & 1,
+                "visible_pids": packed >> 23 & 0x7,
                 "reached": [name for index, name in enumerate(GROUP_NAMES) if packed >> 26 >> index & 1],
             }
 
@@ -794,6 +795,9 @@ pkgs.testers.runNixOSTest {
                 assert report["control"] == 1, (who, report)
                 assert report["reached"] == [] and report["successes"] == 0, (who, report)
             assert report["uid"] != stt_uid and 61184 <= report["uid"] <= 65519, (who, report, stt_uid)
+            # PID 1 of the instance's own PID namespace is the double; nothing else may show, in particular
+            # not the instance running next to it (the dynamic UID is shared by all instances of the template).
+            assert report["visible_pids"] == 1, (who, report)
 
         common = [
             f"{STATE}/audio/{a}/audio.wav", f"{STATE}/audio/{b}/audio.wav", f"{STATE}/jobs/{a}/job.json",
@@ -826,9 +830,6 @@ pkgs.testers.runNixOSTest {
         probes = {name: probe_report(name_id) for name, name_id in (("A", a), ("B", b), ("C", c))}
         for name, report in probes.items():
             assert_confined(report, f"probe of {name}")
-        assert probes["C"]["uid"] != report_a["uid"], (
-            "probe and decode ran at the same time under one UID", probes["C"], report_a, prop(decode_instance, "User")
-        )
         assert response(delete(c))["outcome"] == "deleted"
         end_held_job(a)
         no_reader_instance()

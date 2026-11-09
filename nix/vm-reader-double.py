@@ -138,6 +138,11 @@ def other_processes() -> int:
     return int(any(name.isdigit() and int(name) != os.getpid() for name in os.listdir("/proc")))
 
 
+def visible_processes() -> int:
+    """Counts the processes (thread group leaders) visible in /proc, this one included."""
+    return sum(name.isdigit() for name in os.listdir("/proc"))
+
+
 def recording_readable(fd: int) -> bool:
     """Returns whether a few bytes can be read from the recording descriptor (they are not looked at)."""
     try:
@@ -162,6 +167,7 @@ def check_report(fds: Sequence[int]) -> dict[str, Any]:
         "uid": os.getuid(),
         "own_fd_readable": recording_readable(recording),
         "control": reach_readonly(TARGETS_PATH),
+        "visible_pids": visible_processes(),
         "groups": groups,
     }
 
@@ -170,16 +176,18 @@ def pack(report: dict[str, Any]) -> float:
     """Packs a report into a probe ``duration_s``.
 
     The caller accepts a finite number between 0 and 10800 and nothing else, so the report
-    travels as ``N / 2**30`` with N below 2**43: bits 0-16 the UID, bit 17 whether the
-    recording descriptor was readable, bits 18-24 the number of successes (at most 127), bit 25
-    whether the control reach worked (``control == 2``), and from bit 26 one bit per group in report
-    order. The quotient is exact in a double.
+    travels as ``N / 2**30`` with N below 2**43: bits 0-15 the UID (dynamic UIDs are below 65520),
+    bit 16 whether the recording descriptor was readable, bits 17-21 the number of successes (at most
+    31), bit 22 whether the control reach worked (``control == 2``), bits 23-25 the number of
+    processes visible in /proc (at most 7), and from bit 26 one bit per group in report order.
+    The quotient is exact in a double.
     """
     groups = report["groups"]
     mask = sum(1 << index for index, count in enumerate(groups.values()) if count)
-    successes = min(sum(groups.values()), 127)
+    successes = min(sum(groups.values()), 31)
     control = int(report["control"] == 2)
-    packed = report["uid"] | int(report["own_fd_readable"]) << 17 | successes << 18 | control << 25 | mask << 26
+    visible = min(report["visible_pids"], 7)
+    packed = report["uid"] | int(report["own_fd_readable"]) << 16 | successes << 17 | control << 22 | visible << 23 | mask << 26
     return packed / 2**30
 
 
