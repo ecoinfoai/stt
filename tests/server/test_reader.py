@@ -23,7 +23,14 @@ import pytest
 
 from stt.server import reader
 
-from .conftest import EmulatedReaderSocket, av_major, encode_tone, make_wav, wav_samples
+from .conftest import (
+    FASTER_WHISPER_DECODER_MAX_AV_MAJOR,
+    EmulatedReaderSocket,
+    av_major,
+    encode_tone,
+    make_wav,
+    wav_samples,
+)
 
 HARNESS = Path(__file__).with_name("reader_harness.py")
 FAKE_CHILD = Path(__file__).with_name("fake_decode_child.py")
@@ -811,9 +818,6 @@ def test_a_format_outside_the_list_fails_even_with_a_listed_extension(
 
     assert outcome.messages == [{"started": True}, {"status": "failed"}]
     assert outcome.output == b""
-
-
-FASTER_WHISPER_DECODER_MAX_AV_MAJOR = 18
 
 
 def reference_int16_bytes(path: Path) -> bytes:

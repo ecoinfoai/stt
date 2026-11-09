@@ -30,7 +30,7 @@ class FakeModel:
         self.calls: list[dict] = []
         self.hf_tokenizer = FakeTokenizer()
 
-    def transcribe(self, audio: str, **kwargs):
+    def transcribe(self, audio: object, **kwargs):
         self.calls.append({"audio": audio, **kwargs})
         if self.fail_oom:
             raise RuntimeError("CUDA failed with error out of memory")

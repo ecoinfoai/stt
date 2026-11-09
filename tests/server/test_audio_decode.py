@@ -10,9 +10,7 @@ import pytest
 from stt import audio_decode
 from stt.server import reader
 
-from .conftest import av_major, encode_tone, make_wav, wav_samples
-
-FASTER_WHISPER_DECODER_MAX_AV_MAJOR = 18
+from .conftest import FASTER_WHISPER_DECODER_MAX_AV_MAJOR, av_major, encode_tone, make_wav, wav_samples
 
 
 def test_the_decoder_and_the_reader_agree_on_the_sample_rate() -> None:

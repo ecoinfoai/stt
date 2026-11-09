@@ -141,6 +141,10 @@ def encode_tone(path: Path, container: str, codec: str, rate: int = 16000, secon
     return path
 
 
+# faster-whisper's decode_audio passes metadata_errors, which PyAV 19 removed.
+FASTER_WHISPER_DECODER_MAX_AV_MAJOR = 18
+
+
 def av_major() -> int:
     """Returns the major version of the installed PyAV."""
     import av
