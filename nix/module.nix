@@ -79,6 +79,12 @@ let
   # limit (5 in 10 s) a burst of requests fails the service and then the path unit
   # itself (`unit-start-limit-hit`), which never watches again.
   pathTriggered = unit: unit // { startLimitIntervalSec = 0; };
+  # Recordings are read only by the socket-activated reader (contracts/module.md section 3).
+  readerSocket = "/run/stt-reader.sock";
+  needsReader = unit: unit // {
+    requires = [ "stt-reader.socket" ];
+    after = [ "stt-reader.socket" ];
+  };
 
   folder = mode: user: group: {
     d = { inherit mode user group; };
@@ -139,16 +145,18 @@ in
     };
 
     systemd.services = {
-      stt-intake = pathTriggered (stage "stt intake: answer and queue inbox requests" {
-        ExecStart = "${stt} server intake";
-        PrivateDevices = true;
-        MemoryMax = "1G";
-        TimeoutStartSec = "10min";
-      });
+      stt-intake = needsReader (
+        pathTriggered (stage "stt intake: answer and queue inbox requests" {
+          ExecStart = "${stt} server intake --reader-socket ${readerSocket}";
+          PrivateDevices = true;
+          MemoryMax = "1G";
+          TimeoutStartSec = "10min";
+        })
+      );
 
       stt-worker =
-        pathTriggered (stage "stt worker: run queued jobs on the GPU" {
-          ExecStart = "${stt} server work --gpu-lock ${gpuLock}";
+        needsReader (pathTriggered (stage "stt worker: run queued jobs on the GPU" {
+          ExecStart = "${stt} server work --gpu-lock ${gpuLock} --reader-socket ${readerSocket}";
           PrivateDevices = false;
           DevicePolicy = "closed";
           DeviceAllow = [
@@ -167,15 +175,76 @@ in
           # the worker then published engine_error and started the next job. Killed at once,
           # the running job becomes `interrupted` at the next worker start or sweep.
           KillSignal = "SIGKILL";
-        })
+        }))
         // {
           # A deployment does not kill a running transcription; the next start uses the new unit.
           restartIfChanged = false;
         }
         // lib.optionalAttrs fetchesModels {
-          after = [ "stt-models.service" ];
+          # Replaces the `after` of needsReader, so it names the socket again.
+          after = [
+            "stt-reader.socket"
+            "stt-models.service"
+          ];
           wants = [ "stt-models.service" ];
         };
+
+      # One instance per connection (Accept=yes). All instances share the template's dynamic UID: a
+      # per-instance User= cannot work, the instance name outgrows the 31-character user-name limit
+      # (contracts/module.md section 2.2). Concurrent reads are kept apart by the namespaces below.
+      "stt-reader@" = {
+        description = "stt reader: read one recording";
+        # CollectMode belongs to [Unit]; in [Service] it is ignored.
+        unitConfig.CollectMode = "inactive-or-failed";
+        serviceConfig = {
+          ExecStart = "${stt} server read";
+          StandardInput = "socket";
+          StandardOutput = "null";
+          StandardError = "journal";
+          DynamicUser = true;
+          PrivateDevices = true;
+          PrivateNetwork = true;
+          RestrictAddressFamilies = "none";
+          InaccessiblePaths = [
+            stateDir
+            modelsDir
+            "/run/stt"
+          ];
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          PrivateIPC = true;
+          PrivatePIDs = true;
+          ProtectProc = "invisible";
+          ProcSubset = "pid";
+          ProtectKernelTunables = true;
+          ProtectKernelModules = true;
+          ProtectKernelLogs = true;
+          ProtectControlGroups = true;
+          ProtectClock = true;
+          ProtectHostname = true;
+          RestrictNamespaces = true;
+          RestrictRealtime = true;
+          RestrictSUIDSGID = true;
+          LockPersonality = true;
+          NoNewPrivileges = true;
+          CapabilityBoundingSet = "";
+          SystemCallArchitectures = "native";
+          SystemCallFilter = [
+            "@system-service"
+            "~@privileged"
+            "~process_vm_readv process_vm_writev io_uring_setup io_uring_enter io_uring_register userfaultfd"
+          ];
+          MemoryDenyWriteExecute = true;
+          MemoryMax = "768M";
+          MemorySwapMax = 0;
+          LimitCORE = 0;
+          LimitFSIZE = 0;
+          TasksMax = 32;
+          RuntimeMaxSec = 300;
+          # The supervisor is PID 1 of its PID namespace and ignores SIGTERM; nothing to clean up.
+          KillSignal = "SIGKILL";
+        };
+      };
 
       stt-sweep = stage "stt sweep: scheduled deletion and expiry" {
         ExecStart = "${stt} server sweep";
@@ -208,6 +277,18 @@ in
           ];
           TimeoutStartSec = "2h";
         };
+      };
+    };
+
+    systemd.sockets.stt-reader = {
+      wantedBy = [ "sockets.target" ];
+      socketConfig = {
+        ListenSequentialPacket = readerSocket;
+        Accept = true;
+        SocketUser = "stt";
+        SocketGroup = "stt";
+        SocketMode = "0600";
+        MaxConnections = 4;
       };
     };
 
