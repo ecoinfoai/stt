@@ -32,8 +32,8 @@
 |---|---|---|
 | `ExecStart` | `${stt} server read` | [reader.md](reader.md) §5 |
 | `StandardInput` · `StandardOutput` · `StandardError` | `socket` · `null` · `journal` | 연결은 표준 입력으로만. 표준 출력이 연결에 섞이지 않게 |
-| `DynamicUser` | `yes` | 인스턴스마다 일회용 UID. 함께 걸리는 것: `PrivateTmp=disconnected`, `RemoveIPC`, `NoNewPrivileges`, `RestrictSUIDSGID`, `ProtectSystem=strict`, `ProtectHome=read-only` |
-| `CollectMode` | `inactive-or-failed` | 실패한 인스턴스가 쌓이지 않게(`systemd.socket(5)` 권고) |
+| `DynamicUser` | `yes` | 읽기마다 일회용 UID(`stt` 가 아닌 동적 범위). 템플릿의 모든 인스턴스가 같은 이름·같은 UID 를 받는다(아래 「UID 에 대하여」). 함께 걸리는 것: `PrivateTmp`, `RemoveIPC`, `NoNewPrivileges`, `RestrictSUIDSGID`, `ProtectSystem=strict`, `ProtectHome=read-only`. 이 systemd(261.1)는 `PrivateTmp` 를 `disconnected` 가 아니라 `yes` 로 보여 준다(VM 에서 확인) |
+| `CollectMode` | `inactive-or-failed` | 실패한 인스턴스가 쌓이지 않게(`systemd.socket(5)` 권고). **`[Unit]` 설정이다** — `[Service]` 에 두면 무시된다(`unitConfig`) |
 | `PrivateDevices` | `yes` | GPU 장치 없음(FR-008) |
 | `PrivateNetwork` · `RestrictAddressFamilies` | `yes` · `none` | 망 없음, 소켓 생성 금지 — 받은 연결은 그대로 쓴다 `[VERIFY]` B-P2-1 |
 | `InaccessiblePaths` | `/var/lib/stt` `/var/lib/stt-models` `/run/stt` | 권한 위에 한 겹 더. `gpu.lock`(0644) 붙잡기 막기(R12) |
@@ -50,6 +50,19 @@
 | `TasksMax` | `32` | |
 | `RuntimeMaxSec` | `300` | 감독 상한(최대 240초) 위의 받침 |
 | `KillSignal` | `SIGKILL` | 감독은 `PrivatePIDs` 의 PID 1 이라 처리기 없는 SIGTERM 을 무시한다(001 워커와 같은 까닭). 그대로 두면 상한·OOM 정지가 `TimeoutStopSec`(90초)만큼 늦어진다. 정리할 상태가 없다 |
+
+**UID 에 대하여** (2026-11-09 실측, systemd 261.1, 소스 `src/core/socket.c`·`dynamic-user.c`·`user-util.c`).
+- 템플릿에 `DynamicUser=yes` 만 두면 동시에 도는 모든 인스턴스가 **같은 동적 UID 하나**를 쓴다. 사용자 이름이 인스턴스 이름이 아니라 템플릿 접두사
+  (`stt-reader`)에서 오기 때문이다. 이름을 해시하는 것은 접두사가 사용자 이름이 될 수 없을 때뿐이다(research R4 의 옛 서술은 틀렸다).
+- 인스턴스마다 `User=<접두사>%i` 로 UID 를 가르는 길은 쓸 수 없다. `Accept=yes` AF_UNIX 인스턴스 이름은
+  `<연결 번호>-<소켓 쿠키>-<상대 PID>_<pidfd 번호>-<상대 UID>`(예: `19-14-3512_3513-997`)이고, 동적 사용자 이름은 엄격 검사(최대 31자)를 받는다.
+  최악은 71자(번호 10 + 쿠키 20 + PID 7 + pidfd 20 + UID 10 + 구분자 4)이고, 접두사를 `r-` 한 겹으로 줄여도 PID·UID·구분자만 14자라 나머지 세 숫자에
+  자리당 5자리가 남는다. 부팅 직후 짧은 이름은 통과하지만(31자 통과), 32자부터는 단위는 읽히되 시작이 `Failed to spawn 'start' task: Invalid argument`
+  로 거부된다. 공유 UID 로 물러서지는 않는다(안전하게 닫힘). 그러나 오래 도는 호스트에서는 모든 읽기가 멎는다.
+- 그래서 겹쳐 도는 두 읽기를 가르는 것은 UID 가 아니라 인스턴스마다 따로 만들어지는 이름공간이다: `PrivatePIDs`(다른 프로세스가 `/proc` 에 보이지
+  않음), `ProtectProc=invisible`·`ProcSubset=pid`, `PrivateIPC`, `PrivateTmp`, `PrivateDevices`, `PrivateNetwork`, `RestrictAddressFamilies=none`,
+  그리고 필터 밖인 `ptrace`(`@system-service` 에 들지 않음)와 명시적으로 뺀 `process_vm_readv`·`process_vm_writev`, `~@privileged`. 서로의 프로세스를 보지도 신호를 보내지도 못한다. 시험(B-P2-4)이 보는 것은 UID 가
+  `stt` 가 아니라는 것과, 각 읽기가 `/proc` 에서 자기 인스턴스의 프로세스만 본다는 것이다.
 
 ## 3. 받기·워커가 바뀌는 것 (P2)
 
@@ -79,8 +92,8 @@ systemctl show stt-reader.socket -p Listen -p Accept -p SocketUser -p SocketMode
 - 🟢 이 호스트에서 확인한 형식: `SystemCallArchitectures=native` 는 그대로 `native` 로, 필터는 풀린 호출 목록으로 나온다. 필터가 없는 지금의
   워커는 `SystemCallFilter=~`·`SystemCallArchitectures=`·`MemoryDenyWriteExecute=no` 로 나온다. `systemctl show 'x@.service'` 는 오류이고,
   인스턴스 이름은 띄우지 않고 조회된다(2026-11-09).
-- 읽기 단위의 `MemorySwapMax`·`LimitCORE`·`KillSignal`·`CollectMode`·`PrivateTmp` 는 FR-012(스왑·덤프 없음)와 §2.2 를 보는 값이다. 출력 꼴은
-  VM 에서 처음 본다 `[VERIFY]` B-P2-1.
+- 읽기 단위의 `MemorySwapMax`·`LimitCORE`·`KillSignal`·`CollectMode`·`PrivateTmp` 는 FR-012(스왑·덤프 없음)와 §2.2 를 보는 값이다. VM 에서 본 꼴:
+  `RestrictAddressFamilies=` 는 빈 값, `PrivateTmp=yes`, `CollectMode` 는 `[Unit]` 에서 `inactive-or-failed`. `[VERIFY]` B-P2-1 은 VM 시험이 닫는다.
 
 ## 5. 001 의 계약 문서에 고칠 것 (구현 때)
 

@@ -77,7 +77,7 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
    - `socket(AF_INET)`·`socket(AF_UNIX)`
    - 자기 녹음 기술자에 쓰기
    - 쓰기 가능한 자리(`/tmp`·`/var/tmp`·현재 폴더)에 자료 쓰기(`LimitFSIZE=0`)
-   - 대역은 자기 UID 도 보고한다. 받기의 길이 재기와 워커의 해독을 겹쳐 돌려 두 UID 가 서로 다르고 `stt` 와도 다른지 본다(US2-6, 경계 사례 2).
+   - 대역은 자기 UID 와 `/proc` 에 보이는 프로세스 수도 보고한다. 받기의 길이 재기와 워커의 해독을 겹쳐 돌려 두 UID 가 모두 `stt` 와 다르고, 겹친 두 읽기가 각각 `/proc` 에서 자기 인스턴스의 프로세스(1개)만 보는지 본다 — 상대를 보지도 신호를 보내지도 못한다(US2-6, 경계 사례 2. 동적 UID 는 템플릿의 인스턴스끼리 같다: contracts/module.md §2.2).
    - 읽기가 끝난 뒤 `systemctl list-units --all 'stt-reader@*'` 가 비어 있고, 호스트의 `/tmp`·`/var/tmp` 에 그 인스턴스의 사설 폴더가 없다(US2-7).
 5. **B-P2-5 실패 대역**: 판정 없이 끊기, 멈추기(상한까지), 메모리 넘기기(768M 초과 할당), `started: false`. 각각 받기에서는 그 요청만 거절되거나
    치워지고, 처리에서는 그 작업만 `unreadable_audio`(마지막 것은 `engine_error`)로 끝난다. 바로 뒤의 정상 작업이 `gpu_unavailable` 까지 가고,

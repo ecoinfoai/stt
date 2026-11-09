@@ -78,11 +78,14 @@
     - FR-009: 인스턴스마다 cgroup 이 따로라, 메모리 상한에 걸려도 그 인스턴스만 멈춘다. 받기·워커는 다른 cgroup 이다. 지금처럼 워커 단위 안의
       프로세스라면 `OOMPolicy=stop` 으로 워커 전체가 멈출 수 있다(기술 메모 §5).
     - FR-011: 인스턴스가 끝나면 systemd 가 cgroup 의 모든 프로세스를 죽이고, 사설 tmpfs `/tmp` 와 IPC 를 지운다. `DynamicUser` 가
-      `PrivateTmp=disconnected`·`RemoveIPC` 를 함께 건다(`systemd.exec(5)`).
+      `PrivateTmp`(문서상 `disconnected`, 이 systemd 의 `systemctl show` 는 `yes`)·`RemoveIPC` 를 함께 건다(`systemd.exec(5)`).
   - 🟢 `systemd.socket(5)`: `Accept=yes` 는 연결마다 인스턴스를 따로 띄우므로 「병렬 연결끼리 샌드박스로 떼어 놓을 수 있다」고 적는다.
-  - 🟢 `systemd.exec(5)`: `DynamicUser` 의 사용자 이름은 형식 접미사를 뺀 단위 이름에서 온다. 그 이름이 사용자 이름이 될 수 없으면(인스턴스 이름에는
-    `@` 가 든다) 해시를 쓴다. 그래서 동시에 도는 두 인스턴스는 다른 UID 를 받는다 — `[VERIFY]`(B-P2-4)에서 두 읽기의 UID 를 비교한다.
-    같은 문서는 디렉터리 기술자를 넘기지 말라고 경고한다. 넘기는 것은 일반 파일과 파이프뿐이다.
+  - 🟢 `systemd.exec(5)`: `DynamicUser` 의 사용자 이름은 형식 접미사를 뺀 단위 이름, 곧 템플릿 접두사(`stt-reader`)에서 온다. 인스턴스 이름이 아니다.
+    해시는 그 접두사가 사용자 이름이 될 수 없을 때만 쓴다. **그래서 동시에 도는 인스턴스는 모두 같은 UID 를 받는다**(VM 실측, systemd 261.1 — 처음에
+    적은 「다른 UID 를 받는다」는 틀렸다). 인스턴스마다 `User=…%i` 로 가르는 길은 `Accept=yes` 인스턴스 이름(`<번호>-<쿠키>-<PID>_<pidfd>-<UID>`)이
+    동적 사용자 이름의 31자 한도를 곧 넘어 시작이 거부되므로 쓸 수 없다([contracts/module.md](contracts/module.md) §2.2 「UID 에 대하여」).
+    겹쳐 도는 두 읽기를 가르는 것은 UID 가 아니라 인스턴스마다 따로 만들어지는 `PrivatePIDs`·`PrivateIPC`·`PrivateTmp`·`ProtectProc=invisible` 이름공간이고,
+    `[VERIFY]`(B-P2-4)는 두 읽기가 `/proc` 에서 자기 인스턴스의 프로세스만 보는지를 확인한다. 같은 문서는 디렉터리 기술자를 넘기지 말라고 경고한다. 넘기는 것은 일반 파일과 파이프뿐이다.
   - 🟢 PyAV 는 넘겨받은 기술자로 만든 파일 객체를 형식 허용목록과 함께 연다(2026-11-09).
     - M4A·MP3·ADTS AAC·Ogg 의 길이가 경로로 연 것과 같았다.
     - 녹음 확장자를 붙인 텍스트는 두 방식 모두 `InvalidDataError` 였다.
