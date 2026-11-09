@@ -26,9 +26,12 @@ import wave
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import pytest
+
+if TYPE_CHECKING:
+    from stt.server.reader_client import ReaderConfig
 
 FAKE_ENGINE = Path(__file__).with_name("fake_engine.py")
 FAKE_READER = Path(__file__).with_name("fake_reader.py")
@@ -663,7 +666,7 @@ class ReaderSocket:
             code under test.
     """
 
-    def __init__(self, emulated: EmulatedReaderSocket, config: Any) -> None:
+    def __init__(self, emulated: EmulatedReaderSocket, config: ReaderConfig) -> None:
         self._emulated = emulated
         self.config = config
 

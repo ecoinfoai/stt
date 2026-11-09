@@ -1,10 +1,11 @@
 """A decode child double that holds every decode until the test releases it.
 
-Usage: ``python gated_decode_child.py --started PATH --release PATH OP RECORDING_FD OUTPUT_FD``
+Usage: ``python gated_decode_child.py --started PATH --release PATH [--max-wait-s S] OP RECORDING_FD OUTPUT_FD``
 
 The supervisor appends ``OP RECORDING_FD OUTPUT_FD`` to the child command, exactly as it does for the real
 child. A ``probe`` is handed to the real child at once. A ``decode`` first creates the ``--started`` file, then
-waits until the ``--release`` file exists (at most ``MAX_WAIT_S``, then it exits with code 1) and only then
+waits until the ``--release`` file exists (at most ``--max-wait-s``, default ``MAX_WAIT_S``, then it exits with
+code 1, so a caller that never lets the test release it fails fast) and only then
 runs the real child. A test uses it to keep a decode in flight while another read happens.
 
 The double never reads or interprets recording content; the real child does that, as in production.
@@ -33,6 +34,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--started", type=Path, required=True)
     parser.add_argument("--release", type=Path, required=True)
+    parser.add_argument("--max-wait-s", type=float, default=MAX_WAIT_S)
     parser.add_argument("op")
     parser.add_argument("recording_fd")
     parser.add_argument("output_fd")
@@ -40,7 +42,7 @@ def main(argv: list[str]) -> int:
 
     if args.op == "decode":
         args.started.touch()
-        deadline = time.monotonic() + MAX_WAIT_S
+        deadline = time.monotonic() + args.max_wait_s
         while not args.release.exists():
             if time.monotonic() >= deadline:
                 return 1

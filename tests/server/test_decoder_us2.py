@@ -44,6 +44,7 @@ SERVER_SOURCE = Path(engine.__file__).parent
 REQUEST_ID = "0b0c7a2e-5d63-4c43-9a3e-6c1f0b7d9e11"
 SECONDS_BOUND = 10.0
 WAIT_S = 10.0
+GATE_MAX_WAIT_S = 5.0
 
 
 @pytest.fixture
@@ -99,6 +100,11 @@ def decode_connections(reader_socket: ReaderSocket) -> list[tuple[ReceivedFd, ..
     ]
 
 
+def pipe_identity(fds: tuple[ReceivedFd, ...]) -> ReceivedFd:
+    (pipe,) = [fd for fd in fds if fd.kind == stat.S_IFIFO]
+    return pipe
+
+
 def recorded_engine_cmd(record: Path) -> list[str]:
     return [sys.executable, str(FAKE_ENGINE), "--mode", "done", "--record", str(record)]
 
@@ -137,7 +143,7 @@ def test_decoder_us2_6_two_jobs_are_read_by_two_connections_with_one_recording_e
         recording_identity(layout, first),
         recording_identity(layout, second),
     }
-    assert reader_socket.spawn_count == len(reader_socket.received())
+    assert pipe_identity(decodes[0]) != pipe_identity(decodes[1])
 
 
 def test_decoder_us2_8_one_intake_run_with_a_good_and_a_text_attachment_answers_both_in_time(
@@ -174,7 +180,7 @@ def test_decoder_edge_1_a_second_pass_on_a_waiting_first_pass_is_read_on_its_own
     assert len(decodes) == 2
     shared = recording_identity(layout, first)
     assert [[fd for fd in fds if fd.kind == stat.S_IFREG] for fds in decodes] == [[shared], [shared]]
-    assert reader_socket.spawn_count == len(reader_socket.received())
+    assert pipe_identity(decodes[0]) != pipe_identity(decodes[1])
 
 
 def test_decoder_edge_2_a_length_probe_and_a_decode_that_overlap_use_different_connections(
@@ -182,7 +188,13 @@ def test_decoder_edge_2_a_length_probe_and_a_decode_that_overlap_use_different_c
 ) -> None:
     started, release = tmp_path / "decode.started", tmp_path / "decode.release"
     reader_socket.use_supervisor(
-        [sys.executable, str(GATED_CHILD), "--started", str(started), "--release", str(release)]
+        [
+            sys.executable,
+            str(GATED_CHILD),
+            "--started", str(started),
+            "--release", str(release),
+            "--max-wait-s", str(GATE_MAX_WAIT_S),
+        ]
     )
     first = submit(layout, tone, clock)
     errors: list[BaseException] = []
@@ -203,8 +215,11 @@ def test_decoder_edge_2_a_length_probe_and_a_decode_that_overlap_use_different_c
         second = submit(layout, silence, clock)
     finally:
         release.touch()
-        worker_thread.join()
+        worker_thread.join(timeout=WAIT_S)
+    assert not worker_thread.is_alive()
     assert errors == []
+    assert read_response(layout, first)["state"] == "done"
+    assert read_response(layout, second)["state"] == "queued"
 
     received = reader_socket.received()
     assert len(received) == 3
@@ -220,7 +235,10 @@ def test_decoder_edge_2_a_length_probe_and_a_decode_that_overlap_use_different_c
 _IMPORT_SERVER_STAGES = """
 import json, sys
 import stt.server.intake, stt.server.worker
-print(json.dumps({"av": "av" in sys.modules, "loaded": sorted(m for m in sys.modules if m.startswith("stt.server"))}))
+print(json.dumps({
+    "av": "av" in sys.modules,
+    "files": {m: sys.modules[m].__file__ for m in sorted(sys.modules) if m.startswith("stt.server.")},
+}))
 """
 
 
@@ -231,23 +249,39 @@ def _run_stage_import() -> dict[str, Any]:
     return json.loads(done.stdout)
 
 
+def _parse(path: str) -> ast.AST:
+    return ast.parse(Path(path).read_text(encoding="utf-8"))
+
+
 def test_decoder_us2_5_intake_and_worker_do_not_import_av() -> None:
     assert _run_stage_import()["av"] is False
 
 
 def test_decoder_us2_5_no_module_loaded_by_intake_or_worker_can_import_av() -> None:
-    loaded = _run_stage_import()["loaded"]
+    files = _run_stage_import()["files"]
     importers: list[str] = []
-    for name in loaded:
-        if name in ("stt.server", "stt.server.reader"):
+    for name, path in files.items():
+        if name == "stt.server.reader":
             continue
-        source = (SERVER_SOURCE / f"{name.rsplit('.', 1)[1]}.py").read_text(encoding="utf-8")
-        for node in ast.walk(ast.parse(source)):
+        for node in ast.walk(_parse(path)):
             if isinstance(node, ast.Import) and any(alias.name.split(".")[0] == "av" for alias in node.names):
                 importers.append(name)
             if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "av":
                 importers.append(name)
     assert importers == []
+
+
+def test_decoder_us2_5_intake_and_worker_use_only_constants_of_the_reader_module() -> None:
+    files = _run_stage_import()["files"]
+    misused: list[str] = []
+    for name in ("stt.server.intake", "stt.server.worker"):
+        for node in ast.walk(_parse(files[name])):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "reader":
+                if not node.attr.isupper():
+                    misused.append(f"{name}: reader.{node.attr}")
+            if isinstance(node, ast.ImportFrom) and node.module == "stt.server.reader":
+                misused.extend(f"{name}: {alias.name}" for alias in node.names if not alias.name.isupper())
+    assert misused == []
 
 
 def test_decoder_us2_5_gpu_stage_runs_the_second_pass_without_ffmpeg(

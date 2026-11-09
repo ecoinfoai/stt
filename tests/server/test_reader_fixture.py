@@ -18,6 +18,7 @@ import pytest
 from .conftest import EmulatedReaderSocket, ReaderSocket, ReceivedFd, fake_reader_cmd, make_wav
 
 FAKE_DECODE_CHILD = Path(__file__).with_name("fake_decode_child.py")
+GATED_DECODE_CHILD = Path(__file__).with_name("gated_decode_child.py")
 
 Factory = Callable[..., EmulatedReaderSocket]
 
@@ -203,3 +204,27 @@ def test_reader_socket_use_supervisor_injects_a_decode_child_double(
 
     reader_socket.wait_for_exits(1)
     assert result.outcome == "failed"
+
+
+def test_reader_socket_gated_decode_child_decodes_once_released(reader_socket: ReaderSocket, tmp_path: Path) -> None:
+    from stt.server import reader_client
+
+    recording = make_wav(tmp_path / "tone.wav", 1.0, silent=False)
+    started, release = tmp_path / "decode.started", tmp_path / "decode.release"
+    release.touch()
+    reader_socket.use_supervisor(
+        [
+            sys.executable,
+            str(GATED_DECODE_CHILD),
+            "--started", str(started),
+            "--release", str(release),
+            "--max-wait-s", "5",
+        ]
+    )
+
+    result = reader_client.decode(reader_socket.config, recording, job_running=lambda: True, job_limit_s=30)
+
+    reader_socket.wait_for_exits(1)
+    assert result.outcome == "ok"
+    assert len(result.audio) == 16000 * 2
+    assert started.exists()
