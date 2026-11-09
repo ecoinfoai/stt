@@ -217,6 +217,8 @@ in
           ];
           ProtectSystem = "strict";
           ProtectHome = true;
+          # PrivateDevices leaves /dev/shm shared with the host; an empty read-only tmpfs covers it.
+          TemporaryFileSystem = [ "/dev/shm:ro" ];
           PrivateIPC = true;
           PrivatePIDs = true;
           ProtectProc = "invisible";
@@ -237,6 +239,8 @@ in
           SystemCallFilter = [
             "@system-service"
             "~@privileged"
+            # The shared dynamic UID shares one kernel user keyring between concurrent instances.
+            "~@keyring"
             "~process_vm_readv process_vm_writev io_uring_setup io_uring_enter io_uring_register userfaultfd"
           ];
           MemoryDenyWriteExecute = true;
