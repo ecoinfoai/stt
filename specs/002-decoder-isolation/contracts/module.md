@@ -65,6 +65,7 @@
   않음), `ProtectProc=invisible`·`ProcSubset=pid`, `PrivateIPC`, `PrivateTmp`, `PrivateDevices`, `PrivateNetwork`, `RestrictAddressFamilies=none`,
   그리고 필터 밖인 `ptrace`(`@system-service` 에 들지 않음)와 명시적으로 뺀 `process_vm_readv`·`process_vm_writev`, `~@privileged`. 서로의 프로세스를 보지도 신호를 보내지도 못한다. 시험(B-P2-4)이 보는 것은 UID 가
   `stt` 가 아니라는 것과, 각 읽기가 `/proc` 에서 자기 인스턴스의 프로세스만 본다는 것이다.
+- 운영자 결정(2026-11-09): 공유 UID 와 이름공간 격리를 그대로 쓴다. 길이 재기용·해독용 템플릿을 둘로 나눠 UID 를 가르는 안은 쓰지 않는다.
 - 같은 동적 UID 를 쓰는 인스턴스끼리는 커널 사용자 키링을 나눈다(`@keyring` 호출은 `@system-service` 안에 있다). 그래서 필터에 `~@keyring` 을
   더했다(최종 검토, 2026-11-09): 키링 호출은 `SIGSYS` 로 막힌다. `/dev/shm` 도 같은 까닭으로 `TemporaryFileSystem=/dev/shm:ro` 로 덮는다.
 

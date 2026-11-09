@@ -41,7 +41,7 @@
   만든 파일이 호스트에 남음) 읽기 전용 빈 tmpfs 로 덮는다(`TemporaryFileSystem=/dev/shm:ro`).
 - 호스트의 다른 파일: 위에서 닫은 경로 밖에서 누구나 읽을 수 있는 파일은 읽기 단위도 읽을 수 있다(`/var/lib/stt*`·`/run/stt` 는 `InaccessiblePaths` 로,
   홈은 `ProtectHome=true` 로 닫혔지만 그 밖의 경로는 열려 있다). 이 호스트에서는 다른 서비스의 상태가 `/var/lib/private`(0700)에 있어 일회용 UID 로는 들어가지 못한다.
-  이 잔여 노출을 허용할지는 열린 운영자 질문이다(2026-11-09). 모듈은 바꾸지 않았다.
+  운영자 결정(2026-11-09): 지금은 이 잔여 노출을 받아들이고 모듈은 바꾸지 않으며, 나중에 다시 검토한다.
 - 장치·망: `PrivateDevices`(GPU 장치 노드 없음), `PrivateNetwork`, `RestrictAddressFamilies=none`(소켓을 만들 수 없음. 받은 연결은 그대로 쓴다).
 - 다른 프로세스: `PrivatePIDs`·`ProtectProc=invisible`·`ProcSubset=pid`·`PrivateIPC`·`PrivateTmp`. 겹쳐 도는 인스턴스끼리도 서로를 보지 못한다.
   템플릿의 모든 인스턴스는 같은 동적 UID 를 받으므로(인스턴스별 `User=` 는 이름 길이 한도로 쓸 수 없다. contracts/module.md §2.2) UID 가 아니라 이
