@@ -435,3 +435,39 @@ T024 src/stt/transcribe.py   T025 src/stt/server/worker.py + tests/server/confte
   표식만」→ T005·T036.
 - spec 이 바뀌면 spec 을 먼저 고치고 과제를 고친다(전역 §3.5).
 - 과제 하나 또는 논리 묶음마다 커밋(Conventional Commits, 영어).
+
+---
+
+## Phase 9: 최종 감사(T040) 지적 고치기 (운영자 결정 2026-11-10, T041 전)
+
+감사 결과: `audit/qa-engineer.md`(PASS, Medium 1), `audit/adversary.md`(FAIL, High 2·Medium 3). 운영자 결정(2026-11-10): High 2건과 권장
+항목(qa M1, adversary M1·M2·M3, 문서 표현)을 모두 고친다. 깨진 조각이 있는 녹음은 지금처럼 그 앞까지 전사하고 `done` 으로 끝내되 숨기지 않는다.
+읽기 단위가 누구나 읽을 수 있는 호스트 파일을 읽고 그 내용을 자기 전사록으로 내보낼 수 있다는 남는 위험을 그 표현으로 다시 받아들인다.
+
+- [ ] T045 spec·계약 먼저: `spec.md` 에 경계 사례 10(녹음 가운데 깨진 조각 — 그 앞까지 전사해 `done`, 해독이 일찍 멈췄다는 고정된 한 줄이
+  서버 기록에 남는다), US2-10(장악된 읽기 프로세스는 호스트의 `/run`·`/var`·`/nix/var` 아래 파일을 열거나 잠그지 못한다), FR-023 덧붙임(읽기 단위의
+  감독 프로세스는 자식이 비정상으로 끝나거나 해독이 일찍 멈추면 작업 ID·경로·해독기 문구 없는 고정된 영어 한 줄을 기록에 쓴다)을 더한다.
+  `contracts/reader.md` §5.7 과 :83(「건너뛴다」→ 첫 깨진 조각에서 멈춘다), `contracts/module.md`(읽기 단위 설정, 닫힌 `[VERIFY] B-P2-1` 표식),
+  `research.md` R12(호스트 잠금 파일의 이유)를 고친다. RED 해당 없음 — spec. supports US2-10, 경계 사례 10, FR-023
+- [ ] T046 [US2] 호스트 잠금 파일 가리기(adversary H1): RED — `nix/vm-reader-double.py`·`nix/vm-test.nix` 의 권한 점검 대상에 0644 root 파일
+  `/run/nixos/switch-to-configuration.lock`·`/nix/var/nix/db/` 아래 0644 파일(VM 에 없으면 만든다)을 더해 열기·`flock -n` 이 실패해야 한다고
+  단언한다(지금은 성공해 실패). GREEN — `stt-reader@` 가 `/run`·`/var` 를 빈 읽기 전용 tmpfs 로 덮고 `/nix/var` 를 가린다(`DynamicUser` 의 사설
+  `/tmp`·`/var/tmp` 와 함께 되는지 `[VERIFY]` VM — 안 되면 `/var` 는 그 아래 디렉터리를 가리는 쪽으로 하고 이유를 R12 에 적는다). 가리는 경로는
+  모두 `-` 를 붙여 없는 경로로 단위가 실패하지 않게 한다. 기존 해독 VM 시험이 GREEN 인지(Python·PyAV 가 뜨는지) 다시 본다. closes US2-10
+- [ ] T047 [US3] 깨진 조각에서 멈춘 해독을 드러내기(adversary H2): RED — 녹음 파일 없이, 한 번 `InvalidDataError` 를 내는 가짜 프레임 열로
+  `src/stt/audio_decode.py` 가 그 앞까지의 표본을 쓰고 「일찍 멈춤」을 알린다고 단언한다. 읽기 자식은 그 알림을 감독에게 넘기고 감독은 `ok` 로 답하며
+  T048 의 한 줄을 쓴다. 명령줄은 표준 오류에 영어 경고 한 줄을 낸다. GREEN — 구현, `# intentional-skip:` 표식과 참된 이유(faster-whisper 와
+  같은 동작, 첫 깨진 조각에서 멈춤), docstring. 깨끗한 녹음의 바이트 동일성 시험은 그대로 GREEN. closes 경계 사례 10
+- [ ] T048 [US3] 읽기 단위의 비정상 종료 기록(adversary M1): RED — 자식 대역이 끝 코드 1 로 끝남·신호(SIGSYS 31)로 죽음·일찍 멈춤을 알림의 세
+  경우에, 감독이 표준 오류에 고정된 영어 한 줄씩만 쓰고(작업 ID·경로·해독기 문구 없음) 판정은 그대로임을 단언한다. GREEN — `src/stt/server/reader.py`.
+  supports FR-023
+- [ ] T049 [US2] 형식별 격리 해독 확인(qa M1): VM 에서 사인파로 만든 녹음 한 개씩을 `AUDIO_FORMATS` 의 형식마다(m4a/AAC, mp3, wav, flac, ogg
+  Vorbis·Opus, ADTS aac, asf/WMA) 실제 읽기 소켓으로 해독해 `ok` 이고 `journalctl -k -g 'type=1326'` 가 비어 있음을 단언한다(FR-028 — 사인파만).
+  RED 해당 없음 — 확인 시험. 어느 형식이 막히면 원인을 고치는 과제를 더한다. supports US2-8, SC-007
+- [ ] T050 문서(adversary M2·M3, qa 표현): `docs/server-security.md` §2 남는 위험을 「누구나 읽을 수 있는 호스트 파일을 읽고 그 내용을 자기 작업의
+  전사록으로 내보낼 수 있다(느림, 다른 이용자의 녹음·전사록은 닿지 않음)」로 고치고 운영자의 다시 받아들임(2026-11-10)을 적는다. §3 에 「서버 녹음을
+  명령줄·`ffprobe`·`ffmpeg` 로 직접 열지 않는다」 규칙, T048 의 기록 줄과 그때 볼 것(`type=1326` 과 시각으로 받기·워커 기록을 맞춰 보기), 한 형식이
+  늘 `unreadable_audio` 일 때 볼 것을 더한다. §4 의 `av (Python 3.12)` 를 「3.12 이상」으로, T021 의 「그대로」 표현을 고친다. RED 해당 없음 — 문서.
+  supports FR-023, FR-027
+- [ ] T051 T-Verify-Fix: `project-audit` 로 T045~T050 의 바뀜만 다시 감사(qa-engineer + adversary, adversary 는 코드·설정만 읽음). High 이상이
+  없어야 T041 로 간다. 결과를 `audit/` 에 더한다. RED 해당 없음 — 감사.
