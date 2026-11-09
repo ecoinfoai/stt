@@ -47,10 +47,10 @@ def _unit_blocks(module: str) -> dict[str, str]:
 
     The text runs to the next entry, so helper calls such as `stage "..." { ... }` are included.
     """
-    section = re.search(r"systemd\.services = \{", module)
-    assert section, "nix/module.nix has no systemd.services section"
-    services = _balanced_block(module, section.end() - 1)
-    entries = list(re.finditer(r"(?m)^( {6})(stt-[a-z@-]+) = ", services))
+    section = re.search(r"systemd\.services = \{.*?(?=^    systemd\.paths = )", module, re.S | re.M)
+    assert section, "nix/module.nix has no systemd.services section before systemd.paths"
+    services = section.group(0)
+    entries = list(re.finditer(r"(?m)^( {6})(stt-[a-z@-]+) =\s", services))
     blocks: dict[str, str] = {}
     for position, entry in enumerate(entries):
         end = entries[position + 1].start() if position + 1 < len(entries) else len(services)

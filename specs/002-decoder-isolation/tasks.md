@@ -62,7 +62,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   첨부 하나, 「다 지우기」, 청소 1분, `systemctl restart stt-models` 를 거친 뒤 `journalctl -k -g 'type=1326'` 을 모은다. 호출 번호는
   `scmp_sys_resolver` 로 이름을 찾고, 단위·호출·쓰는 곳·관측한 날을 `docs/server-security.md` 초안의 §1 표 자리에 적는다. 끝나면 drop-in 을
   지운다. RED 해당 없음 — 관측. supports US1-3, FR-002, 경계 사례 7
-- [ ] T003 [P] `docs/server-security.md` 뼈대(한국어): §1 단위별 제한·예외, §2 녹음 읽기 격리, §3 작업 실패와 단위 비정상 종료 구별, §4 판 기록·
+- [X] T003 [P] `docs/server-security.md` 뼈대(한국어): §1 단위별 제한·예외, §2 녹음 읽기 격리, §3 작업 실패와 단위 비정상 종료 구별, §4 판 기록·
   갱신 정책·보안 공지·매달 확인 기록의 제목과 칸 머리만 둔다. 표마다 위 규칙의 영어 표식과 칸 이름(data-model §7·§8)을 둔다. RED 해당 없음 — 문서 뼈대. supports FR-002, FR-023, FR-024
 
 ---
@@ -75,11 +75,11 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ### Tests for User Story 1 (write first) ⚠️
 
-- [ ] T004 [US1] `nix/vm-test.nix` 의 `isolation settings` 부분 시험에 B-P1-1 단언을 더한다: `server` 노드의 `stt-intake`·`stt-worker`·`stt-sweep`,
+- [X] T004 [US1] `nix/vm-test.nix` 의 `isolation settings` 부분 시험에 B-P1-1 단언을 더한다: `server` 노드의 `stt-intake`·`stt-worker`·`stt-sweep`,
   `fetcher` 노드의 `stt-models` 에서 `SystemCallArchitectures=native`, `SystemCallFilter=` 값이 비어 있지 않고 `~` 로 시작하지 않음,
   `MemoryDenyWriteExecute` 가 [contracts/module.md](contracts/module.md) §1 의 값. 시험 끝에 B-P1-3 단언 — 두 노드의 `journalctl -k -g type=1326`
   이 비어 있음. verify RED: VM 시험이 새 단언에서 실패한다(지금은 `SystemCallFilter=~`·`SystemCallArchitectures=`). closes US1-1, US1-2(VM)
-- [ ] T005 [P] [US1] `tests/test_server_security_doc.py`(새): `nix/module.nix` 에서 `SystemCallFilter` 를 가진 모든 단위를 이름으로 모은다(공통
+- [X] T005 [P] [US1] `tests/test_server_security_doc.py`(새): `nix/module.nix` 에서 `SystemCallFilter` 를 가진 모든 단위를 이름으로 모은다(공통
   `hardening` 묶음을 쓰는 단위는 그 묶음의 값을 받고, 나중에 생길 템플릿 `stt-reader@` 도 같은 방식으로 잡힌다). 모은 단위를
   `docs/server-security.md` 의 `stt:syscall-table` 표와 대조한다: (1) 네 단위(`stt-intake`·`stt-worker`·`stt-sweep`·`stt-models`)와 모은 단위마다
   표에 줄이 있다. (2) `@system-service` 밖에 더한 허용은 표의 `added` 와 같고, 그런 줄은 `reason`·`observed` 가 비어 있지 않다. (3) `~` 로 시작하는
@@ -90,11 +90,11 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ### Implementation for User Story 1 (turn T004–T005 GREEN)
 
-- [ ] T006 [US1] `nix/module.nix` 의 `hardening` 묶음에 `SystemCallArchitectures = "native"`, `SystemCallFilter = [ "@system-service" ]`(+ T002 에서
+- [X] T006 [US1] `nix/module.nix` 의 `hardening` 묶음에 `SystemCallArchitectures = "native"`, `SystemCallFilter = [ "@system-service" ]`(+ T002 에서
   관측한 예외만, 줄마다 `docs/server-security.md` §1 의 줄을 가리키는 영어 주석), `MemoryDenyWriteExecute = true` 를 더한다.
   `SystemCallErrorNumber` 는 두지 않는다(R1). 다른 001 설정은 건드리지 않는다. RED → GREEN: turns T004 GREEN(기존 부분 시험도 필터를 건 채 모두 통과 —
   B-P1-2). closes US1-1, US1-2, US1-6(VM)
-- [ ] T007 [US1] `docs/server-security.md` §1 표를 채운다(네 단위: 필터, 더한 예외와 이유·관측한 날·호출 번호, 쓰기·실행 메모리 금지의 상태) —
+- [X] T007 [US1] `docs/server-security.md` §1 표를 채운다(네 단위: 필터, 더한 예외와 이유·관측한 날·호출 번호, 쓰기·실행 메모리 금지의 상태) —
   워커는 `mdwe=pending` 으로 두고 T009 에서 `on`·`off` 로 확정한다. §3 에 R15 의 확인 방법을 적는다(작업 실패 = 응답의 `failure.reason`·단위 로그,
   단위 비정상 종료 = `systemctl --failed`·`systemctl show -p Result -p ExecMainCode -p ExecMainStatus`·`journalctl -k -g 'type=1326'`).
   RED → GREEN: turns T005 GREEN. closes US1-3, US1-4, supports FR-023
