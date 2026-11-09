@@ -535,9 +535,40 @@ def write_headerless_file(path: Path) -> Path:
     return path
 
 
+def write_truncated_wav(path: Path) -> Path:
+    """Writes a WAV whose data chunk is shorter than its header says."""
+    make_wav(path, 1.0)
+    path.write_bytes(path.read_bytes()[:-1000])
+    return path
+
+
+KNOWN_SAMPLES = np.array([0, 16384, -32768, 32767], dtype=np.int16)
+
+
+def write_known_samples(path: Path) -> Path:
+    """Writes the four ``KNOWN_SAMPLES`` as a valid 16 kHz mono 16-bit WAV."""
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(KNOWN_SAMPLES.tobytes())
+    return path
+
+
+def test_us2_5_samples_are_int16_scaled_by_32768(harness: Harness) -> None:
+    assert harness.run(write_audio=write_known_samples) == 0
+
+    audio = harness.model.calls[0]["audio"]
+    assert audio.dtype == np.float32
+    assert np.array_equal(audio, KNOWN_SAMPLES.astype(np.float32) / 32768.0)
+    assert audio.min() == -1.0
+    assert audio.max() < 1.0
+
+
 @pytest.mark.parametrize(
     "write_audio",
     [
+        pytest.param(write_truncated_wav, id="truncated_data_chunk"),
         pytest.param(lambda p: write_pcm_wav(p, channels=2, width=2, rate=16000), id="stereo"),
         pytest.param(lambda p: write_pcm_wav(p, channels=1, width=1, rate=16000), id="8_bit"),
         pytest.param(lambda p: write_pcm_wav(p, channels=1, width=2, rate=44100), id="44_1_khz"),

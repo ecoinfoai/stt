@@ -134,7 +134,8 @@ def _read_samples(wav: Path) -> "np.ndarray":
         The samples, scaled like faster-whisper scales its own decoder output.
 
     Raises:
-        ValueError: If the header is not 1 channel, 2 bytes per sample and 16 kHz.
+        ValueError: If the header is not 1 channel, 2 bytes per sample and 16 kHz,
+            or the data chunk is shorter than the header says.
     """
     import numpy as np
 
@@ -142,8 +143,13 @@ def _read_samples(wav: Path) -> "np.ndarray":
         header = (handle.getnchannels(), handle.getsampwidth(), handle.getframerate())
         if header != (1, 2, 16000):
             raise ValueError("The decoded audio is not 16 kHz mono 16-bit PCM.")
-        raw = handle.readframes(handle.getnframes())
-    return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        frames = handle.getnframes()
+        raw = handle.readframes(frames)
+    if len(raw) != frames * 2:
+        raise ValueError("The decoded audio is shorter than its header says.")
+    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+    samples /= 32768.0
+    return samples
 
 
 def _transcribe(work_dir: Path, spec: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -173,6 +179,7 @@ def _transcribe(work_dir: Path, spec: dict[str, Any]) -> tuple[str, dict[str, An
         model, samples, original_name, spec["language"], terms, BEAM_SIZE,
         word_timestamps=diarize, allow_empty=True,
     )
+    del samples
     header = transcribe.build_header(
         original_name, MODEL_NAME, language, duration, diarized=diarize
     )

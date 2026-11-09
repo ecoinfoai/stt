@@ -16,6 +16,7 @@ import sys
 import tempfile
 import threading
 import time
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -289,8 +290,10 @@ def test_decoder_us2_5_gpu_stage_runs_the_second_pass_without_ffmpeg(
 ) -> None:
     work_dir = tmp_path / "job"
     work_dir.mkdir()
-    wav = make_wav(work_dir / "audio.wav", 12.0)
+    wav = make_wav(work_dir / "audio.wav", 12.0, silent=False)
     os.chmod(wav, 0o600)
+    with wave.open(str(wav), "rb") as handle:
+        ints = np.frombuffer(handle.readframes(handle.getnframes()), dtype=np.int16)
     spec = {
         "request_id": REQUEST_ID,
         "original_name": "lecture one.m4a",
@@ -333,3 +336,5 @@ def test_decoder_us2_5_gpu_stage_runs_the_second_pass_without_ffmpeg(
     assert isinstance(call["audio"], np.ndarray)
     assert call["audio"].dtype == np.float32
     assert call["audio"].shape == (12 * 16000,)
+    assert np.array_equal(call["audio"], ints.astype(np.float32) / 32768.0)
+    assert call["audio"].min() < -0.2
