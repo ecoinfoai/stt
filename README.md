@@ -293,6 +293,15 @@ start them. Defaults: `--root /var/lib/stt`,
 `HF_TOKEN`; the engine reads the models offline. Full reference:
 [contracts/cli.md](specs/001-server-transcription/contracts/cli.md).
 
+### Recording decoder isolation
+
+Intake and the worker never decode a recording themselves: they hand
+it, as a read-only file descriptor, to a separate sandboxed reader
+unit (`stt-reader@.service`, reached through `/run/stt-reader.sock`)
+that has no network, no GPU and no access to the state folders. Unit
+hardening, the syscall tables and the monthly checks are in
+[docs/server-security.md](docs/server-security.md).
+
 ### One GPU, one queue — `STT_GPU_LOCK`
 
 The worker holds an exclusive lock on `--gpu-lock FILE` while a model

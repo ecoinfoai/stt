@@ -122,7 +122,7 @@ tests/
 └── test_server_security_doc.py  # 새: docs/server-security.md §1 ↔ module.nix (US1), §4 ↔ uv.lock·flake.lock·기록 검사 (US5)
 
 nix/
-├── module.nix           # 바뀜: hardening 에 P1 세 설정(US1), stt-reader.socket·stt-reader@.service, intake·worker 의 requires·ExecStart(US2)
+├── module.nix           # 바뀜: hardening 에 P1 세 설정(US1), stt-reader.socket·stt-reader@.service, intake·worker 의 wants·after·ExecStart(US2)
 └── vm-test.nix          # 바뀜: B-P1·B-P2 부분 시험, 읽기 단위 대역 specialisation, 가짜 NVIDIA 노드
 
 docs/
@@ -171,7 +171,7 @@ C-P1-2(워커의 쓰기·실행 메모리), C-P2-3(호스트의 해독 시간), 
 | 6. 확인 | 001 계약 문서 고치기(contracts/module.md §5), README, `T-Verify-Final`(project-audit: qa-engineer + adversary — adversary 는 코드·설정만 읽는다) | SC-001~010, FR-020·027·028 | **P2·P3 배포**(`T-Verify-Final` 통과 뒤, bhu-llm FR-659 전): 같은 순서. C-P2-1~8, C-P3, 회신 `p2-reply.md` |
 
 - 단계 1 은 단계 2~5 와 상관없이 배포할 수 있다 — `module.nix` 의 `hardening` 만 바꾸고 Python 코드를 바꾸지 않는다.
-- 단계 2~4 는 함께 배포한다. 받기·워커가 읽기 소켓을 `requires` 하므로, 모듈과 코드가 한 판에 있어야 한다.
+- 단계 2~4 는 함께 배포한다. 받기·워커가 읽기 소켓을 `wants` 하므로, 모듈과 코드가 한 판에 있어야 한다.
 - 단계 5 는 문서와 시험이라 단계 4 와 같은 배포에 싣는다. 배포는 단계 6 의 `T-Verify-Final` 뒤다 — 감사가 master 합치기를 막아야 하므로(tasks 단계에서 옮김).
 - 회신 두 건은 운영자가 bhu-llm 대장 A18 로 옮긴다.
 

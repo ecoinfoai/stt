@@ -10,7 +10,7 @@
 
 | 속성 | 값 | 출처 |
 |---|---|---|
-| 신원 | 인스턴스마다 다른 일회용 UID·GID(61184–65519) | `DynamicUser=yes` |
+| 신원 | 템플릿의 일회용 UID·GID(61184–65519) 하나를 동시에 도는 모든 인스턴스가 나눠 쓴다. 인스턴스 사이는 UID 가 아니라 이름공간(`PrivatePIDs`·`PrivateIPC`·`PrivateTmp`)으로 가른다 | `DynamicUser=yes` |
 | 읽을 수 있는 것 | 받은 녹음 기술자 하나(읽기 전용, 일반 파일) | 요청의 SCM_RIGHTS |
 | 쓸 수 있는 것 | 해독이면 받은 파이프의 쓰는 쪽 하나. 파일은 없다(`LimitFSIZE=0`, 사설 tmpfs 만 쓰기 가능) | 요청의 SCM_RIGHTS |
 | 닿을 수 없는 것 | `/var/lib/stt`·`/var/lib/stt-models`·`/run/stt`(가림 + 권한), GPU 장치(사설 `/dev`), 망(이름공간 없음, 소켓 생성 금지) | [contracts/module.md](contracts/module.md) §2 |

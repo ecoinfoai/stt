@@ -283,7 +283,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 ### Implementation (turn T030–T033 GREEN)
 
 - [X] T034 [US2] `nix/module.nix`: `stt-reader.socket`(§2.1)과 `stt-reader@.service`(§2.2) — [contracts/module.md](contracts/module.md) 의 표 그대로.
-  받기·워커에 `requires`·`after` `stt-reader.socket` 과 `--reader-socket /run/stt-reader.sock`(§3). VM 에서 `RestrictAddressFamilies=none` 의 단위
+  받기·워커에 `wants`·`after` `stt-reader.socket` 과 `--reader-socket /run/stt-reader.sock`(§3). VM 에서 `RestrictAddressFamilies=none` 의 단위
   파일 꼴이 거부되면 원인을 적고 운영자와 대안을 정한다(말없이 바꾸지 않는다). RED → GREEN: turns T030–T033 GREEN. closes US2-1~4, US2-6, US2-7, US4-4~6(VM)
 - [X] T035 [US2] `docs/server-security.md`: §1 표에 `stt-reader@` 줄(`narrowed` 에 더 좁힌 항목, `reason` 에 그 까닭, `mdwe=on`), §2 에 읽기 격리
   (누가 무엇을 읽는가, 무엇에 닿지 못하는가, 상한, 끊김에 바로 멈춤), §3 에 읽기 단위를 쓸 수 없을 때 보이는 것 — 워커 로그의
@@ -331,10 +331,10 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 「최종 검증」) — 이 기능에서 브랜치를 마치는 것은 P2·P3 를 master 에 합치는 T041 이다. P1 합치기(T008)는 설정만 바뀌는 중간 배포라 운영자
 승인으로 하고, T040 이 P1 의 바뀜도 함께 본다. plan 의 단계표도 감사를 P2 배포 앞으로 옮겼다.
 
-- [ ] T038 [P] 001 의 내부 계약 문서를 [contracts/module.md](contracts/module.md) §5 대로 고친다: `specs/001-server-transcription/contracts/module.md`
+- [X] T038 [P] 001 의 내부 계약 문서를 [contracts/module.md](contracts/module.md) §5 대로 고친다: `specs/001-server-transcription/contracts/module.md`
   §3(읽기 단위 줄, 공통 세 설정), `contracts/README.md` §2(그림에 `/run/stt-reader.sock`), `contracts/cli.md` §1(`stt server read`, `--reader-socket`).
   스키마 파일은 건드리지 않는다. RED 해당 없음 — 내부 문서. supports FR-020, US4-1
-- [ ] T039 [P] `README.md` 의 Server 절에 읽기 단위 한 줄과 `docs/server-security.md` 링크를 더한다(영어). RED 해당 없음 — 문서. supports FR-023
+- [X] T039 [P] `README.md` 의 Server 절에 읽기 단위 한 줄과 `docs/server-security.md` 링크를 더한다(영어). RED 해당 없음 — 문서. supports FR-023
 - [ ] T040 T-Verify-Final: `project-audit` 스킬로 최종 감사 — 범위 qa-engineer(7-Layer 모듈·통합·E2E) + adversary(20+ 페르소나 + silent-skip).
   adversary 는 코드와 설정만 읽고, 입력 파일을 만들거나 돌리지 않는다(FR-028, 001 T078 의 교훈). BOUNDARY_MISMATCH / INTEGRATION_MISSING /
   SILENT_SKIP_NEW / PERSONA_ATTACK_SUCCESS 가 나오면 고칠 때까지 T041 로 가지 않는다. 결과를 `specs/002-decoder-isolation/audit/` 에 남긴다.
@@ -363,7 +363,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 - Phase 1(T001·T002) → Phase 2(US1). T003 은 언제든.
 - Phase 2 의 배포(T008~T010)는 Phase 3 이후와 상관없이 진행한다 — P1 은 `nix/module.nix` 의 `hardening` 만 바꾼다.
-- Phase 3(기반) → Phase 4 → Phase 5. Phase 4·5 는 한 판으로 배포된다(받기·워커가 읽기 소켓을 `requires` 한다).
+- Phase 3(기반) → Phase 4 → Phase 5. Phase 4·5 는 한 판으로 배포된다(받기·워커가 읽기 소켓을 `wants` 한다).
 - Phase 6(US5)은 T003 뒤 언제든 할 수 있고, Phase 8 의 배포에 함께 싣는다. T005 의 시험 파일을 T036 이 넓히므로 T005 뒤다.
 - Phase 7 은 Phase 4~6 이 끝난 뒤. Phase 8 은 T040 통과 뒤.
 

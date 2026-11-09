@@ -276,7 +276,7 @@
     `StandardInput=socket`·`StandardOutput=null`·`StandardError=journal`.
   - `InaccessiblePaths=/var/lib/stt /var/lib/stt-models /run/stt`: 권한으로도 막히지만 한 겹 더 둔다. 특히 `/run/stt/gpu.lock` 은 0644 라 일회용
     사용자도 열어 `flock` 할 수 있다. 가리지 않으면 장악된 읽기가 GPU 줄을 붙잡을 수 있다.
-  - 받기·워커는 `requires`·`after` 에 `stt-reader.socket` 을 두고, `ExecStart` 에 `--reader-socket /run/stt-reader.sock` 을 붙인다.
+  - 받기·워커는 `wants`·`after` 에 `stt-reader.socket` 을 두고, `ExecStart` 에 `--reader-socket /run/stt-reader.sock` 을 붙인다.
   - P1 의 세 설정은 읽기 단위에도 있고 더 좁다. P2 뒤로는 SC-001 의 「서버 단위」에 읽기 단위가 들어간다(단위 다섯).
   - nixos-config 는 바꿀 것이 없다. `DynamicUser` 의 이름 풀이(nss-systemd)가 없어도 UID 는 할당된다.
 - `[VERIFY]` (B-P2-2): 다음을 VM 시험에서 본다.
