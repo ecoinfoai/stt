@@ -6,11 +6,15 @@ fixtures so that test collection works before those modules exist.
 
 from __future__ import annotations
 
+import array
 import json
 import math
 import os
+import select
 import shutil
+import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -19,15 +23,17 @@ import threading
 import time
 import uuid
 import wave
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 
 FAKE_ENGINE = Path(__file__).with_name("fake_engine.py")
 FAKE_READER = Path(__file__).with_name("fake_reader.py")
-FAKE_READER_REPORT_ENV = "FAKE_READER_REPORT"
+MESSAGE_LIMIT = 4096
+MAX_PEEKED_FDS = 16
 _TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -398,35 +404,94 @@ def fake_reader_cmd(mode: str) -> list[str]:
     return [sys.executable, str(FAKE_READER), "--mode", mode]
 
 
+class ReceivedFd(NamedTuple):
+    """Identity of one descriptor a caller sent with its request.
+
+    Attributes:
+        kind: ``stat.S_IFMT`` of the file, e.g. ``stat.S_IFREG`` or ``stat.S_IFIFO``.
+        dev: ``st_dev`` of the file.
+        ino: ``st_ino`` of the file.
+    """
+
+    kind: int
+    dev: int
+    ino: int
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 class EmulatedReaderSocket:
     """A temporary SEQPACKET socket that mirrors systemd ``Accept=yes``.
 
-    For every accepted connection it starts a new process from `cmd` with that
-    connection as standard input (argument list, no shell) and closes its own
-    copy. Each process gets a fresh report file named by the
-    ``FAKE_READER_REPORT`` environment variable; ``fake_reader.py`` writes the
-    number of descriptors it received there, a real reader ignores it.
+    For every accepted connection it peeks at the request (``MSG_PEEK``, so the
+    message and its descriptors stay queued for the spawned program), records
+    the identity of the descriptors, starts a new process from `cmd` in its own
+    session with the connection as standard input (argument list, no shell,
+    stdout to ``/dev/null``) and closes its own copy. The peek waits at most
+    `peek_timeout_s` for the request; a connection that sends nothing in time
+    is recorded as None and spawned anyway. Peeking is serial, so a silent
+    client delays the next accept by that long.
+
+    Because the record comes from the fixture, it works for any spawned
+    program, the real supervisor included.
 
     Attributes:
         path: Socket path to hand to the caller under test.
     """
 
-    def __init__(self, cmd: list[str]) -> None:
+    def __init__(self, cmd: list[str], peek_timeout_s: float = 1.0) -> None:
         # AF_UNIX paths are limited to ~107 bytes, which pytest's tmp_path can exceed.
         self._dir = Path(tempfile.mkdtemp(prefix="stt-rd-"))
-        self.path = self._dir / "reader.sock"
         self._cmd = list(cmd)
+        self._peek_timeout_s = peek_timeout_s
         self._lock = threading.Lock()
         self._procs: list[subprocess.Popen[bytes]] = []
-        self._reports: list[Path] = []
+        self._received: list[tuple[ReceivedFd, ...] | None] = []
+        self._error: BaseException | None = None
         self._stop = threading.Event()
         self._closed = False
+        self.path = self._dir / "reader.sock"
         self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        self._listener.bind(str(self.path))
-        self._listener.listen()
+        try:
+            self._listener.bind(str(self.path))
+            self._listener.listen()
+        except BaseException:
+            self._listener.close()
+            shutil.rmtree(self._dir, ignore_errors=True)
+            raise
         self._listener.settimeout(0.05)
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
+
+    def _peek(self, connection: socket.socket) -> tuple[ReceivedFd, ...] | None:
+        if not select.select([connection], [], [], self._peek_timeout_s)[0]:
+            return None
+        data, ancillary, flags, _ = connection.recvmsg(
+            MESSAGE_LIMIT, socket.CMSG_SPACE(MAX_PEEKED_FDS * 4), socket.MSG_PEEK | socket.MSG_CMSG_CLOEXEC
+        )
+        fds = array.array("i")
+        for level, kind, payload in ancillary:
+            if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                fds.frombytes(payload[: len(payload) - len(payload) % fds.itemsize])
+        identities: list[ReceivedFd] = []
+        try:
+            for fd in fds:
+                info = os.fstat(fd)
+                identities.append(ReceivedFd(stat.S_IFMT(info.st_mode), info.st_dev, info.st_ino))
+        finally:
+            for fd in fds:
+                os.close(fd)
+        if flags & socket.MSG_CTRUNC:
+            raise AssertionError("request carried more descriptors than the fixture can record")
+        if not data and not identities:
+            return None
+        return tuple(identities)
 
     def _serve(self) -> None:
         while not self._stop.is_set():
@@ -437,11 +502,24 @@ class EmulatedReaderSocket:
             except OSError:
                 return
             with connection:
+                try:
+                    peeked = self._peek(connection)
+                    proc = subprocess.Popen(
+                        self._cmd,
+                        stdin=connection,
+                        stdout=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
+                except BaseException as exc:
+                    self._error = exc
+                    return
                 with self._lock:
-                    report = self._dir / f"{len(self._procs)}.fds"
-                    env = {**os.environ, FAKE_READER_REPORT_ENV: str(report)}
-                    self._procs.append(subprocess.Popen(self._cmd, stdin=connection, env=env))
-                    self._reports.append(report)
+                    self._received.append(peeked)
+                    self._procs.append(proc)
+
+    def _raise_serve_error(self) -> None:
+        if self._error is not None:
+            raise AssertionError("emulated reader socket failed to serve a connection") from self._error
 
     @property
     def spawn_count(self) -> int:
@@ -449,43 +527,56 @@ class EmulatedReaderSocket:
         with self._lock:
             return len(self._procs)
 
-    def fd_counts(self) -> list[int | None]:
-        """Returns, per spawned process, the number of descriptors it reported.
+    def received(self) -> list[tuple[ReceivedFd, ...] | None]:
+        """Returns, per spawned process, the descriptors its request carried.
 
-        An entry is None while the process has not reported (or never will).
+        An entry is None when the client sent no request before the peek timed
+        out or hung up.
         """
         with self._lock:
-            reports = list(self._reports)
-        return [int(r.read_text(encoding="utf-8")) if r.exists() else None for r in reports]
+            return list(self._received)
+
+    def fd_counts(self) -> list[int | None]:
+        """Returns, per spawned process, how many descriptors its request carried."""
+        return [None if fds is None else len(fds) for fds in self.received()]
+
+    def _all_gone(self) -> bool:
+        with self._lock:
+            procs = list(self._procs)
+        return all(proc.poll() is not None and not _group_alive(proc.pid) for proc in procs)
 
     def wait_for_exits(self, count: int, timeout_s: float = 5.0) -> None:
-        """Waits until `count` processes were started and all of them have exited.
+        """Waits until `count` processes were started and their process groups are empty.
 
         Args:
             count: Expected number of started processes.
             timeout_s: Longest wait.
 
         Raises:
-            AssertionError: If that state is not reached in time.
+            AssertionError: If that state is not reached in time, or serving failed.
         """
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            with self._lock:
-                procs = list(self._procs)
-            if len(procs) >= count and all(p.poll() is not None for p in procs):
+            self._raise_serve_error()
+            if self.spawn_count >= count and self._all_gone():
                 return
             time.sleep(0.01)
+        self._raise_serve_error()
         raise AssertionError(f"reader processes did not settle: spawned={self.spawn_count}, expected={count}")
 
     def close(self, grace_s: float = 5.0) -> None:
-        """Stops listening, reaps the processes and asserts none was still running.
+        """Stops listening, reaps the processes and asserts none was left running.
+
+        A process counts as left running when it, or anything else in its
+        process group (e.g. a decoding child), is alive `grace_s` after the
+        listener stopped. Such groups are killed with SIGKILL.
 
         Args:
-            grace_s: How long a process may take to exit by itself before it is
-                killed and counted as left running.
+            grace_s: How long a process group may take to end by itself.
 
         Raises:
-            AssertionError: If a spawned process was still running after `grace_s`.
+            AssertionError: If a process group was still running after `grace_s`,
+                or serving a connection had failed.
         """
         if self._closed:
             return
@@ -501,35 +592,47 @@ class EmulatedReaderSocket:
             try:
                 proc.wait(timeout=max(0.0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
-                running += 1
-                proc.kill()
-                proc.wait()
+                pass
+            while proc.poll() is None or _group_alive(proc.pid):
+                if time.monotonic() >= deadline:
+                    running += 1
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    proc.wait()
+                    while _group_alive(proc.pid):
+                        time.sleep(0.01)
+                    break
+                time.sleep(0.01)
         shutil.rmtree(self._dir, ignore_errors=True)
-        assert running == 0, f"{running} reader process(es) still running at teardown"
+        self._raise_serve_error()
+        assert running == 0, f"{running} reader process group(s) still running at teardown"
 
 
 @pytest.fixture
-def emulated_reader_socket() -> Any:
+def emulated_reader_socket() -> Iterator[Callable[..., EmulatedReaderSocket]]:
     """Returns a factory for opt-in emulated reader sockets.
 
-    ``factory(cmd)`` starts a socket that runs `cmd` once per connection; the
-    result exposes ``path``, ``spawn_count``, ``fd_counts()`` and
-    ``wait_for_exits()``. At teardown every socket is closed and the test fails
-    if a spawned process is still running.
+    ``factory(cmd, peek_timeout_s=1.0)`` starts a socket that runs `cmd` once
+    per connection; the result exposes ``path``, ``spawn_count``,
+    ``received()``, ``fd_counts()`` and ``wait_for_exits()``. At teardown every
+    socket is closed and the test fails if a spawned process (or anything in
+    its process group) is still running.
     """
     created: list[EmulatedReaderSocket] = []
 
-    def factory(cmd: list[str]) -> EmulatedReaderSocket:
-        emulated = EmulatedReaderSocket(cmd)
+    def factory(cmd: list[str], peek_timeout_s: float = 1.0) -> EmulatedReaderSocket:
+        emulated = EmulatedReaderSocket(cmd, peek_timeout_s)
         created.append(emulated)
         return emulated
 
     yield factory
-    errors: list[AssertionError] = []
+    errors: list[str] = []
     for emulated in created:
         try:
             emulated.close()
         except AssertionError as exc:
-            errors.append(exc)
+            errors.append(str(exc))
     if errors:
-        raise errors[0]
+        raise AssertionError("; ".join(errors))
