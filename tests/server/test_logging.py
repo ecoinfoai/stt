@@ -133,10 +133,11 @@ def _decode_error() -> Exception:
 
 
 @pytest.mark.parametrize(
-    ("reason", "make_error"),
+    ("reason", "make_error", "logged"),
     [
-        ("engine_error", lambda: ValueError(f"{ERROR_TEXT} {HINT} {REQUESTER}")),
-        ("unreadable_audio", _decode_error),
+        ("engine_error", lambda: ValueError(f"{ERROR_TEXT} {HINT} {REQUESTER}"), "engine_error"),
+        # The worker no longer accepts unreadable_audio from the engine: it counts as no verdict.
+        ("unreadable_audio", _decode_error, "engine_error"),
     ],
 )
 def test_engine_failures_never_log_hints_requester_transcript_or_error_text(
@@ -148,6 +149,7 @@ def test_engine_failures_never_log_hints_requester_transcript_or_error_text(
     pinned_models: Path,
     reason: str,
     make_error: Callable[[], Exception],
+    logged: str,
 ) -> None:
     clock = FakeClock()
     request_id = new_id()
@@ -169,7 +171,7 @@ def test_engine_failures_never_log_hints_requester_transcript_or_error_text(
         assert secret not in output
     for segment in PLAIN_SEGMENTS:
         assert segment.text.strip() not in output
-    assert f"{request_id} failed {reason}" in output
+    assert f"{request_id} failed {logged}" in output
 
 
 def test_processing_timeout_never_logs_hints_requester_transcript_or_error_text(

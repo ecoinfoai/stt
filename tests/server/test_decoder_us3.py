@@ -469,7 +469,7 @@ def test_decoder_edge_5_a_storage_error_while_writing_the_decoded_audio_fails_th
 
 
 @pytest.mark.parametrize("outcome", ["timeout", "failed", "unavailable"])
-def test_decoder_edge_4_a_job_deleted_during_the_read_is_never_settled_as_a_failure_of_the_read(
+def test_decoder_us4_4_a_job_deleted_during_the_read_is_never_settled_as_a_failure_of_the_read(
     layout: Layout,
     tone: Path,
     clock: FakeClock,
@@ -494,3 +494,30 @@ def test_decoder_edge_4_a_job_deleted_during_the_read_is_never_settled_as_a_fail
     assert f"{request_id} stopped" in lines
     assert not [line for line in lines if line.startswith(f"{request_id} failed")]
     assert leftovers_besides_recordings(layout.root) == []
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EMFILE])
+def test_decoder_us3_8_an_os_error_before_anything_is_sent_to_the_reader_is_a_server_fault_not_unreadable_audio(
+    layout: Layout,
+    tone: Path,
+    clock: FakeClock,
+    reader_socket: ReaderSocket,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    code: int,
+) -> None:
+    request_id = submit(layout, tone, clock)
+    spawned_before = reader_socket.spawn_count
+    capfd.readouterr()
+
+    def refuse_to_open(path: Any) -> int:
+        raise OSError(code, os.strerror(code))
+
+    monkeypatch.setattr(reader_client, "_open_recording", refuse_to_open)
+
+    assert run_worker_once(layout, clock) is True
+
+    assert reader_socket.spawn_count == spawned_before
+    assert_failed(layout, request_id, NOT_STARTED)
+    assert_no_result(layout, request_id)
+    assert capfd.readouterr().out.splitlines() == [f"{request_id} running", f"{request_id} failed engine_error"]

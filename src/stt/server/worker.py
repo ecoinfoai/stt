@@ -52,6 +52,7 @@ _READ_FAILURES: dict[str, Failure] = {
     "storage_error": _UNREADABLE,
 }
 _Ending = Literal["ended", "stopped", "timeout"]
+_ReadOutcome = Literal["ok", "failed", "unavailable", "stopped", "timeout", "storage_error"]
 
 
 def _log(request_id: str, state: str) -> None:
@@ -94,16 +95,26 @@ def _write_audio(work_dir: Path, samples: bytes | bytearray) -> None:
 
 def _read(
     layout: Layout, request_id: str, recording: Path, work_dir: Path, reader: ReaderConfig, limit_s: float
-) -> reader_client.Outcome:
+) -> _ReadOutcome:
     """Decodes `recording` through the reader and writes the result to ``audio.wav`` when the read is ``ok``.
 
     The decoded samples are released on return, before the GPU stage starts.
+
+    Returns:
+        The reader's outcome, or ``storage_error`` if ``audio.wav`` could not be written.
+
+    Raises:
+        OSError: If the reader client could not open the recording; nothing was sent to the reader.
     """
     result = reader_client.decode(
         reader, recording, job_running=lambda: _is_running(layout, request_id), job_limit_s=limit_s
     )
     if result.outcome == "ok":
-        _write_audio(work_dir, result.audio)
+        try:
+            _write_audio(work_dir, result.audio)
+        except OSError:
+            # Never store the exception: its traceback holds this frame and the decoded buffer.
+            return "storage_error"
     return result.outcome
 
 
@@ -285,8 +296,8 @@ def _run_job(
         try:
             outcome: str = _read(layout, job.request_id, recording, work_dir, reader, limit_s)
         except OSError:
-            # No `as` name: the traceback would keep the frame, and with it the decoded buffer, alive.
-            outcome = "storage_error"
+            # The reader client could not open the recording or its pipe, so no reader was ever asked.
+            outcome = "unavailable"
         if outcome not in ("ok", "stopped") and not _is_running(layout, job.request_id):
             # A delete or the daily purge took the job (and removed its files) while the read was in flight.
             outcome = "stopped"
