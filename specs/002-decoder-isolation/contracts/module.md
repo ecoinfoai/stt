@@ -49,6 +49,7 @@
 | `LimitCORE` · `LimitFSIZE` | `0` · `0` | 덤프 없음, 파일에 자료를 쓰지 못함 |
 | `TasksMax` | `32` | |
 | `RuntimeMaxSec` | `300` | 감독 상한(최대 240초) 위의 받침 |
+| `restartIfChanged` | `false` | 배포(`switch-to-configuration`)가 도는 읽기를 건드리지 않게. 템플릿이 바뀌었을 때 인스턴스가 켜져 있으면 스위치는 템플릿 이름에서 `@` 를 떼어 소켓을 멈췄다 켜는데(`stt-reader.socket`), 이 설정(`X-RestartIfChanged=false`)이 있으면 그 인스턴스는 건너뛴다. 읽기 하나는 `RuntimeMaxSec` 으로 끝나므로 다음 읽기부터 새 템플릿을 쓴다 |
 | `KillSignal` | `SIGKILL` | 감독은 `PrivatePIDs` 의 PID 1 이라 처리기 없는 SIGTERM 을 무시한다(001 워커와 같은 까닭). 그대로 두면 상한·OOM 정지가 `TimeoutStopSec`(90초)만큼 늦어진다. 정리할 상태가 없다 |
 
 **UID 에 대하여** (2026-11-09 실측, systemd 261.1, 소스 `src/core/socket.c`·`dynamic-user.c`·`user-util.c`).
@@ -63,18 +64,29 @@
   않음), `ProtectProc=invisible`·`ProcSubset=pid`, `PrivateIPC`, `PrivateTmp`, `PrivateDevices`, `PrivateNetwork`, `RestrictAddressFamilies=none`,
   그리고 필터 밖인 `ptrace`(`@system-service` 에 들지 않음)와 명시적으로 뺀 `process_vm_readv`·`process_vm_writev`, `~@privileged`. 서로의 프로세스를 보지도 신호를 보내지도 못한다. 시험(B-P2-4)이 보는 것은 UID 가
   `stt` 가 아니라는 것과, 각 읽기가 `/proc` 에서 자기 인스턴스의 프로세스만 본다는 것이다.
+- 남는 것: 같은 동적 UID 를 쓰는 인스턴스끼리는 커널 사용자 키링을 나눈다(`@keyring` 호출은 `@system-service` 안에 있다). 겹쳐 도는 두 읽기가 모두
+  적대적일 때만 생길 수 있는 통로이고, 정상 읽기로 넘어가는 길은 아니다. `~@keyring` 은 더하지 않았다(운영자 결정 대기).
 
 ## 3. 받기·워커가 바뀌는 것 (P2)
 
 | 단위 | 바뀜 |
 |---|---|
-| `stt-intake.service` | `requires`·`after` `stt-reader.socket`. `ExecStart = ${stt} server intake --reader-socket /run/stt-reader.sock` |
-| `stt-worker.service` | `requires`·`after` `stt-reader.socket`. `ExecStart = ${stt} server work --gpu-lock /run/stt/gpu.lock --reader-socket /run/stt-reader.sock` |
+| `stt-intake.service` | `wants`·`after` `stt-reader.socket`. `ExecStart = ${stt} server intake --reader-socket /run/stt-reader.sock` |
+| `stt-worker.service` | `wants`·`after` `stt-reader.socket`. `ExecStart = ${stt} server work --gpu-lock /run/stt/gpu.lock --reader-socket /run/stt-reader.sock` |
+
+- `requires` 가 아니라 `wants` 인 까닭(운영자 결정 2026-11-09, 통제자 판정 16): `Requires=` 는 소켓이 멈추면 받기·워커도 멈춘다. 그러면 소켓 단위를
+  손볼 때 도는 전사가 `interrupted` 로 끝난다. `Wants=` 는 소켓을 함께 띄우되 멈춤을 전하지 않는다. 소켓이 없으면 읽기는 접속 실패로 끝나고
+  받기·워커는 대체 길 없이 그 요청·작업만 실패로 끝낸다(헌법 V, FR-016). 순서는 `After=` 가 지킨다.
 
 - P2 뒤 받기는 녹음을 해석하지 않지만 `PrivateDevices`·`MemoryMax=1G` 등 001 설정은 그대로 둔다.
 - 워커의 GPU 장치 허용·`MemoryMax=12G` 는 GPU 단계 때문에 그대로다. 워커가 녹음을 해석하지 않게 되는 것은 코드의 바뀜(reader.md §7)이다.
-- 배포: `switch-to-configuration` 이 소켓 단위를 띄운다. 워커는 `restartIfChanged=false` 라 도는 전사를 끊지 않고, 다음 path 시작이 새
-  `ExecStart` 를 쓴다. 받기는 다음 요청에서 새 설정으로 돈다.
+- 배포(`switch-to-configuration`, nixpkgs 의 `switch-to-configuration-ng` 소스를 읽어 확인, 2026-11-09):
+  - 새 `stt-reader.socket` 은 처음 배포 때 띄워진다. 이미 도는 소켓 단위의 설정이 바뀌면 스위치는 그것을 다시 띄우지 않는다(소스의 빈 `FIXME`,
+    nixpkgs#74899). 소켓 설정(경로·모드·`MaxConnections` 등)을 바꾼 배포는 운영자가 `systemctl restart stt-reader.socket` 을 따로 한다. 그동안
+    들어온 요청은 실패지도대로 끝난다(워커 `engine_error`, 받기는 001 FR-032a 대로 응답 없이 치움).
+  - `stt-reader@.service` 템플릿이나 패키지가 바뀌면 도는 읽기는 끝까지 마치고(`restartIfChanged=false`), 받기·워커는 멈추지 않는다. 다음 읽기부터
+    새 템플릿이다. 워커는 `restartIfChanged=false` 라 도는 전사를 끊지 않고, 다음 path 시작이 새 `ExecStart` 를 쓴다. 받기는 다음 요청에서 새 설정으로 돈다.
+  - VM 시험이 읽기를 붙든 채 템플릿이 다른 구성으로 바꿔 이 동작(같은 워커 PID, 소켓 그대로, 작업이 `interrupted` 가 아님)을 확인한다.
 
 ## 4. 확인 명령 (인계 §6 과 회신)
 

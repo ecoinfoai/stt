@@ -154,7 +154,7 @@ specs/001-server-transcription/contracts/{module,cli,README}.md   # 바뀜: cont
 | R16 | 서버 경로의 해독기가 하나라 매달 갱신은 `av` 하나. 문서 ↔ 잠금 파일 시험 | 기술 메모 §6 의 `[VERIFY]` 를 설계로 풀었다 |
 
 남은 `[VERIFY]` 는 모두 VM·호스트에서만 확인할 수 있고, quickstart 의 단계에 들어 있다: B-P2-1(단위 파일의 `RestrictAddressFamilies=none`·
-`ProtectProc`·`ProcSubset`·`InaccessiblePaths`), B-P2-2(샌드박스 안의 소켓 접속), B-P2-4(인스턴스마다 다른 UID), C-P1-1(CUDA 쪽 호출),
+`ProtectProc`·`ProcSubset`·`InaccessiblePaths`), B-P2-2(샌드박스 안의 소켓 접속), B-P2-4(겹친 두 읽기가 서로의 프로세스를 보지 못함 — 동적 UID 는 인스턴스끼리 같다), C-P1-1(CUDA 쪽 호출),
 C-P1-2(워커의 쓰기·실행 메모리), C-P2-3(호스트의 해독 시간), C-P2-5(기준 녹음의 두 해독기 같음), C-P2-6(인스턴스 시작을 더한 접수 확인
 시간).
 
