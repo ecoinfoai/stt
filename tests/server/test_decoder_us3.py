@@ -37,6 +37,7 @@ from .conftest import (
     new_id,
     run_worker,
     run_worker_once,
+    write_delete_request,
 )
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, read_response, transcribe_body
 from .test_decoder_us2 import submit
@@ -113,9 +114,12 @@ def assert_failed(layout: Layout, request_id: str, expected: Failure) -> dict[st
     return response
 
 
-def assert_no_result(layout: Layout, request_id: str) -> None:
+def assert_no_result(layout: Layout, request_id: str, waiting: str | None = None) -> None:
+    """Asserts `request_id` left no result and no leftovers; the files of the job `waiting` still queued are allowed."""
     assert not (layout.outbox / request_id).exists()
-    assert leftovers_besides_recordings(layout.root) == []
+    assert [
+        path for path in leftovers_besides_recordings(layout.root) if waiting is None or waiting not in path.name
+    ] == []
 
 
 def test_decoder_us3_1_a_text_file_with_a_recording_extension_is_rejected_and_the_rest_of_the_bundle_is_queued(
@@ -225,7 +229,7 @@ def test_decoder_us3_3_to_6_a_failing_decode_fails_that_job_without_result_and_t
 
     assert reader_socket.spawn_count - spawned_before == 1
     assert_failed(layout, bad, UNREADABLE)
-    assert_no_result(layout, bad)
+    assert_no_result(layout, bad, waiting=good)
     assert capfd.readouterr().out.splitlines() == [f"{bad} running", f"{bad} failed unreadable_audio"]
 
     reader_socket.use_command(REAL_READER)
@@ -461,4 +465,32 @@ def test_decoder_edge_5_a_storage_error_while_writing_the_decoded_audio_fails_th
     assert reader_socket.spawn_count - spawned_before == 1
     assert_failed(layout, request_id, UNREADABLE)
     assert_no_result(layout, request_id)
-    assert list(layout.root.rglob("*.wav")) == []
+    assert [path for path in layout.root.rglob("*.wav") if layout.audio not in path.parents] == []
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "failed", "unavailable"])
+def test_decoder_edge_4_a_job_deleted_during_the_read_is_never_settled_as_a_failure_of_the_read(
+    layout: Layout,
+    tone: Path,
+    clock: FakeClock,
+    reader_socket: ReaderSocket,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    outcome: str,
+) -> None:
+    request_id = submit(layout, tone, clock)
+
+    def delete_then_report(*args: Any, **kwargs: Any) -> str:
+        write_delete_request(layout.inbox, request_id=new_id(), requested_by="professor-a", target=request_id)
+        intake.run_once(layout, clock.now)
+        return outcome
+
+    monkeypatch.setattr(worker, "_read", delete_then_report)
+
+    assert run_worker_once(layout, clock) is True
+
+    assert read_response(layout, request_id)["state"] == "deleted"
+    lines = capfd.readouterr().out.splitlines()
+    assert f"{request_id} stopped" in lines
+    assert not [line for line in lines if line.startswith(f"{request_id} failed")]
+    assert leftovers_besides_recordings(layout.root) == []

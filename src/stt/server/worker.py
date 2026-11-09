@@ -39,12 +39,18 @@ _AUDIO_FILE = "audio.wav"
 _SAMPLE_RATE_HZ = 16000
 _SAMPLE_WIDTH_BYTES = 2
 _RESULT_FILES = ("transcript.txt", "result.json")
-_ENGINE_REASONS = frozenset(
-    {"unreadable_audio", "gpu_out_of_memory", "gpu_unavailable", "models_unavailable", "engine_error"}
-)
+_ENGINE_REASONS = frozenset({"gpu_out_of_memory", "gpu_unavailable", "models_unavailable", "engine_error"})
 _MAX_DETAIL_CHARS = 500
 _NO_VERDICT = Failure("engine_error", "The engine stopped without a verdict.")
 _TIMEOUT = Failure("processing_timeout", "The job ran longer than its processing time limit.")
+_UNREADABLE = Failure("unreadable_audio", "The recording could not be read as audio.")
+_READER_NOT_STARTED = Failure("engine_error", "The server could not start the audio reader.")
+_READ_FAILURES: dict[str, Failure] = {
+    "unavailable": _READER_NOT_STARTED,
+    "failed": _UNREADABLE,
+    "timeout": _TIMEOUT,
+    "storage_error": _UNREADABLE,
+}
 _Ending = Literal["ended", "stopped", "timeout"]
 
 
@@ -277,17 +283,19 @@ def _run_job(
         limit_s = processing_limit(job.duration_s)
         began = time.monotonic()
         try:
-            outcome = _read(layout, job.request_id, recording, work_dir, reader, limit_s)
+            outcome: str = _read(layout, job.request_id, recording, work_dir, reader, limit_s)
         except OSError:
-            # A delete or the daily purge removes the recording and the work folder while the read is in flight.
-            if _is_running(layout, job.request_id):
-                raise
+            # No `as` name: the traceback would keep the frame, and with it the decoded buffer, alive.
+            outcome = "storage_error"
+        if outcome not in ("ok", "stopped") and not _is_running(layout, job.request_id):
+            # A delete or the daily purge took the job (and removed its files) while the read was in flight.
             outcome = "stopped"
         if outcome == "stopped":
             _log(job.request_id, "stopped")
             return
         if outcome != "ok":
-            raise NotImplementedError(f"reader outcome {outcome} is not mapped to a failure yet")
+            _settle(layout, job, work_dir, _READ_FAILURES[outcome], now)
+            return
         remaining_s = limit_s - (time.monotonic() - began)
         if remaining_s <= 0:
             _settle(layout, job, work_dir, _TIMEOUT, now)
