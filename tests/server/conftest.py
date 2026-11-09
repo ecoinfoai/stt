@@ -141,6 +141,19 @@ def encode_tone(path: Path, container: str, codec: str, rate: int = 16000, secon
     return path
 
 
+def av_major() -> int:
+    """Returns the major version of the installed PyAV."""
+    import av
+
+    return int(av.__version__.split(".")[0])
+
+
+def wav_samples(path: Path) -> bytes:
+    """Returns the 16-bit little-endian sample bytes stored in a WAV file."""
+    with wave.open(str(path), "rb") as handle:
+        return handle.readframes(handle.getnframes())
+
+
 def new_id() -> str:
     """Returns a new lowercase UUID string."""
     return str(uuid.uuid4())

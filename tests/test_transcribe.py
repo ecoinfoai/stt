@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from audio_files import write_silent_wav
 from stt.transcribe import (
     HOTWORD_TOKEN_LIMIT,
     TermsReport,
@@ -719,7 +720,7 @@ def _fake_model_with(segments):
 
 def test_transcribe_file_allow_empty(tmp_path):
     """allow_empty=True returns an empty list; the default still raises."""
-    media = tmp_path / "silent.m4a"
+    media = write_silent_wav(tmp_path / "silent.m4a")
     model = _fake_model_with([])
 
     segments, duration, language = transcribe.transcribe_file(
@@ -761,7 +762,7 @@ def test_transcribe_samples_passes_the_same_settings_as_transcribe_file(tmp_path
     by_samples = _RecordingModel(segments)
 
     file_result = transcribe.transcribe_file(
-        by_file, tmp_path / "a.m4a", "ko", "hint one, hint two", 7,
+        by_file, write_silent_wav(tmp_path / "a.m4a"), "ko", "hint one, hint two", 7,
         word_timestamps=True,
     )
     samples_result = transcribe.transcribe_samples(
@@ -772,7 +773,8 @@ def test_transcribe_samples_passes_the_same_settings_as_transcribe_file(tmp_path
     assert samples_result == file_result
     file_call, samples_call = by_file.calls[0], by_samples.calls[0]
     assert samples_call.pop("audio") is samples
-    assert isinstance(file_call.pop("audio"), str)
+    decoded = file_call.pop("audio")
+    assert decoded.dtype.name == "float32" and decoded.ndim == 1
     assert samples_call == file_call
     assert samples_call["beam_size"] == 7
     assert samples_call["vad_filter"] is True

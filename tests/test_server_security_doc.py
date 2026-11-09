@@ -269,10 +269,10 @@ def _since_date(cell: str) -> date:
 
 
 def _locked_av_versions(lock_text: str) -> dict[str, str]:
-    """Maps "3.10" / "3.12" to the av version locked for that interpreter.
+    """Maps "3.10" / "3.11" / "3.12" to the av version locked for that interpreter.
 
-    The two `av` packages are told apart by their resolution markers, not by order: only the
-    older entry is restricted to Python below 3.11.
+    The `av` packages are told apart by their resolution markers, not by order or by the
+    absence of another marker: each entry names the interpreter series it serves.
     """
     versions: dict[str, str] = {}
     for block in lock_text.split("[[package]]")[1:]:
@@ -280,7 +280,14 @@ def _locked_av_versions(lock_text: str) -> dict[str, str]:
             continue
         version = re.search(r'(?m)^version = "([^"]+)"$', block)
         assert version, "uv.lock av entry has no version"
-        interpreter = "3.10" if "python_full_version < '3.11'" in block else "3.12"
+        markers = {
+            "3.10": "python_full_version < '3.11'",
+            "3.11": "python_full_version == '3.11.*'",
+            "3.12": "python_full_version == '3.12.*'",
+        }
+        served = [name for name, marker in markers.items() if marker in block]
+        assert len(served) == 1, f"av {version.group(1)} serves {served}"
+        interpreter = served[0]
         assert interpreter not in versions, f"two av entries for Python {interpreter}"
         versions[interpreter] = version.group(1)
     return versions
@@ -334,9 +341,9 @@ def version_rows() -> list[dict[str, str]]:
     return rows
 
 
-def test_av_versions_match_uv_lock_for_both_interpreters(version_rows):
+def test_av_versions_match_uv_lock_for_every_interpreter_series(version_rows):
     locked = _locked_av_versions(UV_LOCK.read_text())
-    assert set(locked) == {"3.10", "3.12"}, locked
+    assert set(locked) == {"3.10", "3.11", "3.12"}, locked
     documented = {
         found.group(1): row["version"]
         for row in version_rows

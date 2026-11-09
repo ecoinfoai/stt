@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from audio_files import write_silent_wav
 from stt import transcribe
 
 
@@ -53,10 +54,8 @@ def one_cuda_device(monkeypatch) -> None:
 
 @pytest.fixture()
 def media(tmp_path) -> Path:
-    """빈 내용의 가짜 미디어 파일(확장자만 유효)."""
-    f = tmp_path / "강연.m4a"
-    f.touch()
-    return f
+    """A half-second silent WAV named .m4a; FFmpeg recognises the content, not the name."""
+    return write_silent_wav(tmp_path / "강연.m4a")
 
 
 def test_main_writes_txt_with_header(tmp_path, media, monkeypatch):
@@ -70,6 +69,19 @@ def test_main_writes_txt_with_header(tmp_path, media, monkeypatch):
     assert out.startswith("# 원본: 강연.m4a")
     assert "[00:00] 첫 문장입니다. 이어지는 문장." in out
     assert "[00:10] 새 문단입니다." in out
+
+
+def test_main_gives_the_model_decoded_samples_not_a_path(media, monkeypatch):
+    import numpy as np
+
+    fake = FakeModel()
+    monkeypatch.setattr(transcribe, "load_model", lambda name, device: fake)
+
+    assert transcribe.main([str(media), "--device", "cuda"]) == 0
+
+    audio = fake.calls[0]["audio"]
+    assert isinstance(audio, np.ndarray)
+    assert audio.dtype == np.float32 and audio.shape == (8000,)
 
 
 def test_main_passes_terms_as_hotwords(tmp_path, media, monkeypatch):

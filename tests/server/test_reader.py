@@ -23,7 +23,7 @@ import pytest
 
 from stt.server import reader
 
-from .conftest import EmulatedReaderSocket, encode_tone, make_wav
+from .conftest import EmulatedReaderSocket, av_major, encode_tone, make_wav, wav_samples
 
 HARNESS = Path(__file__).with_name("reader_harness.py")
 FAKE_CHILD = Path(__file__).with_name("fake_decode_child.py")
@@ -813,8 +813,14 @@ def test_a_format_outside_the_list_fails_even_with_a_listed_extension(
     assert outcome.output == b""
 
 
+FASTER_WHISPER_DECODER_MAX_AV_MAJOR = 18
+
+
 def reference_int16_bytes(path: Path) -> bytes:
     """Returns faster-whisper's decoded samples as 16-bit little-endian bytes.
+
+    Only runs where the installed PyAV is one faster-whisper's ``decode_audio``
+    works with (it passes ``metadata_errors``, which PyAV 19 removed).
 
     ``decode_audio`` resamples to 16 kHz mono ``s16`` and then divides by 32768 in
     float32. That division is exact, so scaling back is lossless and the integers
@@ -827,6 +833,19 @@ def reference_int16_bytes(path: Path) -> bytes:
     samples = scaled.astype("<i2")
     assert np.array_equal(samples.astype(np.float32), scaled)
     return bytes(samples.tobytes())
+
+
+def assert_is_the_two_second_tone(output: bytes) -> None:
+    """Checks decoded s16 bytes of a lossy-coded two-second 440 Hz tone at 0.3 full scale.
+
+    Lossy codecs add or drop priming samples, so only the length (within 0.15 s) and the
+    level are asserted; the exact comparison is made against faster-whisper where it runs.
+    """
+    import numpy as np
+
+    samples = np.frombuffer(output, dtype="<i2")
+    assert abs(len(samples) - 2 * reader.SAMPLE_RATE) <= 2400
+    assert 0.25 * 32768 < int(np.abs(samples).max()) < 0.35 * 32768
 
 
 def tone_wav(path: Path) -> Path:
@@ -847,7 +866,10 @@ def test_decode_output_equals_faster_whisper_int16_for_each_format(
 
     assert outcome.messages == [{"started": True}, {"status": "ok"}]
     assert len(outcome.output) > 0
-    assert outcome.output == reference_int16_bytes(recording)
+    if av_major() <= FASTER_WHISPER_DECODER_MAX_AV_MAJOR:
+        assert outcome.output == reference_int16_bytes(recording)
+    else:
+        assert_is_the_two_second_tone(outcome.output)
 
 
 @pytest.mark.parametrize("make", [tone_wav, silent_wav], ids=["wav-tone", "wav-silence"])
@@ -859,7 +881,9 @@ def test_decode_output_equals_faster_whisper_int16_for_wav(
     outcome = read_recording(emulated_reader_socket, descriptors, recording, "decode")
 
     assert outcome.messages == [{"started": True}, {"status": "ok"}]
-    assert outcome.output == reference_int16_bytes(recording)
+    assert outcome.output == wav_samples(recording)
+    if av_major() <= FASTER_WHISPER_DECODER_MAX_AV_MAJOR:
+        assert outcome.output == reference_int16_bytes(recording)
 
 
 def test_the_child_reads_through_the_descriptor_and_its_command_line_holds_no_path(

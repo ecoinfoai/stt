@@ -11,6 +11,7 @@ from typing import Any, Iterator
 
 import pytest
 
+from audio_files import write_silent_wav
 from stt import batch, diarize, enroll, gpu_lock, transcribe
 from test_cli_integration import FakeModel
 
@@ -68,9 +69,7 @@ def holder(lock_file: Path) -> Iterator[Holder]:
 
 @pytest.fixture
 def media(tmp_path: Path) -> Path:
-    path = tmp_path / "talk.m4a"
-    path.touch()
-    return path
+    return write_silent_wav(tmp_path / "talk.m4a")
 
 
 class LoadRecorder:
