@@ -98,9 +98,9 @@ def put_request(layout: Layout, recording: Path, mtime: float) -> str:
     return request_id
 
 
-def recording_folders(layout: Layout) -> list[str]:
-    """Lists the ids that have a recording folder; the audio records beside them are not folders."""
-    return sorted(path.name for path in layout.audio.iterdir() if path.is_dir())
+def assert_audio_holds_only(layout: Layout, request_id: str) -> None:
+    """Asserts ``audio/`` holds the recording folder and the audio record of `request_id` and nothing else."""
+    assert sorted(path.name for path in layout.audio.iterdir()) == sorted([request_id, f"{request_id}.json"])
 
 
 def assert_failed(layout: Layout, request_id: str, expected: Failure) -> dict[str, Any]:
@@ -126,7 +126,7 @@ def test_decoder_us3_1_a_text_file_with_a_recording_extension_is_rejected_and_th
     assert_failed(layout, bad, UNREADABLE)
     assert read_response(layout, good)["state"] == "queued"
     assert not (layout.jobs / bad).exists()
-    assert recording_folders(layout) == [good]
+    assert_audio_holds_only(layout, good)
     assert inbox_names(layout) == []
     assert reader_socket.spawn_count == 2
 
@@ -158,7 +158,7 @@ def test_decoder_us3_2_a_length_probe_that_fails_after_start_rejects_only_that_r
 
     assert_failed(layout, bad, UNREADABLE)
     assert not (layout.jobs / bad).exists()
-    assert recording_folders(layout) == [good]
+    assert_audio_holds_only(layout, good)
     assert inbox_names(layout) == []
     assert read_response(layout, good)["state"] == "queued"
     assert reader_socket.spawn_count == 2
@@ -228,7 +228,7 @@ def test_decoder_us3_3_to_6_a_failing_decode_fails_that_job_without_result_and_t
 
     reader_socket.use_command(REAL_READER)
     reader_socket.use_limits(decode_limit_s=reader.DECODE_LIMIT_S)
-    monkeypatch.undo()
+    monkeypatch.setattr(reader_client, "MAX_DECODED_BYTES", reader.MAX_DECODED_BYTES)
 
     assert run_worker_once(layout, clock) is True
 
@@ -308,8 +308,7 @@ def test_decoder_us3_8_the_worker_fails_engine_error_when_the_reader_cannot_be_s
 
     assert run_worker_once(layout, clock) is True
 
-    if how != "missing_socket":
-        assert reader_socket.spawn_count - spawned_before == 1
+    assert reader_socket.spawn_count - spawned_before == (0 if how == "missing_socket" else 1)
     assert_failed(layout, request_id, NOT_STARTED)
     assert_no_result(layout, request_id)
     assert capfd.readouterr().out.splitlines() == [f"{request_id} running", f"{request_id} failed engine_error"]
@@ -355,7 +354,8 @@ def test_decoder_us3_9_the_decoders_own_error_text_reaches_no_response_and_no_lo
 
     assert_failed(layout, refused, UNREADABLE)
     assert_failed(layout, accepted, UNREADABLE)
-    seen = capfd.readouterr().out
+    captured = capfd.readouterr()
+    seen = captured.out + captured.err
     documents = [(layout.outbox / f"{request_id}.json").read_text(encoding="utf-8") for request_id in (refused, accepted)]
     assert RAW_DECODER_TEXT not in seen
     assert all(RAW_DECODER_TEXT not in document for document in documents)
