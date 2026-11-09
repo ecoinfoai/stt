@@ -15,7 +15,9 @@ from typing import Any
 
 import pytest
 
-from .conftest import EmulatedReaderSocket, ReceivedFd, fake_reader_cmd
+from .conftest import EmulatedReaderSocket, ReaderSocket, ReceivedFd, fake_reader_cmd, make_wav
+
+FAKE_DECODE_CHILD = Path(__file__).with_name("fake_decode_child.py")
 
 Factory = Callable[..., EmulatedReaderSocket]
 
@@ -158,3 +160,46 @@ def test_a_spawn_failure_is_reported_instead_of_killing_the_accept_thread(emulat
             reader.wait_for_exits(1, timeout_s=2)
     with pytest.raises(AssertionError, match="failed to serve"):
         reader.close()
+
+
+def test_reader_socket_runs_the_real_supervisor_by_default(reader_socket: ReaderSocket, tmp_path: Path) -> None:
+    from stt.server import reader_client
+
+    recording = make_wav(tmp_path / "tone.wav", 2.0, silent=False)
+
+    result = reader_client.probe(reader_socket.config, recording)
+
+    reader_socket.wait_for_exits(1)
+    assert result.outcome == "ok"
+    assert result.duration_s == pytest.approx(2.0, abs=0.05)
+    assert reader_socket.spawn_count == 1
+    assert reader_socket.fd_counts() == [1]
+    assert reader_socket.config.socket_path == str(reader_socket.path)
+
+
+def test_reader_socket_use_fake_changes_the_program_for_later_connections(
+    reader_socket: ReaderSocket, tmp_path: Path
+) -> None:
+    from stt.server import reader_client
+
+    recording = make_wav(tmp_path / "tone.wav", 1.0)
+    reader_socket.use_fake("not-started")
+
+    result = reader_client.probe(reader_socket.config, recording)
+
+    reader_socket.wait_for_exits(1)
+    assert result.outcome == "unavailable"
+
+
+def test_reader_socket_use_supervisor_injects_a_decode_child_double(
+    reader_socket: ReaderSocket, tmp_path: Path
+) -> None:
+    from stt.server import reader_client
+
+    recording = make_wav(tmp_path / "tone.wav", 1.0)
+    reader_socket.use_supervisor([sys.executable, str(FAKE_DECODE_CHILD), "--mode", "exit-error"])
+
+    result = reader_client.probe(reader_socket.config, recording)
+
+    reader_socket.wait_for_exits(1)
+    assert result.outcome == "failed"

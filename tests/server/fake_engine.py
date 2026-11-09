@@ -8,6 +8,9 @@ Modes:
     sleep=<seconds>: write ``out/partial.txt``, sleep, then behave like ``done``.
     die: exit with code 1 without any verdict.
 
+With ``--record FILE`` it also appends one JSON line with its timing, environment, the spec it was given and what
+it found in the work folder at start (file modes and the ``audio.wav`` header), for tests to inspect.
+
 Whatever the mode, the engine prints the spec hints and its transcript line to
 stdout and stderr, so a worker that lets engine output reach its own logs fails
 the logging tests. Only the standard library is imported to keep start-up fast.
@@ -18,8 +21,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import sys
 import time
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +74,20 @@ def _make_noise(spec: dict[str, Any]) -> None:
         print(TRANSCRIPT_LINE, spec["hints"], file=stream, flush=True)
 
 
+def _inspect_work_dir(work_dir: Path) -> dict[str, Any]:
+    """Describes what the engine finds in its work folder: file modes and, for ``audio.wav``, its header."""
+    files = {entry.name: stat.S_IMODE(entry.stat().st_mode) for entry in work_dir.iterdir()}
+    header = None
+    if (work_dir / "audio.wav").is_file():
+        with wave.open(str(work_dir / "audio.wav"), "rb") as handle:
+            header = {
+                "channels": handle.getnchannels(),
+                "sample_width": handle.getsampwidth(),
+                "frame_rate": handle.getframerate(),
+            }
+    return {"work_files": files, "wav": header}
+
+
 def main(argv: list[str]) -> int:
     """Runs the fake engine; returns its exit code."""
     parser = argparse.ArgumentParser()
@@ -80,6 +99,7 @@ def main(argv: list[str]) -> int:
     started = time.monotonic()
     spec = json.loads((work_dir / "spec.json").read_text(encoding="utf-8"))
     _make_noise(spec)
+    inspected = _inspect_work_dir(work_dir) if args.record is not None else {}
 
     code = 0
     mode: str = args.mode
@@ -100,7 +120,13 @@ def main(argv: list[str]) -> int:
         raise SystemExit(f"unknown mode: {mode}")
 
     if args.record is not None:
-        line = {"start": started, "end": time.monotonic(), "env": {key: os.environ.get(key) for key in _ENV_KEYS}}
+        line = {
+            "start": started,
+            "end": time.monotonic(),
+            "env": {key: os.environ.get(key) for key in _ENV_KEYS},
+            "spec": spec,
+            **inspected,
+        }
         with args.record.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(line) + "\n")
     return code

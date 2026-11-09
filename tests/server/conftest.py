@@ -32,6 +32,7 @@ import pytest
 
 FAKE_ENGINE = Path(__file__).with_name("fake_engine.py")
 FAKE_READER = Path(__file__).with_name("fake_reader.py")
+READER_HARNESS = Path(__file__).with_name("reader_harness.py")
 MESSAGE_LIMIT = 4096
 MAX_PEEKED_FDS = 16
 _TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -504,8 +505,10 @@ class EmulatedReaderSocket:
             with connection:
                 try:
                     peeked = self._peek(connection)
+                    with self._lock:
+                        cmd = list(self._cmd)
                     proc = subprocess.Popen(
-                        self._cmd,
+                        cmd,
                         stdin=connection,
                         stdout=subprocess.DEVNULL,
                         start_new_session=True,
@@ -520,6 +523,15 @@ class EmulatedReaderSocket:
     def _raise_serve_error(self) -> None:
         if self._error is not None:
             raise AssertionError("emulated reader socket failed to serve a connection") from self._error
+
+    def set_command(self, cmd: list[str]) -> None:
+        """Makes every connection accepted from now on run `cmd`.
+
+        Args:
+            cmd: Argument list of the program to start per connection.
+        """
+        with self._lock:
+            self._cmd = list(cmd)
 
     @property
     def spawn_count(self) -> int:
@@ -636,3 +648,79 @@ def emulated_reader_socket() -> Iterator[Callable[..., EmulatedReaderSocket]]:
             errors.append(str(exc))
     if errors:
         raise AssertionError("; ".join(errors))
+
+
+class ReaderSocket:
+    """An emulated reader socket that, unless told otherwise, runs the real supervisor.
+
+    Every connection starts ``python -m stt server read`` with the connection as
+    standard input, as systemd does for ``stt-reader@.service``. A test that needs
+    another reader chooses the command *before* running a stage with one of the
+    ``use_*`` methods; the choice applies to the connections accepted afterwards.
+
+    Attributes:
+        config: A ``reader_client.ReaderConfig`` for this socket's path, to hand to the
+            code under test.
+    """
+
+    def __init__(self, emulated: EmulatedReaderSocket, config: Any) -> None:
+        self._emulated = emulated
+        self.config = config
+
+    @property
+    def path(self) -> Path:
+        """Returns the socket path."""
+        return self._emulated.path
+
+    @property
+    def spawn_count(self) -> int:
+        """Returns how many reader processes have been started."""
+        return self._emulated.spawn_count
+
+    def received(self) -> list[tuple[ReceivedFd, ...] | None]:
+        """Returns, per started process, the descriptors its request carried."""
+        return self._emulated.received()
+
+    def fd_counts(self) -> list[int | None]:
+        """Returns, per started process, how many descriptors its request carried."""
+        return self._emulated.fd_counts()
+
+    def wait_for_exits(self, count: int, timeout_s: float = 5.0) -> None:
+        """Waits until `count` processes were started and their process groups are empty.
+
+        Raises:
+            AssertionError: If that state is not reached in time.
+        """
+        self._emulated.wait_for_exits(count, timeout_s)
+
+    def use_command(self, cmd: list[str]) -> None:
+        """Runs `cmd` instead of the real supervisor for the connections accepted from now on."""
+        self._emulated.set_command(cmd)
+
+    def use_fake(self, mode: str) -> None:
+        """Runs ``fake_reader.py`` in `mode` (``no-start``, ``not-started`` or ``no-verdict``)."""
+        self._emulated.set_command(fake_reader_cmd(mode))
+
+    def use_supervisor(self, child_command: list[str]) -> None:
+        """Runs the real supervisor with a decode-child double.
+
+        Args:
+            child_command: The child command without the operation and descriptors, which the
+                supervisor appends, e.g. ``[sys.executable, str(FAKE_DECODE_CHILD), "--mode", "hang"]``.
+        """
+        self._emulated.set_command(
+            [sys.executable, str(READER_HARNESS), "--child-cmd", json.dumps(child_command)]
+        )
+
+
+@pytest.fixture
+def reader_socket(emulated_reader_socket: Callable[..., EmulatedReaderSocket]) -> ReaderSocket:
+    """Starts an emulated reader socket whose default spawn command is the real supervisor.
+
+    Not autouse: a test asks for it. Its ``config`` is for the caller under test, and
+    ``use_command``, ``use_fake`` and ``use_supervisor`` swap the spawned program.
+    """
+    from stt.server.reader_client import ReaderConfig
+
+    emulated = emulated_reader_socket([sys.executable, "-m", "stt", "server", "read"])
+    return ReaderSocket(emulated, ReaderConfig(socket_path=str(emulated.path), poll_s=0.05))
