@@ -241,7 +241,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 - [X] T028 [US2] `src/stt/server/engine.py`: `work_dir/audio.wav` 만 읽고 머리(1채널·2바이트·16 kHz)가 다르면 `engine_error`. 전사는 int16 →
   float32 / 32768.0 으로 T024 의 샘플 함수에, 화자 구분은 T024 의 WAV 함수에 넘긴다. `classify_error` 와 `_DETAILS` 에서 `unreadable_audio`
   를 지운다. RED → GREEN: turns T019(a)(f), T022 의 엔진 쪽 GREEN. closes US2-5, US3-7, SC-003, supports FR-010
-- [ ] T029 [US4] 전체 시험: `captest 4G 20m uv run python -m pytest -q` 가 모두 통과한다(`tests/` 전체, 기존 시험 포함). 찍힌 최대 메모리를 커밋 메시지에 적는다.
+- [X] T029 [US4] 전체 시험: `captest 4G 20m uv run python -m pytest -q` 가 모두 통과한다(`tests/` 전체, 기존 시험 포함). 찍힌 최대 메모리를 커밋 메시지에 적는다.
   RED 해당 없음 — 확인. supports SC-007, US4-7
 
 **Checkpoint**: 서버 경로의 모든 녹음 읽기가 읽기 프로토콜을 지나고, pytest 가 US2·US3·US4 의 pytest 몫을 모두 닫는다.
