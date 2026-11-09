@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Callable
 
-from stt.server import contract, deadlines, lifecycle, reader
+from stt.server import contract, deadlines, lifecycle, reader_client
 from stt.server.layout import (
     Layout,
     UnsafeFileError,
@@ -26,6 +26,7 @@ from stt.server.layout import (
     read_request_bytes,
     remove_tree,
 )
+from stt.server.reader_client import ReaderConfig
 from stt.server.records import (
     Audio,
     Job,
@@ -65,48 +66,15 @@ _AUDIO_TOO_LONG_DETAIL = "The recording is longer than 3 hours."
 
 
 class UnreadableAudioError(Exception):
-    """The recording cannot be opened, has no audio stream or cannot be demuxed."""
+    """The reader started on the recording and could not measure it."""
+
+
+class ReaderUnavailableError(Exception):
+    """The reader could not be started; the recording was not judged."""
 
 
 class AudioTooLongError(Exception):
     """The recording is longer than ``deadlines.MAX_AUDIO_S``."""
-
-
-def probe_duration(path: Path) -> float:
-    """Returns the length of a recording in seconds.
-
-    Only the formats in ``reader.AUDIO_FORMATS`` are opened; FFmpeg refuses any other
-    before it reads past the format probe. Uses the container duration; when
-    the container has none, sums the audio packet durations without decoding.
-
-    Args:
-        path: The recording.
-
-    Returns:
-        Duration in seconds.
-
-    Raises:
-        UnreadableAudioError: If the file is not in a listed format, cannot be opened, has no audio stream or
-            fails to demux or parse.
-    """
-    import av
-
-    try:
-        with av.open(
-            str(path), metadata_errors="ignore", container_options={"format_whitelist": reader.AUDIO_FORMATS}
-        ) as container:
-            if not container.streams.audio:
-                raise UnreadableAudioError
-            if container.duration is not None:
-                return float(container.duration) / av.time_base
-            stream = container.streams.audio[0]
-            return sum(
-                float(packet.duration * stream.time_base)
-                for packet in container.demux(stream)
-                if packet.duration is not None
-            )
-    except (av.error.FFmpegError, ValueError, TypeError, ArithmeticError):
-        raise UnreadableAudioError from None
 
 
 def _log(request_id: str, state: str) -> None:
@@ -230,15 +198,33 @@ def _copy_attachment(source: BinaryIO, folder: Path, extension: str) -> Path:
     return target
 
 
-def _copy_and_probe(source: BinaryIO, folder: Path, extension: str) -> float:
+def _measure(reader: ReaderConfig, recording: Path) -> float:
+    """Returns the length of `recording` in seconds, measured by the reader.
+
+    Raises:
+        UnreadableAudioError: If the reader started and could not measure the recording.
+        ReaderUnavailableError: If the reader could not be started.
+        OSError: If the recording cannot be opened; nothing was sent to the reader.
+    """
+    result = reader_client.probe(reader, recording)
+    if result.outcome == "unavailable":
+        raise ReaderUnavailableError
+    if result.duration_s is None:
+        raise UnreadableAudioError
+    return result.duration_s
+
+
+def _copy_and_probe(source: BinaryIO, folder: Path, extension: str, reader: ReaderConfig) -> float:
     """Copies the attachment into `folder` and returns its length; on any failure `folder` is removed.
 
     Raises:
-        UnreadableAudioError: If the copy is not readable audio.
+        UnreadableAudioError: If the reader could not measure the copy.
         AudioTooLongError: If the copy is longer than ``deadlines.MAX_AUDIO_S``.
+        ReaderUnavailableError: If the reader could not be started.
+        OSError: If the copy cannot be written or opened.
     """
     try:
-        duration_s = probe_duration(_copy_attachment(source, folder, extension))
+        duration_s = _measure(reader, _copy_attachment(source, folder, extension))
         if duration_s > deadlines.MAX_AUDIO_S:
             raise AudioTooLongError
         return duration_s
@@ -247,11 +233,11 @@ def _copy_and_probe(source: BinaryIO, folder: Path, extension: str) -> float:
         raise
 
 
-def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetime) -> None:
+def _accept(layout: Layout, body: dict[str, Any], source: BinaryIO, now: datetime, reader: ReaderConfig) -> None:
     request_id: str = body["request_id"]
     attachment_name: str = body["audio"]["file"]
     try:
-        duration_s = _copy_and_probe(source, layout.audio / request_id, attachment_name.rsplit(".", 1)[1])
+        duration_s = _copy_and_probe(source, layout.audio / request_id, attachment_name.rsplit(".", 1)[1], reader)
     except UnreadableAudioError:
         _fail(layout, request_id, "unreadable_audio", _UNREADABLE_AUDIO_DETAIL, now)
         return
@@ -346,7 +332,9 @@ def _process_from_request(layout: Layout, request_id: str, body: dict[str, Any],
     _fail(layout, request_id, "source_unavailable", _SOURCE_UNAVAILABLE_DETAIL, now)
 
 
-def _process_transcribe(layout: Layout, request_id: str, body: dict[str, Any], now: datetime) -> None:
+def _process_transcribe(
+    layout: Layout, request_id: str, body: dict[str, Any], now: datetime, reader: ReaderConfig
+) -> None:
     audio = body["audio"]
     if "file" not in audio:
         _process_from_request(layout, request_id, body, now)
@@ -363,10 +351,10 @@ def _process_transcribe(layout: Layout, request_id: str, body: dict[str, Any], n
         if not contract.language_supported(body["language"]):
             _reject(layout, request_id, _LANGUAGE_DETAIL, now)
             return
-        _accept(layout, body, source, now)
+        _accept(layout, body, source, now, reader)
 
 
-def _process(layout: Layout, path: Path, now: Callable[[], datetime]) -> None:
+def _process(layout: Layout, path: Path, now: Callable[[], datetime], reader: ReaderConfig) -> None:
     if not is_request_name(path.name):
         print(_NOT_A_REQUEST_LOG, flush=True)
         return
@@ -399,20 +387,22 @@ def _process(layout: Layout, path: Path, now: Callable[[], datetime]) -> None:
     if body["kind"] == "delete":
         _process_delete(layout, request_id, body, moment)
         return
-    _process_transcribe(layout, request_id, body, moment)
+    _process_transcribe(layout, request_id, body, moment, reader)
 
 
-def run_once(layout: Layout, now: Callable[[], datetime]) -> int:
+def run_once(layout: Layout, now: Callable[[], datetime], reader: ReaderConfig) -> int:
     """Processes every ``*.json`` in the inbox and removes each one it saw.
 
     Files (and directories) named ``*.json`` are taken in (mtime, name) order. A request that cannot be used is
     answered and its attachment (named by the request file's own name) removed. A request whose processing
     raises is logged with its id and the error's name, gets no answer, and is removed like any other, so one
-    bad request never holds up the ones behind it.
+    bad request never holds up the ones behind it. A request whose recording the reader cannot be asked about
+    (the reader is not available) is one of those: it is logged and dropped, with no answer.
 
     Args:
         layout: The state root.
         now: Clock returning the current UTC time.
+        reader: Where the reader is and how long to wait for it.
 
     Returns:
         The number of failures (a request that raised, a request that left an entry behind); 0 if none.
@@ -421,7 +411,7 @@ def run_once(layout: Layout, now: Callable[[], datetime]) -> int:
     for path in _pending(layout):
         stem = path.name[: -len(_REQUEST_SUFFIX)]
         try:
-            _process(layout, path, now)
+            _process(layout, path, now, reader)
         except Exception as error:
             failures += 1
             label = stem if is_request_name(path.name) else "inbox entry"

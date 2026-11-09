@@ -234,7 +234,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 - [X] T026 [US3] `src/stt/server/worker.py`: data-model §5 의 처리 열 — `unavailable` → `engine_error`(고정 문장), `failed` → `unreadable_audio`,
   `timeout` → `processing_timeout`, `stopped` → 로그만. 엔진에서 받는 이유에서 `unreadable_audio` 를 빼고, 엔진이 그 이유를 내면 판정 없음으로
   보아 `engine_error`. RED → GREEN: turns T020(c)~(i) GREEN. closes US3-3~9, 경계 사례 4·5
-- [ ] T027 [US3] `src/stt/server/intake.py`: 길이 재기를 `reader_client.probe()` 로 바꾸고 `probe_duration` 을 지운다(`_AUDIO_FORMATS` 는 T016 에서
+- [X] T027 [US3] `src/stt/server/intake.py`: 길이 재기를 `reader_client.probe()` 로 바꾸고 `probe_duration` 을 지운다(`_AUDIO_FORMATS` 는 T016 에서
   옮김). `failed` → `unreadable_audio`(지금 문장), `unavailable` → 예외를 올려 001 FR-032a 의 요청별 처리로. `run_once` 가 `ReaderConfig` 를 받고,
   같은 커밋에서 `tests/server/conftest.py` 의 받기 도우미가 흉내 소켓의 `ReaderConfig` 를 저절로 넘기게 한다. 받기는 PyAV 를 불러오지 않는다.
   RED → GREEN: turns T019(c)(e), T020(a)(b)(f), T022 의 받기 쪽 GREEN. closes US2-8, US3-1, US3-2, US3-8(받기)

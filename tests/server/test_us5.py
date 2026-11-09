@@ -214,23 +214,9 @@ def test_us5_10_recording_outside_the_format_list_refused(layout: Layout, tmp_pa
 
 
 def test_us5_2_recording_without_audio_stream_refused(
-    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch
+    layout: Layout, wav: Path, reader_socket: ReaderSocket
 ) -> None:
-    import av
-
-    class NoAudio:
-        duration = 5 * av.time_base
-
-        class streams:
-            audio: list[object] = []
-
-        def __enter__(self) -> "NoAudio":
-            return self
-
-        def __exit__(self, *exc: object) -> None:
-            return None
-
-    monkeypatch.setattr(av, "open", lambda path, **kwargs: NoAudio())
+    reader_socket.use_supervisor(child_command("--mode", "exit-error"))
     request_id = _submit_wav(layout, wav, FakeClock())
 
     response = read_response(layout, request_id)
@@ -300,30 +286,17 @@ def test_us5_2_non_utf8_metadata_does_not_make_the_recording_unreadable(layout: 
     assert load_job(layout, request_id).duration_s == pytest.approx(1.0, abs=0.01)
 
 
-@pytest.mark.parametrize("fault", ["value_error", "type_error"])
+PROBE_FAULTS = {
+    "value_error": child_command("--mode", "exit-error"),
+    "type_error": child_command("--mode", "write-raw", "--payload", json.dumps({"duration_s": "5"})),
+}
+
+
+@pytest.mark.parametrize("fault", PROBE_FAULTS)
 def test_us5_2_probe_faults_in_the_recording_are_unreadable_not_server_errors(
-    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+    layout: Layout, wav: Path, reader_socket: ReaderSocket, fault: str
 ) -> None:
-    import av
-
-    class Broken:
-        duration = None
-
-        class streams:
-            audio = [type("Stream", (), {"time_base": None})()]
-
-        def demux(self, stream: object) -> Any:
-            return [type("Packet", (), {"duration": 5})()]
-
-        def __enter__(self) -> "Broken":
-            if fault == "value_error":
-                raise UnicodeDecodeError("utf-8", b"\xb0", 0, 1, "invalid start byte")
-            return self
-
-        def __exit__(self, *exc: object) -> None:
-            return None
-
-    monkeypatch.setattr(av, "open", lambda path, **kwargs: Broken())
+    reader_socket.use_supervisor(PROBE_FAULTS[fault])
     request_id = _submit_wav(layout, wav, FakeClock())
 
     response = read_response(layout, request_id)
@@ -332,10 +305,9 @@ def test_us5_2_probe_faults_in_the_recording_are_unreadable_not_server_errors(
 
 
 def test_us5_2_request_queued_behind_a_bad_attachment_is_still_answered(
-    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch
+    layout: Layout, wav: Path, reader_socket: ReaderSocket, tmp_path: Path
 ) -> None:
-    import av
-
+    reader_socket.use_supervisor([*child_command("--mode", "exit-error"), "--once", str(tmp_path / "first.claimed")])
     clock = FakeClock()
     bad_id = new_id()
     put_attachment(layout.inbox, f"{bad_id}.audio.wav", wav)
@@ -344,14 +316,6 @@ def test_us5_2_request_queued_behind_a_bad_attachment_is_still_answered(
     good_id = new_id()
     put_attachment(layout.inbox, f"{good_id}.audio.wav", wav)
     put_body(layout.inbox, f"{good_id}.json", transcribe_body(good_id))
-    real_open = av.open
-
-    def open_or_fail(path: str, **kwargs: Any) -> Any:
-        if bad_id in path:
-            raise UnicodeDecodeError("utf-8", b"\xb0", 0, 1, "invalid start byte")
-        return real_open(path, **kwargs)
-
-    monkeypatch.setattr(av, "open", open_or_fail)
 
     intake.run_once(layout, clock.now)
 

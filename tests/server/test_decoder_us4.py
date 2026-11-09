@@ -225,9 +225,9 @@ def test_decoder_us4_5_the_daily_purge_while_a_decode_is_held_stops_the_reader_a
         reader_socket.wait_for_exits(2)
         assert not held.release.exists()
 
-    failure = read_response(layout, held.request_id)["failure"]
-    assert failure["reason"] == "audio_deleted"
-    assert f"{held.request_id} stopped" in capfd.readouterr().out.splitlines()
+    lines = capfd.readouterr().out.splitlines()
+    assert f"{held.request_id} failed audio_deleted" in lines
+    assert f"{held.request_id} stopped" in lines
     assert leftovers(layout.root) == []
 
 

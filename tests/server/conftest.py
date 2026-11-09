@@ -765,3 +765,20 @@ def reader_socket(emulated_reader_socket: Callable[..., EmulatedReaderSocket]) -
     _active_reader_socket = socket_under_test
     yield socket_under_test
     _active_reader_socket = None
+
+
+@pytest.fixture(autouse=True)
+def intake_reads_through_reader_socket(reader_socket: ReaderSocket, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hands ``reader_socket.config`` to ``intake.run_once`` calls that give no ``reader``.
+
+    The config is read when ``run_once`` is called, so ``use_missing`` and ``use_limits`` apply. A ``reader``
+    the test passes wins.
+    """
+    from stt.server import intake
+
+    real_run_once = intake.run_once
+
+    def run_once(layout: Any, now: Callable[[], datetime], reader: ReaderConfig | None = None) -> int:
+        return real_run_once(layout, now, reader_socket.config if reader is None else reader)
+
+    monkeypatch.setattr(intake, "run_once", run_once)

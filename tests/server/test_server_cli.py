@@ -173,7 +173,7 @@ def test_sweep_runs_the_stage_under_its_lock_with_a_utc_clock(root: Path, monkey
 
 @pytest.mark.parametrize("stage", ["intake", "sweep"])
 def test_stage_exits_1_when_some_items_failed(root: Path, monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
-    monkeypatch.setattr(f"stt.server.{stage}.run_once", lambda layout, now: 2)
+    monkeypatch.setattr(f"stt.server.{stage}.run_once", lambda *args: 2)
 
     assert cli.main(["server", stage, "--root", str(root)]) == 1
 
@@ -244,9 +244,10 @@ def test_intake_runs_the_stage_under_its_lock_with_a_utc_clock(
 ) -> None:
     seen: dict[str, Any] = {}
 
-    def fake_run_once(layout: Layout, now: Any) -> None:
+    def fake_run_once(layout: Layout, now: Any, reader: ReaderConfig) -> None:
         seen["root"] = layout.root
         seen["offset"] = now().utcoffset()
+        seen["reader"] = reader
         seen["lock"] = try_hold(layout.intake_lock)
 
     monkeypatch.setattr(intake, "run_once", fake_run_once)
@@ -255,6 +256,7 @@ def test_intake_runs_the_stage_under_its_lock_with_a_utc_clock(
 
     assert seen["root"] == root
     assert seen["offset"] == timedelta(0)
+    assert seen["reader"] == ReaderConfig(socket_path="/run/stt-reader.sock")
     assert seen["lock"] is None
 
 
@@ -291,7 +293,8 @@ def test_work_passes_the_engine_models_and_clock_to_the_worker_under_its_lock(
 
 
 def test_the_stage_lock_is_released_when_the_stage_raises(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def failing(layout: Layout, now: Any) -> None:
+    def failing(layout: Layout, now: Any, reader: ReaderConfig) -> None:
+        assert reader == ReaderConfig(socket_path="/run/stt-reader.sock")
         raise RuntimeError("stage failed")
 
     monkeypatch.setattr(intake, "run_once", failing)

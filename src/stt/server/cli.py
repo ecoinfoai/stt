@@ -136,7 +136,7 @@ def _work(args: argparse.Namespace, layout: Layout) -> int:
 def _intake(args: argparse.Namespace, layout: Layout) -> int:
     from stt.server import intake
 
-    return EXIT_SOME_FAILED if intake.run_once(layout, _utc_now) else 0
+    return EXIT_SOME_FAILED if intake.run_once(layout, _utc_now, args.reader) else 0
 
 
 def _sweep(args: argparse.Namespace, layout: Layout) -> int:
