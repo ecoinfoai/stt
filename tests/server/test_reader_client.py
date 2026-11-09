@@ -566,14 +566,8 @@ def test_more_decoded_bytes_than_the_limit_is_failed(
     assert not result.audio
 
 
-def test_more_decoded_bytes_than_the_contract_limit_is_failed(
-    emulated_reader_socket: SocketFactory, recording: Path
-) -> None:
-    server = emulated_reader_socket(supervisor_command(fake_child("write-bytes", count=reader.MAX_DECODED_BYTES + 2)))
-
-    result = decode_bytes(server, recording)
-
-    assert result.outcome == "failed"
+def test_the_client_limit_is_the_contract_limit() -> None:
+    assert reader_client.MAX_DECODED_BYTES is reader.MAX_DECODED_BYTES
 
 
 def test_output_the_reader_wrote_before_an_error_exit_is_not_returned(
