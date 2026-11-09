@@ -282,10 +282,10 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ### Implementation (turn T030–T033 GREEN)
 
-- [ ] T034 [US2] `nix/module.nix`: `stt-reader.socket`(§2.1)과 `stt-reader@.service`(§2.2) — [contracts/module.md](contracts/module.md) 의 표 그대로.
+- [X] T034 [US2] `nix/module.nix`: `stt-reader.socket`(§2.1)과 `stt-reader@.service`(§2.2) — [contracts/module.md](contracts/module.md) 의 표 그대로.
   받기·워커에 `requires`·`after` `stt-reader.socket` 과 `--reader-socket /run/stt-reader.sock`(§3). VM 에서 `RestrictAddressFamilies=none` 의 단위
   파일 꼴이 거부되면 원인을 적고 운영자와 대안을 정한다(말없이 바꾸지 않는다). RED → GREEN: turns T030–T033 GREEN. closes US2-1~4, US2-6, US2-7, US4-4~6(VM)
-- [ ] T035 [US2] `docs/server-security.md`: §1 표에 `stt-reader@` 줄(`narrowed` 에 더 좁힌 항목, `reason` 에 그 까닭, `mdwe=on`), §2 에 읽기 격리
+- [X] T035 [US2] `docs/server-security.md`: §1 표에 `stt-reader@` 줄(`narrowed` 에 더 좁힌 항목, `reason` 에 그 까닭, `mdwe=on`), §2 에 읽기 격리
   (누가 무엇을 읽는가, 무엇에 닿지 못하는가, 상한, 끊김에 바로 멈춤), §3 에 읽기 단위를 쓸 수 없을 때 보이는 것 — 워커 로그의
   `<request_id> failed engine_error`, 받기 로그의 그 요청 ID 와 이유(001 FR-032a, 응답 없음), `systemctl status stt-reader.socket` — 과 배포 메모
   (소켓 단위는 설정이 바뀔 때만 다시 뜨고, 그동안 들어온 요청·작업은 위와 같이 끝난다 — 운영자 결정 2026-11-08 그대로). RED → GREEN: T005 가
