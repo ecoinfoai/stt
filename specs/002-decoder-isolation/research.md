@@ -349,7 +349,7 @@
     올리지 않는 이유(「서버 경로 밖」 등)를 적는다.
   - FFmpeg 보안 수정이 나왔는데 새 PyAV 휠이 아직 없으면, 「올리지 않는 이유」에 「배포된 휠 없음 + 읽기 격리(P2)가 범위를 막음」을 적고 다음 달
     확인에서 다시 본다.
-  - 저장소 안에서 맞춰 볼 수 있는 값은 시험으로 지킨다. `tests/test_server_security_doc.py` 가 문서 표의 av 판(Python 3.12·3.10 둘)을 `uv.lock`
+  - 저장소 안에서 맞춰 볼 수 있는 값은 시험으로 지킨다. `tests/test_server_security_doc.py` 가 문서 표의 av 판(Python 3.12·3.11·3.10 셋, `uv.lock` 의 `resolution-markers` 로 구별)을 `uv.lock`
     과, nixpkgs 고정 커밋을 `flake.lock` 과 대조한다. Python 3.10 에는 `tomllib` 이 없으므로 문자열로 읽는다. 판을 올리고 문서를 안 고치면 CI 가
     실패한다(US5-3).
   - 확인할 곳: FFmpeg 보안 공지(<https://ffmpeg.org/security.html>), PyAV 새 판(<https://github.com/PyAV-Org/PyAV/releases>), nixpkgs 의

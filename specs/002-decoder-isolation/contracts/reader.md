@@ -73,15 +73,21 @@ close                                       자식을 거둔 뒤 끝남
 
 ## 6. 해독 자식의 의무 (`python -m stt.server.reader child probe|decode`)
 
-- 공통: 인자로 받은 녹음 기술자를 파일 객체로 열어 `av.open(..., metadata_errors="ignore", container_options={"format_whitelist": AUDIO_FORMATS})`
-  한다. 경로는 쓰지 않는다. 예외는 모두 끝 코드 1 이다(문장은 어디에도 쓰지 않는다).
+- 공통: 인자로 받은 녹음 기술자를 파일 객체로 열어 공유 해독 모듈 `stt.audio_decode.open_container(recording, format_whitelist=AUDIO_FORMATS)`
+  로 연다(받기·워커는 이 모듈을 불러오지 않는다 — 자식 함수 안에서만 가져온다). 이 함수는 `av.open(..., container_options={"format_whitelist": …})`
+  를 부르고, `metadata_errors="ignore"` 는 설치된 PyAV 가 19 미만일 때만 덧붙인다(PyAV 19 는 이 키워드를 없앴고 잘못된 UTF-8 메타데이터를 스스로
+  대체 문자로 읽는다). 경로는 쓰지 않는다. 예외는 모두 끝 코드 1 이다(문장은 어디에도 쓰지 않는다).
 - probe: 001 의 `probe_duration` 과 같은 뜻이다. 오디오 흐름이 없으면 실패. 컨테이너 길이가 있으면 그것, 없으면 첫 오디오 흐름의 패킷 길이 합(해독
   없음). 출력 기술자에 `{"duration_s": …}` 를 쓰고 끝 코드 0. 길이를 고르는
   부분은 열린 컨테이너를 받는 순수 함수로 두어, 시험이 프로세스 안에서 가짜 컨테이너로 볼 수 있게 한다.
-- decode: faster-whisper 1.2.1 `decode_audio` 와 같은 순서다 — `container.decode(audio=0)`, `InvalidDataError` 프레임 건너뛰기, `AudioFifo` 로
+- decode: `stt.audio_decode.write_s16` 이 faster-whisper 1.2.1 `decode_audio` 와 같은 순서로 한다 — `container.decode(audio=0)`, `InvalidDataError` 프레임 건너뛰기, `AudioFifo` 로
   50만 샘플씩 묶기(`pts=None`), `AudioResampler(format="s16", layout="mono", rate=16000)`, 끝에 `None` 으로 비우기. 나온 프레임의 바이트를
   차례로 출력 기술자에 쓴다(머리 없음). 끝 코드 0.
-- 같음의 시험: 사인파 파일 여러 형식에서 decode 출력이 `faster_whisper.audio.decode_audio(path)` 의 `int16` 값과 바이트까지 같다.
+- 같은 해독을 명령줄도 쓴다: `stt.audio_decode.decode_samples(path)` 는 `write_s16` 의 결과를 `int16 / 32768.0` 의 float32 로 돌려주며, 형식 허용
+  목록(`format_whitelist`)은 읽기 단위만 쓴다(명령줄은 `stt fetch` 가 받은 mp4·webm 등도 연다). faster-whisper 에 경로를 넘기지 않는다.
+- 같음의 시험: PyAV 18 이하에서는 사인파 파일 여러 형식에서 decode 출력이 `faster_whisper.audio.decode_audio(path)` 의 `int16` 값과 바이트까지
+  같다. PyAV 19 이상에서는 그 함수가 `metadata_errors` 때문에 돌지 않으므로, 16 kHz 모노 s16 WAV(`make_wav`)가 자기 표본과 정확히 같게 나오는지를 본다
+  (손실 형식은 길이·크기만 본다). 두 갈래 모두 단언한다.
 
 ## 7. 호출하는 쪽의 의무 (`src/stt/server/reader_client.py`)
 

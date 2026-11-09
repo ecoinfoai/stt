@@ -27,7 +27,9 @@
 **Language/Version**: Python 3.10+ (CI 3.10·3.12), 서버 실행은 Nix 의 python312 — 001 그대로
 
 **Primary Dependencies**: 새 의존성 없음.
-- PyAV 18.0.0(휠 안 FFmpeg, libavcodec 62.28.102)이 서버 경로의 유일한 해독기가 된다(R7).
+- PyAV(휠 안 FFmpeg)가 서버 경로의 유일한 해독기가 된다(R7). 저장소의 잠금은 Python 3.12 이상에서 PyAV 19.0.2(FFmpeg 9.0.2), 3.11 은 18.1.0, 3.10 은
+  17.1.0 이다(T044, 2026-11-10). PyAV 19 가 `av.open` 의 `metadata_errors` 를 없애 faster-whisper 1.2.1 의 `decode_audio` 가 돌지 않으므로, 읽기 단위와
+  명령줄이 stt 의 공유 해독 `stt.audio_decode` 하나를 쓴다.
 - systemd 262: 소켓 활성화 `Accept=yes`, `DynamicUser`, seccomp 필터(R4·R12).
 - 표준 라이브러리: `socket`(SOCK_SEQPACKET, `send_fds`/`recv_fds`), `subprocess`, `wave`.
 - faster-whisper 1.2.1 · CTranslate2 4.8.1 · torch 2.13.0 · pyannote.audio 4.0.7 은 그대로다. nixpkgs `ffmpeg` 8.1.2 는 명령줄만 쓴다.

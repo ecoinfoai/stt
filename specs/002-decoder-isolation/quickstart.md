@@ -27,8 +27,9 @@ captest 4G 20m uv run python -m pytest -q
 - 기대: 기존 시험을 포함해 모두 통과(SC-007). 바꾼 기존 시험은 [research.md](research.md) R11 의 목록뿐이다.
 - 읽기 단위: `tests/server/test_reader.py`
   - 감독: 요청 검사, `started` 의 두 값, 끊김·상한에서 자식 죽이기, 판정 만들기(대역 자식 주입).
-  - 진짜 자식: `encode_tone`·`make_wav` 의 사인파(M4A·MP3·ADTS·Ogg·FLAC·WAV)로 길이 재기를 본다. 해독 출력은 `faster_whisper.audio.decode_audio`
-    와 바이트까지 같아야 한다.
+  - 진짜 자식: `encode_tone`·`make_wav` 의 사인파(M4A·MP3·ADTS·Ogg·FLAC·WAV)로 길이 재기를 본다. 해독 출력은 PyAV 18 이하에서 `faster_whisper.audio.decode_audio`
+    와 바이트까지 같아야 하고, PyAV 19 이상에서는 16 kHz 모노 WAV 가 자기 표본과 정확히 같아야 한다(`tests/server/test_audio_decode.py` 가 공유 해독을
+    같은 방식으로 본다).
   - 녹음 확장자를 붙인 텍스트 → probe `failed`.
 - 호출하는 쪽: `tests/server/test_reader_client.py` — 다섯 결과(`ok`·`failed`·`unavailable`·`stopped`·`timeout`)의 경계, 홀수·상한 넘는 출력, 엉터리
   판정.
