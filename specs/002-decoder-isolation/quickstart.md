@@ -82,6 +82,9 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
 5. **B-P2-5 실패 대역**: 판정 없이 끊기, 멈추기(상한까지), 메모리 넘기기(768M 초과 할당), `started: false`. 각각 받기에서는 그 요청만 거절되거나
    치워지고, 처리에서는 그 작업만 `unreadable_audio`(마지막 것은 `engine_error`)로 끝난다. 바로 뒤의 정상 작업이 `gpu_unavailable` 까지 가고,
    `systemctl --failed` 에 stt 단위가 없다(US3-2·3·4·5·6·8, SC-005). 각 실패 뒤 `stt-reader@*` 인스턴스가 남지 않는다(US2-7).
+   단, `started: false` 대역(「시작」을 알리지 못함)에서는 받기의 요청 하나가 처리되지 못한 것이므로 `stt-intake.service` 가 끝 코드 1 로 끝나
+   `--failed` 에 오른다(001 FR-032a — 받기의 시작 실패 규칙, 운영자 결정 2026-11-08 유지). 이 경우에도 다른 단위는 `--failed` 에 없고,
+   다른 세 대역은 모든 단위가 `--failed` 에 없다.
 6. **B-P2-6 읽는 중의 삭제**: 멈추는 대역으로 읽기를 붙잡아 둔 채 다음 셋을 한다.
    - 「다 지우기」 → 1분 안에 `stt-reader@*` 인스턴스가 없고 그 작업의 파일이 0개다(US4-4).
    - VM 시계를 23:58 로 옮겨 청소 → 같음(US4-5).

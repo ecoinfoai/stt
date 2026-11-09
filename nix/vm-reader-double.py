@@ -9,7 +9,7 @@ from the descriptor it was handed, to show that the descriptor works.
 
 Behaviours:
 
-* ``ok``: answers like a healthy reader (probe: 2.0 s; decode: 2 s of silence).
+* ``ok``: answers a probe like a healthy reader (2.0 s); it has no decode form.
 * ``check``: tries to reach everything a compromised reader must not reach and
   reports the result in place of the verdict. A probe carries it in ``duration_s``
   (packed, see ``pack``); a decode writes it as JSON to the output pipe, which the
@@ -32,7 +32,6 @@ from typing import Any
 
 TARGETS_PATH = "/run/vm-double/targets.json"
 CHECK_HOLD_S = 30
-SILENCE = bytes(2 * 16000 * 2)
 CHUNK = b"\x01" * (16 << 20)
 CHUNK_LIMIT = 64
 REQUEST_LIMIT = 4096
@@ -40,6 +39,7 @@ MAX_FDS = 3
 
 
 def send(connection: socket.socket, message: dict[str, Any]) -> None:
+    """Sends one protocol message; a caller that already hung up gets nothing."""
     try:
         connection.send(json.dumps(message).encode("utf-8"))
     except OSError:
@@ -48,12 +48,14 @@ def send(connection: socket.socket, message: dict[str, Any]) -> None:
 
 
 def wait_for_hangup(connection: socket.socket, seconds: float | None) -> None:
+    """Returns when the caller closes the connection or sends anything, or after `seconds` (None: never)."""
     poller = select.poll()
     poller.register(connection.fileno(), select.POLLIN | select.POLLHUP)
     poller.poll(None if seconds is None else seconds * 1000)
 
 
 def worked(action: Callable[[], object]) -> int:
+    """Returns 1 when `action` ran without an OSError, else 0."""
     try:
         action()
     except OSError:
@@ -62,6 +64,7 @@ def worked(action: Callable[[], object]) -> int:
 
 
 def close_after(fd: int) -> None:
+    """Closes a descriptor that was opened only to show it could be."""
     os.close(fd)
 
 
@@ -77,17 +80,37 @@ def visible(path: str) -> int:
 
 
 def reach_readonly(path: str) -> int:
+    """Counts the read-only ways in to `path`: an unmasked stat and an open for reading."""
     return visible(path) + worked(lambda: close_after(os.open(path, os.O_RDONLY)))
 
 
+def created_in(directory: str) -> int:
+    """Returns 1 when a file can be created in `directory`; the double removes the file it made."""
+    path = os.path.join(directory, "double-probe")
+    try:
+        close_after(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except OSError:
+        return 0
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    return 1
+
+
 def reach(path: str) -> int:
-    """Counts the operations on `path` that work: stat (unmasked), open for reading and writing, list, create in, unlink."""
+    """Counts the operations on `path` that work: stat (unmasked), open for reading, open for writing
+    (without truncating), list, create a file inside.
+
+    Nothing that exists is changed or removed, so a weakened unit cannot damage later steps. Being able to
+    delete a target is the same permission as creating a file in its directory, which the directory
+    targets cover.
+    """
     return (
         reach_readonly(path)
         + worked(lambda: close_after(os.open(path, os.O_WRONLY)))
         + worked(lambda: os.listdir(path))
-        + worked(lambda: close_after(os.open(os.path.join(path, "double-probe"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)))
-        + worked(lambda: os.unlink(path))
+        + created_in(path)
     )
 
 
@@ -106,14 +129,17 @@ def data_written(directory: str) -> int:
 
 
 def sockets_created() -> int:
+    """Counts the socket families a new socket can be created in."""
     return sum(worked(lambda family=family: socket.socket(family).close()) for family in (socket.AF_INET, socket.AF_INET6, socket.AF_UNIX))
 
 
 def other_processes() -> int:
+    """Returns 1 when any process besides this one is visible in /proc."""
     return int(any(name.isdigit() and int(name) != os.getpid() for name in os.listdir("/proc")))
 
 
 def recording_readable(fd: int) -> bool:
+    """Returns whether a few bytes can be read from the recording descriptor (they are not looked at)."""
     try:
         return len(os.read(fd, 16)) > 0
     except OSError:
@@ -145,27 +171,28 @@ def pack(report: dict[str, Any]) -> float:
 
     The caller accepts a finite number between 0 and 10800 and nothing else, so the report
     travels as ``N / 2**30`` with N below 2**43: bits 0-16 the UID, bit 17 whether the
-    recording descriptor was readable, bits 18-25 the number of successes (at most 255), and
-    from bit 26 one bit per group in report order. The quotient is exact in a double.
+    recording descriptor was readable, bits 18-24 the number of successes (at most 127), bit 25
+    whether the control reach worked (``control == 2``), and from bit 26 one bit per group in report
+    order. The quotient is exact in a double.
     """
     groups = report["groups"]
     mask = sum(1 << index for index, count in enumerate(groups.values()) if count)
-    successes = min(sum(groups.values()), 255)
-    packed = report["uid"] | int(report["own_fd_readable"]) << 17 | successes << 18 | mask << 26
+    successes = min(sum(groups.values()), 127)
+    control = int(report["control"] == 2)
+    packed = report["uid"] | int(report["own_fd_readable"]) << 17 | successes << 18 | control << 25 | mask << 26
     return packed / 2**30
 
 
 def behave_ok(op: str, connection: socket.socket, fds: Sequence[int]) -> None:
+    """Answers the probe like a healthy reader."""
+    if op != "probe":
+        raise ValueError("the ok behaviour serves the length probe only")
     send(connection, {"started": True})
-    if op == "probe":
-        send(connection, {"status": "ok", "duration_s": 2.0})
-        return
-    with open(fds[1], "wb") as output:
-        output.write(SILENCE)
-    send(connection, {"status": "ok"})
+    send(connection, {"status": "ok", "duration_s": 2.0})
 
 
 def behave_check(op: str, connection: socket.socket, fds: Sequence[int]) -> None:
+    """Reports what the instance could reach, in place of the verdict."""
     send(connection, {"started": True})
     report = check_report(fds)
     if op == "probe":
@@ -180,15 +207,18 @@ def behave_check(op: str, connection: socket.socket, fds: Sequence[int]) -> None
 
 
 def behave_hold(op: str, connection: socket.socket, fds: Sequence[int]) -> None:
+    """Says started, then waits for the caller to hang up."""
     send(connection, {"started": True})
     wait_for_hangup(connection, None)
 
 
 def behave_no_verdict(op: str, connection: socket.socket, fds: Sequence[int]) -> None:
+    """Says started and ends."""
     send(connection, {"started": True})
 
 
 def behave_memory(op: str, connection: socket.socket, fds: Sequence[int]) -> None:
+    """Says started, then allocates until the memory cap kills the instance."""
     send(connection, {"started": True})
     held = [bytearray(CHUNK) for _ in range(CHUNK_LIMIT)]
     # Only reached when the memory cap did not stop the allocation above.
@@ -196,6 +226,7 @@ def behave_memory(op: str, connection: socket.socket, fds: Sequence[int]) -> Non
 
 
 def behave_not_started(op: str, connection: socket.socket, fds: Sequence[int]) -> None:
+    """Refuses the request."""
     send(connection, {"started": False})
 
 

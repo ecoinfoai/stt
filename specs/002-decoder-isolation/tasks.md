@@ -271,7 +271,9 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   해결 `[VERIFY]` B-P2-4
 - [X] T032 [US3] `nix/vm-test.nix` 에 B-P2-5 실패 대역: [contracts/reader.md](contracts/reader.md) §9 의 VM 줄을 specialisation 으로 하나씩 넣는다.
   단언: 받기에서는 그 요청만 거절되거나 치워지고, 처리에서는 그 작업만 `unreadable_audio`(띄우지 못함은 `engine_error`)이며, 바로 뒤의 정상
-  작업이 `gpu_unavailable` 까지 가고, `systemctl --failed` 에 stt 단위가 없으며, 각 실패 뒤 `stt-reader@*` 인스턴스가 남지 않는다.
+  작업이 `gpu_unavailable` 까지 가고, `systemctl --failed` 에 stt 단위가 없으며(단, `started: false` 대역에서는 받기의 요청 하나가 처리되지 못해
+  `stt-intake.service` 가 끝 코드 1 로 끝나 `--failed` 에 오른다 — 001 FR-032a, 운영자 결정 2026-11-08 유지. 이 경우에도 다른 단위는 없고, 다른 세 대역은
+  모든 단위가 없다), 각 실패 뒤 `stt-reader@*` 인스턴스가 남지 않는다.
   verify RED: 읽기 단위가 없다. closes US3-2, US3-3, US3-4, US3-5, US3-6, US3-8(VM), US2-7(VM, 실패·강제 종료), SC-005
 - [X] T033 [US4] `nix/vm-test.nix` 에 B-P2-6·7: 멈추는 대역으로 읽기를 붙잡아 둔 채 (1) 「다 지우기」 → 1분 안에 `stt-reader@*` 인스턴스가 없고 그
   작업의 파일 0, (2) VM 시계를 23:58 로 옮겨 청소 → 같음, (3) `systemctl stop stt-worker` → 인스턴스가 끝나고 청소 뒤 `interrupted`, `work/` 비어

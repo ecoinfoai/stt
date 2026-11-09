@@ -139,6 +139,7 @@ pkgs.testers.runNixOSTest {
     OUTBOX = f"{STATE}/requests/outbox"
     GPU_LOCK = "/run/stt/gpu.lock"
     AUDIO = "${audio}"
+    HANGING_CUDA = "${hangingCuda}/lib"
     SLEEP = "/run/current-system/sw/bin/sleep"
     FLOCK = "/run/current-system/sw/bin/flock"
     REQUESTER = "owui-marker-5821"
@@ -243,6 +244,14 @@ pkgs.testers.runNixOSTest {
     def sweep():
         server.succeed("systemctl start stt-sweep.service")
         assert prop("stt-sweep.service", "Result") == "success"
+
+
+    def hang_cuda():
+        server.succeed(f"mkdir -p /run/opengl-driver && ln -sfn {HANGING_CUDA} /run/opengl-driver/lib")
+
+
+    def release_cuda():
+        server.succeed("rm -rf /run/opengl-driver")
 
 
     start_all()
@@ -361,7 +370,8 @@ pkgs.testers.runNixOSTest {
             ("StandardError", "journal"),
         ):
             assert prop(reader, name) == value, (name, prop(reader, name))
-        assert prop(reader, "PrivateTmp") in ("yes", "disconnected"), prop(reader, "PrivateTmp")
+        # `DynamicUser=yes` prints `yes` on this systemd; that private /tmp leaves no folder on the host.
+        assert prop(reader, "PrivateTmp") == "yes", prop(reader, "PrivateTmp")
         assert set(prop(reader, "InaccessiblePaths").split()) == {"/var/lib/stt", "/var/lib/stt-models", "/run/stt"}, prop(reader, "InaccessiblePaths")
         calls = set(prop(reader, "SystemCallFilter").split())
         assert calls and not prop(reader, "SystemCallFilter").startswith("~"), prop(reader, "SystemCallFilter")
@@ -488,12 +498,12 @@ pkgs.testers.runNixOSTest {
         inbox_empty()
 
     with subtest("stopping the worker while the engine runs ends the job interrupted, not engine_error"):
-        server.succeed("mkdir -p /run/opengl-driver && ln -s ${hangingCuda}/lib /run/opengl-driver/lib")
+        hang_cuda()
         stopped = transcribe()
         submit(stopped)
         wait_response(stopped["request_id"], lambda doc: doc["state"] == "running", timeout=30)
         time.sleep(4)
-        server.succeed("rm -r /run/opengl-driver")
+        release_cuda()
         started = time.monotonic()
         server.succeed("systemctl stop stt-worker.service")
         assert time.monotonic() - started < 15, time.monotonic() - started
@@ -583,8 +593,9 @@ pkgs.testers.runNixOSTest {
     # They come after the P1 and 001 subtests; the reader's settings are checked earlier (see above).
 
     TOPLEVEL = "${nodes.server.system.build.toplevel}"
-    HANGING_CUDA = "${hangingCuda}/lib"
     READER_INSTANCES = "systemctl list-units --all --plain --no-legend 'stt-reader@*'"
+    READER_ACTIVE = "systemctl list-units --plain --no-legend --state=active 'stt-reader@*'"
+    PRIVATE_FOLDERS = "find /tmp /var/tmp -maxdepth 1 -name 'systemd-private-*stt-reader*'"
     UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
     # Groups the double always adds after the ones in its target list (nix/vm-reader-double.py).
     FIXED_GROUPS = ("network", "own-fd-write", "scratch-write", "other-processes")
@@ -598,21 +609,16 @@ pkgs.testers.runNixOSTest {
     def no_reader_instance():
         """No `stt-reader@*` unit remains in any state, and none left a private folder on the host (US2-7)."""
         server.wait_until_succeeds(f"test -z \"$({READER_INSTANCES})\"", timeout=60)
-        server.succeed("test -z \"$(find /tmp /var/tmp -maxdepth 1 -name 'systemd-private-*stt-reader*')\"")
+        server.succeed(f"test -z \"$({PRIVATE_FOLDERS})\"")
 
     def wait_reader_instance():
-        server.wait_until_succeeds(f"test -n \"$({READER_INSTANCES})\"", timeout=60)
-        return server.succeed(f"{READER_INSTANCES} | awk '{{print $1}}' | head -n 1").strip()
+        """Waits for a running reader instance and returns its unit name."""
+        server.wait_until_succeeds(f"test -n \"$({READER_ACTIVE})\"", timeout=60)
+        return server.succeed(f"{READER_ACTIVE} | awk '{{print $1}}' | head -n 1").strip()
 
     def failed_stt_units():
         listing = server.succeed("systemctl --failed --plain --no-legend")
         return {line.split()[0] for line in listing.splitlines() if line.startswith("stt")}
-
-    def hang_cuda():
-        server.succeed(f"mkdir -p /run/opengl-driver && ln -sfn {HANGING_CUDA} /run/opengl-driver/lib")
-
-    def release_cuda():
-        server.succeed("rm -rf /run/opengl-driver")
 
     def stop_worker():
         """Kills the worker with the unit's own stop; that leaves it `failed(signal)`, which is not a reader failure."""
@@ -631,6 +637,20 @@ pkgs.testers.runNixOSTest {
         with wave.open(io.BytesIO(raw)) as handle:
             return (handle.getnchannels(), handle.getsampwidth(), handle.getframerate()), handle.readframes(handle.getnframes())
 
+    def wait_wav(path, ready=lambda frames: len(frames) > 0):
+        """Reads a WAV the worker is still writing: waits until it has content, parses and `ready` accepts it."""
+        server.wait_until_succeeds(f"test -s {path}", timeout=120)
+        for _ in range(30):
+            try:
+                fmt, frames = read_wav(path)
+            except (wave.Error, EOFError):
+                frames = b""
+            else:
+                if ready(frames):
+                    return fmt, frames
+            time.sleep(1)
+        raise AssertionError(f"{path} never became a complete WAV")
+
     def wait_queued(request_id):
         return wait_response(request_id, lambda doc: doc["state"] == "queued")
 
@@ -640,8 +660,7 @@ pkgs.testers.runNixOSTest {
         submit(passed)
         wait_response(passed["request_id"], lambda doc: doc["state"] == "running", timeout=30)
         work = f"{STATE}/work/{passed['request_id']}"
-        server.wait_until_succeeds(f"test -f {work}/audio.wav", timeout=60)
-        fmt, frames = read_wav(f"{work}/audio.wav")
+        fmt, frames = wait_wav(f"{work}/audio.wav")
         assert fmt == (1, 2, 16000), fmt
         assert abs(len(frames) // 2 - 2 * 16000) <= 1600, len(frames)
         spec = json.loads(server.succeed(f"cat {work}/spec.json"))
@@ -660,10 +679,16 @@ pkgs.testers.runNixOSTest {
         hold_gpu("gpu-hold-batch", 900)
         good = transcribe()
         bad = transcribe(extension="mp3")
-        submit(good)
+        # Both requests are in the inbox before intake runs, so one intake run takes the whole batch.
+        server.succeed("systemctl stop stt-intake.path")
         submit(bad, source=f"{AUDIO}/corrupt.mp3", extension="mp3")
-        assert failed_with("unreadable_audio")(response(bad["request_id"], timeout=30)), response(bad["request_id"])
-        assert wait_queued(good["request_id"])["queue_position"] == 1
+        submit(good)
+        server.succeed("systemctl start stt-intake.service")
+        assert prop("stt-intake.service", "Result") == "success"
+        assert failed_with("unreadable_audio")(response(bad["request_id"])), response(bad["request_id"])
+        assert response(good["request_id"])["state"] == "queued"
+        assert response(good["request_id"])["queue_position"] == 1
+        server.succeed("systemctl start stt-intake.path")
         inbox_empty()
         assert not failed_stt_units(), failed_stt_units()
         server.succeed("systemctl stop gpu-hold-batch.service")
@@ -681,7 +706,7 @@ pkgs.testers.runNixOSTest {
         server.succeed("systemctl stop stt-worker.path stt-sweep.timer")
         hang_cuda()
         stt_uid = int(server.succeed("id -u stt"))
-        a, b, c, a2 = (str(uuid.uuid4()) for _ in range(4))
+        a, b, c, a2, p = (str(uuid.uuid4()) for _ in range(5))
 
         def audio_paths(i):
             return [f"{STATE}/audio/{i}", f"{STATE}/audio/{i}/audio.wav", f"{STATE}/audio/{i}.json"]
@@ -698,7 +723,7 @@ pkgs.testers.runNixOSTest {
             ("jobs-A", job_paths(a)), ("jobs-B", job_paths(b)), ("jobs-A2", job_paths(a2)),
             ("work-A", work_paths(a)), ("work-B", work_paths(b)), ("work-A2", work_paths(a2)),
             ("outbox", [OUTBOX, f"{OUTBOX}/{a}.json", f"{OUTBOX}/{b}.json"]),
-            ("inbox", [INBOX]),
+            ("inbox", [INBOX, f"{INBOX}/{p}.json.tmp"]),
             ("state-root", [STATE, f"{STATE}/state.lock", f"{STATE}/worker.lock", f"{STATE}/queue"]),
             ("gpu-lock", ["/run/stt", GPU_LOCK, "/var/lib/stt-models"]),
             ("devices", ["/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm"]),
@@ -711,6 +736,9 @@ pkgs.testers.runNixOSTest {
             f" && chmod 0644 {TARGETS_FILE}"
         )
 
+        # A request file as a caller leaves it while writing (`<name>.tmp`, then a rename): intake ignores it.
+        server.succeed(as_user("caller", f"umask 0027; echo pending > {INBOX}/{p}.json.tmp"))
+
         def plant_work(i):
             """A stand-in for another job's work folder with its decoded audio and its spec."""
             server.succeed(as_user("stt", f"umask 077 && mkdir {STATE}/work/{i} && echo decoy > {STATE}/work/{i}/audio.wav && echo decoy > {STATE}/work/{i}/spec.json"))
@@ -719,7 +747,11 @@ pkgs.testers.runNixOSTest {
             """Starts the worker behind the operator's lock, plants stand-in work folders and lets the read begin."""
             server.succeed("systemctl start --no-block stt-worker.service")
             server.wait_until_succeeds("systemctl show -P ActiveState stt-worker.service | grep -Ex 'activating|active'", timeout=30)
-            time.sleep(3)
+            # The worker clears the work folders of a dead worker first; once it sleeps between attempts
+            # to take the GPU lock (clock_nanosleep, 230 on x86-64) that is behind it.
+            server.wait_until_succeeds(
+                "test \"$(cut -d' ' -f1 /proc/$(systemctl show -P MainPID stt-worker.service)/syscall)\" = 230", timeout=30
+            )
             for decoy in decoys:
                 plant_work(decoy)
             for path in existing + [f"{STATE}/work/{decoy}" for decoy in decoys]:
@@ -728,9 +760,15 @@ pkgs.testers.runNixOSTest {
 
         def finish_read(request_id):
             """Waits for the decoded audio of the job (the double's report) and parses it."""
-            server.wait_until_succeeds(f"test -f {STATE}/work/{request_id}/audio.wav", timeout=120)
+            def whole_report(frames):
+                try:
+                    json.loads(frames.decode("utf-8"))
+                except ValueError:
+                    return False
+                return True
+
+            fmt, frames = wait_wav(f"{STATE}/work/{request_id}/audio.wav", whole_report)
             server.succeed(f"test -f {STATE}/work/{request_id}/spec.json")
-            fmt, frames = read_wav(f"{STATE}/work/{request_id}/audio.wav")
             assert fmt == (1, 2, 16000), fmt
             return json.loads(frames.decode("utf-8"))
 
@@ -740,7 +778,8 @@ pkgs.testers.runNixOSTest {
             return {
                 "uid": packed & 0x1FFFF,
                 "own_fd_readable": bool(packed >> 17 & 1),
-                "successes": packed >> 18 & 0xFF,
+                "successes": packed >> 18 & 0x7F,
+                "control": packed >> 25 & 1,
                 "reached": [name for index, name in enumerate(GROUP_NAMES) if packed >> 26 >> index & 1],
             }
 
@@ -751,12 +790,13 @@ pkgs.testers.runNixOSTest {
                 reached = {name: count for name, count in report["groups"].items() if count}
                 assert not reached, (who, reached)
             else:
+                assert report["control"] == 1, (who, report)
                 assert report["reached"] == [] and report["successes"] == 0, (who, report)
             assert report["uid"] != stt_uid and 61184 <= report["uid"] <= 65519, (who, report, stt_uid)
 
         common = [
             f"{STATE}/audio/{a}/audio.wav", f"{STATE}/audio/{b}/audio.wav", f"{STATE}/jobs/{a}/job.json",
-            f"{STATE}/jobs/{b}/job.json", f"{OUTBOX}/{a}.json", f"{OUTBOX}/{b}.json", INBOX, GPU_LOCK,
+            f"{STATE}/jobs/{b}/job.json", f"{OUTBOX}/{a}.json", f"{OUTBOX}/{b}.json", INBOX, f"{INBOX}/{p}.json.tmp", GPU_LOCK,
             f"{STATE}/state.lock", "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm",
         ]
 
@@ -774,6 +814,9 @@ pkgs.testers.runNixOSTest {
         wait_queued(c)
         server.succeed(f"systemctl is-active {decode_instance}")
         assert int(prop(decode_instance, "UID")) == decode_uid
+        # The pattern finds the private folders of other running units, and none for the reader instance.
+        server.succeed("test -n \"$(find /tmp -maxdepth 1 -name 'systemd-private-*systemd-logind*')\"")
+        server.succeed(f"test -z \"$({PRIVATE_FOLDERS})\"")
         report_a = finish_read(a)
         server.succeed(f"rm -r {STATE}/work/{b}")
         assert_confined(report_a, "decode of A")
@@ -812,6 +855,7 @@ pkgs.testers.runNixOSTest {
         assert not failed_stt_units(), failed_stt_units()
 
         release_cuda()
+        server.succeed(f"rm {INBOX}/{p}.json.tmp")
         for node_name in ("nvidia0", "nvidiactl", "nvidia-uvm"):
             server.succeed(f"rm /dev/{node_name}")
         server.succeed("systemctl start stt-worker.path stt-sweep.timer")
@@ -842,25 +886,39 @@ pkgs.testers.runNixOSTest {
             wait_queued(victim["request_id"])
             switch_to(double)
             server.succeed(f"systemctl stop {lock}.service")
-            late = transcribe()
-            submit(late)
-            if intake_reason is None:
-                inbox_empty()
-                server.fail(f"test -e {OUTBOX}/{late['request_id']}.json")
-                server.succeed(f"journalctl --no-pager -u stt-intake.service | grep -F '{late['request_id']} intake error'")
+
+            def check_late_request():
+                """The intake's probe meets the failing reader."""
+                late = transcribe()
+                submit(late)
+                if intake_reason is None:
+                    inbox_empty()
+                    server.fail(f"test -e {OUTBOX}/{late['request_id']}.json")
+                    server.succeed(f"journalctl --no-pager -u stt-intake.service | grep -F '{late['request_id']} intake error'")
+                else:
+                    assert failed_with(intake_reason)(response(late["request_id"], timeout=90)), response(late["request_id"])
+                    inbox_empty()
+
+            def check_victim():
+                """The worker's decode met the failing reader."""
+                done = wait_response(victim["request_id"], failed_with(worker_reason), timeout=wait)
+                assert done["failure"]["detail"] == WORKER_DETAIL[worker_reason], done
+
+            if double == "reader-memory":
+                # One memory hog at a time, so that the system-wide OOM killer cannot pick another process.
+                check_victim()
+                check_late_request()
             else:
-                assert failed_with(intake_reason)(response(late["request_id"], timeout=90)), response(late["request_id"])
-                inbox_empty()
-            done = wait_response(victim["request_id"], failed_with(worker_reason), timeout=wait)
-            assert done["failure"]["detail"] == WORKER_DETAIL[worker_reason], done
+                check_late_request()
+                check_victim()
             no_reader_instance()
             if double == "reader-memory":
                 server.wait_until_succeeds("journalctl --no-pager -o cat -u 'stt-reader@*' | grep -i 'oom'", timeout=30)
                 server.succeed(f"sysctl -w vm.panic_on_oom={panic_on_oom}")
-            # A request the reader could not even be asked about ends the intake run with an error exit
-            # (001 FR-032a); that is the one unit state the failure doubles may leave behind.
-            allowed = {"stt-intake.service"} if intake_reason is None else set()
-            assert failed_stt_units() <= allowed, failed_stt_units()
+            # A request the reader could not even be asked about ends the intake run with exit 1
+            # (001 FR-032a, kept by the operator decision of 2026-11-08): the one failed stt unit any double may leave.
+            expected_failed = {"stt-intake.service"} if intake_reason is None else set()
+            assert failed_stt_units() == expected_failed, failed_stt_units()
             server.succeed("systemctl reset-failed 'stt-*'")
             switch_to()
             following = transcribe()
@@ -873,17 +931,26 @@ pkgs.testers.runNixOSTest {
         switch_to("reader-hold-decode")
 
         def held_read():
-            job = transcribe()
+            job = transcribe(hints=HINTS)
             submit(job)
             wait_response(job["request_id"], lambda doc: doc["state"] == "running", timeout=60)
             wait_reader_instance()
             return job["request_id"]
 
         def no_files_of(request_id):
+            """Nothing of the job is left but its record: no instance, recording, work folder, queue mark, result or hint."""
             no_reader_instance()
             server.wait_until_succeeds(
-                f"test ! -e {STATE}/audio/{request_id} && test -z \"$(ls -A {STATE}/work)\"", timeout=60
+                f"test ! -e {STATE}/audio/{request_id} && test ! -e {OUTBOX}/{request_id}"
+                f" && test -z \"$(ls -A {STATE}/work; ls -A {STATE}/queue)\"",
+                timeout=60,
             )
+            record_path = f"{STATE}/jobs/{request_id}/job.json"
+            if server.execute(f"test -e {record_path}")[0] == 0:
+                record = json.loads(server.succeed(f"cat {record_path}"))
+                assert record["hints"] is None, record
+            for word in HINTS:
+                server.fail(f"grep -rF {word} {STATE}/jobs/{request_id} {OUTBOX}/{request_id}.json")
 
         deleted = held_read()
         started = time.monotonic()
