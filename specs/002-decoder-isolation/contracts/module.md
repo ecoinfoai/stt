@@ -38,12 +38,13 @@
 | `PrivateNetwork` · `RestrictAddressFamilies` | `yes` · `none` | 망 없음, 소켓 생성 금지 — 받은 연결은 그대로 쓴다 `[VERIFY]` B-P2-1 |
 | `InaccessiblePaths` | `/var/lib/stt` `/var/lib/stt-models` `/run/stt` | 권한 위에 한 겹 더. `gpu.lock`(0644) 붙잡기 막기(R12) |
 | `ProtectHome` | `yes` | |
+| `TemporaryFileSystem` | `/dev/shm:ro` | `PrivateDevices=yes` 에도 단위의 `/dev/shm` 은 호스트의 것과 같다(같은 장치·아이노드, 1777). 읽기 단위가 호스트 `/dev/shm` 의 파일을 읽거나 쓰지 못하게 비어 있는 읽기 전용 tmpfs 로 덮는다 `[VERIFY]` B-P2-1 |
 | `PrivateIPC` · `PrivatePIDs` · `ProtectProc` · `ProcSubset` | `yes` · `yes` · `invisible` · `pid` | 다른 프로세스·IPC 가 보이지 않게 `[VERIFY]` B-P2-1 |
 | `ProtectKernelTunables` · `ProtectKernelModules` · `ProtectKernelLogs` · `ProtectControlGroups` · `ProtectClock` · `ProtectHostname` | 모두 `yes` | |
 | `RestrictNamespaces` · `RestrictRealtime` · `LockPersonality` | 모두 `yes` | |
 | `CapabilityBoundingSet` | `""` | |
 | `SystemCallArchitectures` | `native` | |
-| `SystemCallFilter` | `@system-service`, `~@privileged`, `~process_vm_readv process_vm_writev io_uring_setup io_uring_enter io_uring_register userfaultfd` | FR-008 의 「더 좁은 제한」(R5, 🟢 사용자 관리자로 해독 확인) |
+| `SystemCallFilter` | `@system-service`, `~@privileged`, `~@keyring`, `~process_vm_readv process_vm_writev io_uring_setup io_uring_enter io_uring_register userfaultfd` | FR-008 의 「더 좁은 제한」(R5, 🟢 사용자 관리자로 해독 확인). `~@keyring`(`add_key`·`request_key`·`keyctl`): 같은 동적 UID 를 나눠 쓰는 인스턴스끼리 커널 사용자 키링을 통해 자료를 주고받지 못하게 한다 `[VERIFY]` B-P2-1 |
 | `MemoryDenyWriteExecute` | `yes` | 🟢 PyAV 해독 확인(R3) |
 | `MemoryMax` · `MemorySwapMax` | `768M` · `0` | R9(측정 최대 104 MB 의 약 7배), FR-035 |
 | `LimitCORE` · `LimitFSIZE` | `0` · `0` | 덤프 없음, 파일에 자료를 쓰지 못함 |
@@ -64,8 +65,8 @@
   않음), `ProtectProc=invisible`·`ProcSubset=pid`, `PrivateIPC`, `PrivateTmp`, `PrivateDevices`, `PrivateNetwork`, `RestrictAddressFamilies=none`,
   그리고 필터 밖인 `ptrace`(`@system-service` 에 들지 않음)와 명시적으로 뺀 `process_vm_readv`·`process_vm_writev`, `~@privileged`. 서로의 프로세스를 보지도 신호를 보내지도 못한다. 시험(B-P2-4)이 보는 것은 UID 가
   `stt` 가 아니라는 것과, 각 읽기가 `/proc` 에서 자기 인스턴스의 프로세스만 본다는 것이다.
-- 남는 것: 같은 동적 UID 를 쓰는 인스턴스끼리는 커널 사용자 키링을 나눈다(`@keyring` 호출은 `@system-service` 안에 있다). 겹쳐 도는 두 읽기가 모두
-  적대적일 때만 생길 수 있는 통로이고, 정상 읽기로 넘어가는 길은 아니다. `~@keyring` 은 더하지 않았다(운영자 결정 대기).
+- 같은 동적 UID 를 쓰는 인스턴스끼리는 커널 사용자 키링을 나눈다(`@keyring` 호출은 `@system-service` 안에 있다). 그래서 필터에 `~@keyring` 을
+  더했다(최종 검토, 통제자 결정 19): 키링 호출은 `SIGSYS` 로 막힌다. `/dev/shm` 도 같은 까닭으로 `TemporaryFileSystem=/dev/shm:ro` 로 덮는다.
 
 ## 3. 받기·워커가 바뀌는 것 (P2)
 
@@ -97,7 +98,7 @@ systemctl show stt-worker.service stt-intake.service stt-sweep.service stt-model
 systemctl show stt-reader@check.service \
   -p DynamicUser -p PrivateDevices -p PrivateNetwork -p RestrictAddressFamilies -p InaccessiblePaths \
   -p SystemCallFilter -p SystemCallArchitectures -p MemoryDenyWriteExecute -p MemoryMax -p MemorySwapMax -p LimitFSIZE -p LimitCORE \
-  -p RuntimeMaxUSec -p KillSignal -p CollectMode -p PrivateTmp
+  -p RuntimeMaxUSec -p KillSignal -p CollectMode -p PrivateTmp -p TemporaryFileSystem
 systemctl show stt-reader.socket -p Listen -p Accept -p SocketUser -p SocketMode -p MaxConnections
 ```
 

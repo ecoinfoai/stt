@@ -40,7 +40,7 @@ nixos-config 가 한다 — geo-scout 와 같은 모양이다(`nixos-config:flak
   `docs/server-security.md` §1, 설정 표는 002 [contracts/module.md](../../002-decoder-isolation/contracts/module.md) §1.
 - **`MemorySwapMax=0`** — 이 호스트의 스왑은 평문이다(bhu-llm F198). 녹음을 푼 메모리가 스왑으로 내려가지 않게 한다(FR-035).
 - **`LimitCORE=0`** — 엔진이 죽어도 녹음이 담긴 오류 덤프가 남지 않게 한다(FR-035).
-- 망: 모델 받기 말고는 `PrivateNetwork=true`, `RestrictAddressFamilies=AF_UNIX`(FR-015).
+- 망: 모델 받기 말고는 `PrivateNetwork=true`, `RestrictAddressFamilies=AF_UNIX`(FR-015). 예외: 002 의 읽기 단위 `stt-reader@` 는 소켓을 만들지 못하게 `RestrictAddressFamilies=none` 이다(받은 연결만 쓴다).
 - 워커만: `PrivateDevices=false`, `DevicePolicy=closed`, `DeviceAllow=/dev/nvidiactl rw, /dev/nvidia0 rw, /dev/nvidia-uvm rw, /dev/nvidia-uvm-tools rw`
   (이 호스트에서 확인한 장치 파일, research R2). 나머지 단위는 `PrivateDevices=true`.
 - 워커만: `RemoveIPC=true` — 엔진이 강제 종료돼도 stt 계정의 IPC 객체(공유 메모리 등)가 남지 않게. 계정의 객체를 모두 지우는 설정이라 다른

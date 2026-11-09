@@ -284,10 +284,11 @@ start them. Defaults: `--root /var/lib/stt`,
 
 | Command | Does | Exit codes |
 |---|---|---|
-| `stt server intake [--root DIR]` | process the inbox once: accept, refuse, delete | 0, 2 usage, 75 another intake is running |
-| `stt server work [--root DIR] [--models DIR] --gpu-lock FILE` | run queued jobs one at a time | 0, 2, 75 another worker is running |
+| `stt server intake [--root DIR] [--reader-socket PATH]` | process the inbox once: accept, refuse, delete | 0, 2 usage, 75 another intake is running |
+| `stt server work [--root DIR] [--models DIR] --gpu-lock FILE [--reader-socket PATH]` | run queued jobs one at a time | 0, 2, 75 another worker is running |
 | `stt server sweep [--root DIR]` | delete what is due, clean up stopped jobs | 0, 2, 75 another sweep is running |
 | `stt server fetch-models --models DIR` | download the pinned model commits; instant when already complete | 0, 2, 1 download failed |
+| `stt server read` | serve the one request on standard input (the reader unit's `ExecStart`; not run by hand) | 0, 1 no request, 2 not the reader socket |
 
 `fetch-models` is the only command that needs network access and
 `HF_TOKEN`; the engine reads the models offline. Full reference:

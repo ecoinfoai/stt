@@ -65,6 +65,7 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
    - `work/<id>/audio.wav` 가 있다(16-bit 모노 16 kHz).
    - `spec.json` 에 `audio_path` 가 없다(US2-5).
    - `RestrictAddressFamilies=none`·`ProtectProc`·`ProcSubset`·`InaccessiblePaths` 를 건 채로 해독이 끝났다.
+   - 설정에 `TemporaryFileSystem=/dev/shm:ro` 가 있고, 필터에 `add_key`·`request_key`·`keyctl` 이 없다(`~@keyring`).
 2. **B-P2-2 접속**: 받기·워커가 자기 샌드박스(읽기 전용 루트, 망 이름공간 없음)에서 소켓에 접속했다 — B-P2-1 이 통과하면 성립한다.
 3. **B-P2-3 텍스트 첨부**: `corrupt.mp3`(녹음 확장자를 붙인 텍스트)와 정상 녹음을 같은 묶음으로 맡긴다. 텍스트는 `unreadable_audio`, 정상은
    `queued` 가 되고, 받기·워커·청소 단위는 `failed` 가 아니다(US3-1, SC-004).
@@ -76,7 +77,9 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
    - `/dev/nvidia*` 열기
    - `socket(AF_INET)`·`socket(AF_UNIX)`
    - 자기 녹음 기술자에 쓰기
-   - 쓰기 가능한 자리(`/tmp`·`/var/tmp`·현재 폴더)에 자료 쓰기(`LimitFSIZE=0`)
+   - 쓰기 가능한 자리(`/tmp`·`/var/tmp`·현재 폴더)와 `/dev/shm` 에 자료 쓰기(`LimitFSIZE=0`, `/dev/shm` 은 읽기 전용 tmpfs)
+   - 호스트 `/dev/shm` 에 둔 표식 파일 읽기·쓰기(호스트 것이 보이지 않아야 한다)
+   - 키링 호출(`add_key`·`request_key`·`keyctl`) — 필터가 `SIGSYS` 로 막는다(`~@keyring`)
    - 대역은 자기 UID 와 `/proc` 에 보이는 프로세스 수도 보고한다. 받기의 길이 재기와 워커의 해독을 겹쳐 돌려 두 UID 가 모두 `stt` 와 다르고, 겹친 두 읽기가 각각 `/proc` 에서 자기 인스턴스의 프로세스(1개)만 보는지 본다 — 상대를 보지도 신호를 보내지도 못한다(US2-6, 경계 사례 2. 동적 UID 는 템플릿의 인스턴스끼리 같다: contracts/module.md §2.2).
    - 읽기가 끝난 뒤 `systemctl list-units --all 'stt-reader@*'` 가 비어 있고, 호스트의 `/tmp`·`/var/tmp` 에 그 인스턴스의 사설 폴더가 없다(US2-7).
 5. **B-P2-5 실패 대역**: 판정 없이 끊기, 멈추기(상한까지), 메모리 넘기기(768M 초과 할당), `started: false`. 각각 받기에서는 그 요청만 거절되거나

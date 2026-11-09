@@ -6,7 +6,7 @@
 
 ## 1. 읽기 인스턴스 (spec 「읽기 프로세스」)
 
-연결 하나에 systemd 가 띄우는 `stt-reader@<n>-<pid>-<uid>.service` 하나. 안에 감독(주 프로세스) 하나와 해독 자식 하나가 있다(R5).
+연결 하나에 systemd 가 띄우는 `stt-reader@<연결 번호>-<소켓 쿠키>-<상대 PID>_<pidfd 번호>-<상대 UID>.service`(예: `stt-reader@19-14-3512_3513-997.service`, contracts/module.md §2.2) 하나. 안에 감독(주 프로세스) 하나와 해독 자식 하나가 있다(R5).
 
 | 속성 | 값 | 출처 |
 |---|---|---|
