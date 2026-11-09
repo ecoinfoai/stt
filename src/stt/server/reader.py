@@ -13,6 +13,7 @@ Neither side writes logs or anything else to standard output or error.
 from __future__ import annotations
 
 import array
+import fcntl
 import json
 import math
 import os
@@ -116,7 +117,9 @@ def _parse_request(data: bytes) -> tuple[str, float] | None:
 
 def _descriptors_fit(op: str, fds: Sequence[int]) -> bool:
     kinds = _DESCRIPTOR_KINDS[op]
-    return len(fds) == len(kinds) and all(is_kind(os.fstat(fd).st_mode) for is_kind, fd in zip(kinds, fds))
+    if len(fds) != len(kinds) or not all(is_kind(os.fstat(fd).st_mode) for is_kind, fd in zip(kinds, fds)):
+        return False
+    return fcntl.fcntl(fds[0], fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY
 
 
 def _start_child(
@@ -251,9 +254,9 @@ def _adopt_stdin() -> socket.socket | None:
         try:
             connection.getpeername()
         except OSError:
-            pass
-        else:
-            return connection
+            connection.close()
+            return None
+        return connection
     connection.close()
     return None
 

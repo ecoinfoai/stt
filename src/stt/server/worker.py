@@ -104,7 +104,8 @@ def _read(
         The reader's outcome, or ``storage_error`` if ``audio.wav`` could not be written.
 
     Raises:
-        OSError: If the reader client could not open the recording; nothing was sent to the reader.
+        OSError: If the reader client could not open the recording or its pipe, or an OS error reached it
+            after the reader had started (reading the result, or the ``job_running`` callback).
     """
     result = reader_client.decode(
         reader, recording, job_running=lambda: _is_running(layout, request_id), job_limit_s=limit_s
@@ -296,7 +297,7 @@ def _run_job(
         try:
             outcome: str = _read(layout, job.request_id, recording, work_dir, reader, limit_s)
         except OSError:
-            # The reader client could not open the recording or its pipe, so no reader was ever asked.
+            # The reader client failed on an OS error, before or after the reader started; either way no decoded audio exists.
             outcome = "unavailable"
         if outcome not in ("ok", "stopped") and not _is_running(layout, job.request_id):
             # A delete or the daily purge took the job (and removed its files) while the read was in flight.
