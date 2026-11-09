@@ -7,6 +7,7 @@ fixtures so that test collection works before those modules exist.
 from __future__ import annotations
 
 import array
+import dataclasses
 import json
 import math
 import os
@@ -703,6 +704,23 @@ class ReaderSocket:
     def use_fake(self, mode: str) -> None:
         """Runs ``fake_reader.py`` in `mode` (``no-start``, ``not-started`` or ``no-verdict``)."""
         self._emulated.set_command(fake_reader_cmd(mode))
+
+    def use_missing(self) -> None:
+        """Points ``config`` at a socket path where nothing listens, as if the reader unit were not there.
+
+        Code under test must read ``config`` when it is called, not copy it earlier.
+        """
+        self.config = dataclasses.replace(self.config, socket_path=str(self.path.with_name("missing.sock")))
+
+    def use_limits(self, **changes: float) -> None:
+        """Replaces fields of ``config``, e.g. ``decode_limit_s=0.5`` or ``start_timeout_s=1.0``.
+
+        Code under test must read ``config`` when it is called, not copy it earlier.
+
+        Args:
+            **changes: ``ReaderConfig`` field names with their new values.
+        """
+        self.config = dataclasses.replace(self.config, **changes)
 
     def use_supervisor(self, child_command: list[str]) -> None:
         """Runs the real supervisor with a decode-child double.

@@ -191,7 +191,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   끝난다(GPU 단계는 `ffmpeg` 를 부르지 않는다, research R7). US2-1~4 의 권한과 US2-9 의 처리 시간은 Phase 5·8 에서 본다. verify RED: 받기·워커가
   아직 읽기 단위를 쓰지 않아 연결 수 0 · `audio_path` 있음 · 받기가 `av` 를 불러옴 · 엔진이 `to_wav` 를 부름. closes US2-5, US2-6, US2-8(pytest),
   경계 사례 1·2, supports FR-010
-- [ ] T020 [P] [US3] `tests/server/test_decoder_us3.py`(새), [contracts/reader.md](contracts/reader.md) §9 의 대역으로 실패 방식마다 작업 하나:
+- [X] T020 [P] [US3] `tests/server/test_decoder_us3.py`(새), [contracts/reader.md](contracts/reader.md) §9 의 대역으로 실패 방식마다 작업 하나:
   (a) US3-1 — 텍스트에 녹음 확장자를 붙인 첨부는 받기에서 `unreadable_audio`, 같은 묶음의 정상 요청은 `queued`. (b) US3-2 — 받기의 길이 재기에서
   「시작」 뒤 실패하는 대역 → 그 요청만 `unreadable_audio`, 그 요청의 녹음 사본과 기록이 남지 않으며(지금 `tests/server/test_intake.py` 의
   `test_probe_failure_leaves_no_audio_copy_and_no_record` 를 이리로 옮김), 같은 묶음의 다른 요청은 처리된다. (c) US3-3·4·5 — 처리 단계의 해독에서 오류·판정

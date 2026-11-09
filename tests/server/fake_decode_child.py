@@ -1,6 +1,6 @@
 """A fake decode child for the reader supervisor tests.
 
-Usage: ``python fake_decode_child.py [--marker PATH] --mode MODE [--payload TEXT] [--count N] OP RECORDING_FD OUTPUT_FD``
+Usage: ``python fake_decode_child.py [--marker PATH] [--once PATH] --mode MODE [--payload TEXT] [--count N] OP RECORDING_FD OUTPUT_FD``
 
 The supervisor appends ``OP RECORDING_FD OUTPUT_FD`` to the child command it is
 given, exactly as it does for the real child. The fake fails or succeeds in one
@@ -20,6 +20,11 @@ fixed way:
 With ``--marker`` the fake first writes its process id to that file, so a test
 can tell whether the supervisor started it at all.
 
+With ``--once PATH`` only the first process to create PATH behaves as ``--mode``
+says; every later one succeeds: a probe writes a valid result, a decode writes
+``--count`` zero bytes (default one second of silence). A test uses this to make
+one read in a series fail and let the others work.
+
 The fake never reads or interprets recording content: it only inspects
 descriptor identities and writes to the output descriptor.
 """
@@ -35,6 +40,7 @@ import time
 
 MODES = ("exit-error", "hang", "sigkill", "write-raw", "write-raw-then-error", "write-bytes", "verify-spawn")
 VALID_RESULT = b'{"duration_s": 1.5}'
+ONE_SECOND_OF_SILENCE_BYTES = 32000
 
 
 def write_all(fd: int, data: bytes) -> None:
@@ -47,6 +53,38 @@ def write_all(fd: int, data: bytes) -> None:
     view = memoryview(data)
     while view:
         view = view[os.write(fd, view) :]
+
+
+def claim_first(path: str) -> bool:
+    """Tells whether this process is the first to claim `path`.
+
+    Args:
+        path: A file that is created exclusively.
+
+    Returns:
+        True for the one process that created the file, False for every later one.
+    """
+    try:
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except FileExistsError:
+        return False
+    return True
+
+
+def succeed(args: argparse.Namespace) -> int:
+    """Writes a valid result for the operation and ends successfully.
+
+    Args:
+        args: The parsed command line.
+
+    Returns:
+        The process exit code, 0.
+    """
+    if args.op == "probe":
+        write_all(args.output_fd, VALID_RESULT)
+    else:
+        write_all(args.output_fd, bytes(args.count or ONE_SECOND_OF_SILENCE_BYTES))
+    return 0
 
 
 def spawned_as_contracted(args: argparse.Namespace) -> bool:
@@ -84,6 +122,7 @@ def main(argv: list[str]) -> int:
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--marker")
+    parser.add_argument("--once")
     parser.add_argument("--mode", choices=MODES, required=True)
     parser.add_argument("--payload", default="")
     parser.add_argument("--count", type=int, default=0)
@@ -95,6 +134,8 @@ def main(argv: list[str]) -> int:
     if args.marker:
         with open(args.marker, "w", encoding="utf-8") as marker:
             marker.write(str(os.getpid()))
+    if args.once is not None and not claim_first(args.once):
+        return succeed(args)
     if args.mode == "exit-error":
         return 1
     if args.mode == "hang":
