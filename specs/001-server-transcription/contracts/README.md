@@ -30,6 +30,7 @@
 ├── jobs/  audio/  work/  queue/     stt:stt 0700 — 내부(audio/ 아래: 기록 <audio_id>.json, 녹음 파일 폴더 <audio_id>/)
 └── state.lock  worker.lock  intake.lock  sweep.lock
 /run/stt/gpu.lock                    stt:stt 0644 — GPU 잠금(명령줄도 읽기 전용으로 열어 잡는다)
+/run/stt-reader.sock                 root 가 만든 소켓, stt:stt 0600 — 내부(받기·워커가 녹음 읽기를 맡기는 길)
 /var/lib/stt-models/                 stt:stt 0750 — 미리 받아 둔 모델(외부 접속 없이 읽는다)
 ```
 

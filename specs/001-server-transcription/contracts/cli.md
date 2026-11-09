@@ -7,12 +7,14 @@
 
 | 명령 | 하는 일 | 종료 코드 |
 |---|---|---|
-| `stt server intake [--root DIR]` | inbox 의 요청을 한 번 다 처리하고 끝난다(받아들임·거절·지우기) | 0 처리함(거절 포함) · 1 처리하지 못했거나 지우지 못한 요청이 있음(나머지는 처리함) · 2 사용법 오류·실행 계정 · 75 다른 받기가 도는 중 |
-| `stt server work [--root DIR] [--models DIR] --gpu-lock FILE` | 줄이 빌 때까지 job 을 하나씩 처리하고 끝난다 | 0 · 2 · 75 다른 워커가 도는 중 |
+| `stt server intake [--root DIR] [--reader-socket PATH]` | inbox 의 요청을 한 번 다 처리하고 끝난다(받아들임·거절·지우기) | 0 처리함(거절 포함) · 1 처리하지 못했거나 지우지 못한 요청이 있음(나머지는 처리함) · 2 사용법 오류·실행 계정 · 75 다른 받기가 도는 중 |
+| `stt server work [--root DIR] [--models DIR] [--reader-socket PATH] --gpu-lock FILE` | 줄이 빌 때까지 job 을 하나씩 처리하고 끝난다 | 0 · 2 · 75 다른 워커가 도는 중 |
 | `stt server sweep [--root DIR]` | 삭제 시각이 지난 것을 지우고, 멈춘 job 과 남은 대기 표시를 정리하고 끝난다 | 0 · 1 지우지 못한 항목이 있음(나머지는 끝냄) · 2 · 75 다른 청소가 도는 중(`sweep.lock`) |
 | `stt server fetch-models --models DIR` | 고정한 커밋으로 모델을 받아 `refs/main` 을 그 커밋으로 쓰고, 고정 목록을 `DIR/.complete` 에 적는다. `.complete` 의 목록이 코드의 고정 목록과 같으면 망에 닿지 않고 바로 끝난다. 외부 접속과 `HF_TOKEN` 이 필요한 유일한 명령이다(research R9) | 0 · 2 · 1 받기 실패(어느 저장소인지 영어로) |
+| `stt server read` | 읽기 단위 `stt-reader@.service` 의 `ExecStart`. 표준 입력의 연결(`Accept=yes`) 하나에 답하고 끝난다. 상태 폴더도 단계 잠금도 쓰지 않는다 | 0 · 1 · 2 표준 입력이 연결 소켓이 아님 |
 
-- 기본값: `--root /var/lib/stt`, `--models /var/lib/stt-models`. 시험은 임시 폴더를 넘긴다.
+- 기본값: `--root /var/lib/stt`, `--models /var/lib/stt-models`, `--reader-socket /run/stt-reader.sock`. 시험은 임시 폴더를 넘긴다. `read` 의 프로토콜·종료 코드는 002
+  [contracts/reader.md](../../002-decoder-isolation/contracts/reader.md) §8.
 - 75 는 `EX_TEMPFAIL` — 단위의 `SuccessExitStatus` 에 넣는다(path 단위가 겹쳐 깨워도 실패로 치지 않는다).
 - 실행 계정(FR-038): `intake`·`work`·`sweep` 는 `--root` 가 있으면 그 주인과 실행 계정(euid)이 같은지 먼저 본다. 다르면 아무것도 만들지
   않고 stderr 에 `stt server <command> must run as the owner of <root> (uid N), not uid M; start it through its systemd unit.` 를 쓰고

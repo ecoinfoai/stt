@@ -23,16 +23,21 @@ nixos-config 가 한다 — geo-scout 와 같은 모양이다(`nixos-config:flak
 
 | 단위 | 깨우는 것 | 명령 | 망 | GPU | 상한 |
 |---|---|---|---|---|---|
-| `stt-intake.path` → `stt-intake.service` | `PathExistsGlob=/var/lib/stt/requests/inbox/*.json` | `stt server intake` | 없음 | 없음 | MemoryMax 1G · 10분 · `StartLimitIntervalSec=0` |
-| `stt-worker.path` → `stt-worker.service` | `PathExistsGlob=/var/lib/stt/queue/*` | `stt server work --gpu-lock /run/stt/gpu.lock` | 없음 | 있음 | MemoryMax 12G · `TimeoutStartSec=infinity` — job 마다의 처리 상한은 워커가 지키고, GPU 잠금 대기에는 상한이 없다(FR-016). 24시간으로 두면 줄이 길 때 처리 중인 job 이 끊긴다 · `after`·`wants` `stt-models.service` · `StartLimitIntervalSec=0` · `KillSignal=SIGKILL` · `restartIfChanged=false` |
+| `stt-intake.path` → `stt-intake.service` | `PathExistsGlob=/var/lib/stt/requests/inbox/*.json` | `stt server intake --reader-socket /run/stt-reader.sock` | 없음 | 없음 | MemoryMax 1G · 10분 · `StartLimitIntervalSec=0` · `wants`·`after` `stt-reader.socket` |
+| `stt-worker.path` → `stt-worker.service` | `PathExistsGlob=/var/lib/stt/queue/*` | `stt server work --gpu-lock /run/stt/gpu.lock --reader-socket /run/stt-reader.sock` | 없음 | 있음 | MemoryMax 12G · `TimeoutStartSec=infinity` — job 마다의 처리 상한은 워커가 지키고, GPU 잠금 대기에는 상한이 없다(FR-016). 24시간으로 두면 줄이 길 때 처리 중인 job 이 끊긴다 · `after`·`wants` `stt-models.service`, `stt-reader.socket` · `StartLimitIntervalSec=0` · `KillSignal=SIGKILL` · `restartIfChanged=false` |
 | `stt-sweep.timer` → `stt-sweep.service` | 1분마다(`OnCalendar=minutely`, `AccuracySec=1s`, `Persistent=true`) — 기본 `AccuracySec=1min` 이면 23:58 정리가 1분 넘게 늦을 수 있다 | `stt server sweep` | 없음 | 없음 | MemoryMax 512M · 5분 |
+| `stt-reader.socket` → `stt-reader@.service` | 연결마다 한 인스턴스(`/run/stt-reader.sock`, `stt:stt` 0600, `Accept=yes`, `MaxConnections=4`). 받기·워커가 녹음 하나를 읽기 전용 기술자로 넘긴다 | `stt server read` | 없음(`PrivateNetwork`) | 없음(`PrivateDevices`) | MemoryMax 768M · `MemorySwapMax=0` · `RuntimeMaxSec=300` · `DynamicUser=yes`(템플릿의 모든 인스턴스가 같은 동적 UID, 인스턴스 사이는 이름공간으로 가른다) · `restartIfChanged=false` · `KillSignal=SIGKILL`. 설정 전부와 까닭은 002 [contracts/module.md](../../002-decoder-isolation/contracts/module.md) §2 |
 | `stt-models.service` | 부팅마다(`wantedBy multi-user`, 조건 없음, `RemainAfterExit=true`). `.complete` 의 고정 목록이 같으면 망에 닿지 않고 바로 끝나고, stt 판이 고정 목록을 바꾸면 새 판을 받는다. 판이 바뀐 배포에서 NixOS 가 다시 돌린다 `[VERIFY]`(research R9). `wants`·`after` `network-online.target` | `stt server fetch-models` | 있음 | 없음 | 2시간 |
 
 모든 단위 공통(geo-scout 의 묶음을 따른다): `Type=oneshot`, `User=stt`, `Group=stt`, `UMask=0027`, `NoNewPrivileges`,
 `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `ProtectKernel*`, `ProtectControlGroups`, `RestrictNamespaces`, `RestrictSUIDSGID`,
 `LockPersonality`, `CapabilityBoundingSet=""`, `PrivatePIDs`, `SuccessExitStatus=75`, `StateDirectory=stt`·`StateDirectoryMode=0751`
-(기본값 0755 — contracts/README §2), 그리고 이 기능에 더하는 것:
+(기본값 0755 — contracts/README §2). 읽기 단위 `stt-reader@` 는 `DynamicUser=yes` 라 `User=stt`·`StateDirectory` 를 따르지 않고 자기 설정을 가진다(002
+[contracts/module.md](../../002-decoder-isolation/contracts/module.md) §2). 그리고 이 기능에 더하는 것:
 
+- **공통 세 설정**(002, 받기·워커·청소·모델 받기): `SystemCallArchitectures=native`, `SystemCallFilter=@system-service`(관측으로 정한 예외만 더한다),
+  `MemoryDenyWriteExecute=true`(워커는 호스트 판정에 따른다). `SystemCallErrorNumber` 는 두지 않아 어기면 SIGSYS 로 끝난다. 값과 예외는
+  `docs/server-security.md` §1, 설정 표는 002 [contracts/module.md](../../002-decoder-isolation/contracts/module.md) §1.
 - **`MemorySwapMax=0`** — 이 호스트의 스왑은 평문이다(bhu-llm F198). 녹음을 푼 메모리가 스왑으로 내려가지 않게 한다(FR-035).
 - **`LimitCORE=0`** — 엔진이 죽어도 녹음이 담긴 오류 덤프가 남지 않게 한다(FR-035).
 - 망: 모델 받기 말고는 `PrivateNetwork=true`, `RestrictAddressFamilies=AF_UNIX`(FR-015).
