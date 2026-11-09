@@ -1,4 +1,4 @@
-# NixOS VM test of `services.stt` (quickstart B, steps 1-11; contracts/module.md sections 1-3).
+# NixOS VM test of `services.stt` (quickstart B, steps 1-11 and B-P2-1..7; contracts/module.md).
 #
 # There is no GPU and there are no models in the VM, so every transcribe job the
 # worker runs ends `failed(gpu_unavailable)`: the engine checks the GPU before the
@@ -15,6 +15,8 @@
   package,
 }:
 let
+  inherit (pkgs) lib;
+
   audio = pkgs.runCommand "stt-vm-audio" { nativeBuildInputs = [ pkgs.ffmpeg ]; } ''
     mkdir $out
     ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=2" \
@@ -66,6 +68,19 @@ let
         scratch.mkdir(mode=0o700, parents=True)
         (scratch / "diarize.wav").write_bytes(bytes(4096))
   '';
+
+  # Each specialisation runs the reader instance as a test double (nix/vm-reader-double.py):
+  # `<behaviour for the length probe> <behaviour for the decode>`. A double never interprets
+  # the recording (contracts/reader.md section 9).
+  readerDouble = ./vm-reader-double.py;
+  readerDoubles = {
+    reader-check = "check check";
+    reader-no-verdict = "no-verdict no-verdict";
+    reader-hang = "hold hold";
+    reader-memory = "memory memory";
+    reader-not-started = "not-started not-started";
+    reader-hold-decode = "ok hold";
+  };
 in
 pkgs.testers.runNixOSTest {
   name = "stt-server";
@@ -90,6 +105,10 @@ pkgs.testers.runNixOSTest {
       memorySize = 2048;
       cores = 2;
     };
+    specialisation = lib.mapAttrs (_: behaviours: {
+      configuration.systemd.services."stt-reader@".serviceConfig.ExecStart =
+        lib.mkForce "${package}/bin/python ${readerDouble} ${behaviours}";
+    }) readerDoubles;
   };
 
   nodes.fetcher = {
@@ -103,12 +122,16 @@ pkgs.testers.runNixOSTest {
     virtualisation.memorySize = 1024;
   };
 
-  testScript = ''
+  testScript =
+    { nodes, ... }:
+    ''
     import base64
+    import io
     import json
     import shlex
     import time
     import uuid
+    import wave
     from datetime import datetime, timedelta, timezone
 
     STATE = "/var/lib/stt"
@@ -283,9 +306,8 @@ pkgs.testers.runNixOSTest {
             assert prop(unit, "StartLimitIntervalUSec") == "0", (unit, prop(unit, "StartLimitIntervalUSec"))
         assert prop(worker, "MemoryMax") == str(12 * 1024**3), prop(worker, "MemoryMax")
         assert "stt-models.service" not in prop(worker, "After")
-        assert server.succeed(f"grep '^ExecStart=' /etc/systemd/system/{worker}").strip().endswith(
-            "/bin/stt server work --gpu-lock /run/stt/gpu.lock"
-        )
+        # The reader socket argument that follows is checked in the reader subtest below.
+        assert "/bin/stt server work --gpu-lock /run/stt/gpu.lock" in server.succeed(f"grep '^ExecStart=' /etc/systemd/system/{worker}")
         for unit, memory, timeout in (
             ("stt-intake.service", 1024**3, "10min"),
             ("stt-sweep.service", 512 * 1024**2, "5min"),
@@ -306,6 +328,55 @@ pkgs.testers.runNixOSTest {
             syscall_filter = prop(unit, "SystemCallFilter", node)
             assert syscall_filter and not syscall_filter.startswith("~"), (unit, syscall_filter)
             assert prop(unit, "MemoryDenyWriteExecute", node) == "yes", (unit, prop(unit, "MemoryDenyWriteExecute", node))
+
+    # The reader's own settings need no request, so they are checked here, before the first
+    # subtest that sends one. Intake and the worker cannot work without the reader unit.
+    with subtest("the reader socket and unit carry the settings of contracts/module.md section 2 (B-P2-1)"):
+        reader = "stt-reader@check.service"
+        socket_unit = "stt-reader.socket"
+        assert prop(reader, "LoadState") == "loaded", prop(reader, "LoadState")
+        assert prop(socket_unit, "LoadState") == "loaded", prop(socket_unit, "LoadState")
+        server.succeed(f"systemctl is-active {socket_unit}")
+        assert prop(socket_unit, "Listen") == "/run/stt-reader.sock (SequentialPacket)", prop(socket_unit, "Listen")
+        assert prop(socket_unit, "Accept") == "yes"
+        assert prop(socket_unit, "SocketUser") == "stt" and prop(socket_unit, "SocketGroup") == "stt"
+        assert prop(socket_unit, "SocketMode") == "0600", prop(socket_unit, "SocketMode")
+        assert prop(socket_unit, "MaxConnections") == "4"
+        assert "sockets.target" in prop(socket_unit, "WantedBy")
+        assert server.succeed("stat -c '%a %U %G' /run/stt-reader.sock").strip() == "600 stt stt"
+
+        # `RestrictAddressFamilies=none` shows as an empty allow list; an unset one shows as `~`.
+        for name, value in (
+            ("DynamicUser", "yes"), ("PrivateDevices", "yes"), ("PrivateNetwork", "yes"),
+            ("RestrictAddressFamilies", ""), ("ProtectHome", "yes"), ("ProtectSystem", "strict"),
+            ("PrivateIPC", "yes"), ("PrivatePIDs", "yes"), ("ProtectProc", "invisible"), ("ProcSubset", "pid"),
+            ("ProtectKernelTunables", "yes"), ("ProtectKernelModules", "yes"), ("ProtectKernelLogs", "yes"),
+            ("ProtectControlGroups", "yes"), ("ProtectClock", "yes"), ("ProtectHostname", "yes"),
+            ("RestrictNamespaces", "yes"), ("RestrictRealtime", "yes"), ("LockPersonality", "yes"),
+            ("RestrictSUIDSGID", "yes"), ("NoNewPrivileges", "yes"), ("CapabilityBoundingSet", ""),
+            ("SystemCallArchitectures", "native"), ("MemoryDenyWriteExecute", "yes"),
+            ("MemoryMax", str(768 * 1024**2)), ("MemorySwapMax", "0"), ("LimitCORE", "0"), ("LimitFSIZE", "0"),
+            ("TasksMax", "32"), ("RuntimeMaxUSec", "5min"), ("KillSignal", "9"),
+            ("CollectMode", "inactive-or-failed"), ("StandardInput", "socket"), ("StandardOutput", "null"),
+            ("StandardError", "journal"),
+        ):
+            assert prop(reader, name) == value, (name, prop(reader, name))
+        assert prop(reader, "PrivateTmp") in ("yes", "disconnected"), prop(reader, "PrivateTmp")
+        assert set(prop(reader, "InaccessiblePaths").split()) == {"/var/lib/stt", "/var/lib/stt-models", "/run/stt"}, prop(reader, "InaccessiblePaths")
+        calls = set(prop(reader, "SystemCallFilter").split())
+        assert calls and not prop(reader, "SystemCallFilter").startswith("~"), prop(reader, "SystemCallFilter")
+        assert "read" in calls, "the filter allows the ordinary calls"
+        for call in ("process_vm_readv", "process_vm_writev", "io_uring_setup", "io_uring_enter", "io_uring_register", "userfaultfd", "setuid", "chroot"):
+            assert call not in calls, call
+        assert server.succeed("grep '^ExecStart=' /etc/systemd/system/stt-reader@.service").strip().endswith("/bin/stt server read")
+
+        for unit, command in (
+            ("stt-intake.service", "server intake --reader-socket /run/stt-reader.sock"),
+            ("stt-worker.service", "server work --gpu-lock /run/stt/gpu.lock --reader-socket /run/stt-reader.sock"),
+        ):
+            assert socket_unit in prop(unit, "Requires").split(), (unit, prop(unit, "Requires"))
+            assert socket_unit in prop(unit, "After").split(), (unit, prop(unit, "After"))
+            assert server.succeed(f"grep '^ExecStart=' /etc/systemd/system/{unit}").strip().endswith(f"/bin/stt {command}"), unit
 
     with subtest("a request is queued within seconds and waits behind the operator's GPU lock (B-1, B-7)"):
         hold_gpu("gpu-hold-1", 20)
@@ -507,5 +578,339 @@ pkgs.testers.runNixOSTest {
             # Positive control: without it an empty result could mean the VM never logs seccomp kills.
             node.fail("systemd-run --wait --collect -p 'SystemCallFilter=~uname' uname")
             node.wait_until_succeeds("journalctl -k --no-pager -o cat | grep -F type=1326", timeout=30)
+
+    # ---- P2: the reader unit (quickstart B-P2-1 .. B-P2-7) ------------------------------------
+    # They come after the P1 and 001 subtests; the reader's settings are checked earlier (see above).
+
+    TOPLEVEL = "${nodes.server.system.build.toplevel}"
+    HANGING_CUDA = "${hangingCuda}/lib"
+    READER_INSTANCES = "systemctl list-units --all --plain --no-legend 'stt-reader@*'"
+    UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    # Groups the double always adds after the ones in its target list (nix/vm-reader-double.py).
+    FIXED_GROUPS = ("network", "own-fd-write", "scratch-write", "other-processes")
+    TARGETS_FILE = "/run/vm-double/targets.json"
+
+    def switch_to(specialisation=None):
+        """Activates the base system or one of its specialisations without touching the boot entry."""
+        path = TOPLEVEL if specialisation is None else f"{TOPLEVEL}/specialisation/{specialisation}"
+        server.succeed(f"{path}/bin/switch-to-configuration test")
+
+    def no_reader_instance():
+        """No `stt-reader@*` unit remains in any state, and none left a private folder on the host (US2-7)."""
+        server.wait_until_succeeds(f"test -z \"$({READER_INSTANCES})\"", timeout=60)
+        server.succeed("test -z \"$(find /tmp /var/tmp -maxdepth 1 -name 'systemd-private-*stt-reader*')\"")
+
+    def wait_reader_instance():
+        server.wait_until_succeeds(f"test -n \"$({READER_INSTANCES})\"", timeout=60)
+        return server.succeed(f"{READER_INSTANCES} | awk '{{print $1}}' | head -n 1").strip()
+
+    def failed_stt_units():
+        listing = server.succeed("systemctl --failed --plain --no-legend")
+        return {line.split()[0] for line in listing.splitlines() if line.startswith("stt")}
+
+    def hang_cuda():
+        server.succeed(f"mkdir -p /run/opengl-driver && ln -sfn {HANGING_CUDA} /run/opengl-driver/lib")
+
+    def release_cuda():
+        server.succeed("rm -rf /run/opengl-driver")
+
+    def stop_worker():
+        """Kills the worker with the unit's own stop; that leaves it `failed(signal)`, which is not a reader failure."""
+        server.succeed("systemctl stop stt-worker.service")
+        server.succeed("systemctl reset-failed stt-worker.service")
+
+    def end_held_job(request_id):
+        """Stops the worker under a running job; the sweep then ends the job `interrupted` and clears work/."""
+        stop_worker()
+        sweep()
+        assert failed_with("interrupted")(response(request_id)), response(request_id)
+        server.succeed(f"test -z \"$(ls -A {STATE}/work)\"")
+
+    def read_wav(path):
+        raw = base64.b64decode(server.succeed(f"base64 -w0 {path}"))
+        with wave.open(io.BytesIO(raw)) as handle:
+            return (handle.getnchannels(), handle.getsampwidth(), handle.getframerate()), handle.readframes(handle.getnframes())
+
+    def wait_queued(request_id):
+        return wait_response(request_id, lambda doc: doc["state"] == "queued")
+
+    with subtest("a 2 s job passes the read stage: audio.wav is there and spec.json names no recording (B-P2-1, B-P2-2)"):
+        hang_cuda()
+        passed = transcribe()
+        submit(passed)
+        wait_response(passed["request_id"], lambda doc: doc["state"] == "running", timeout=30)
+        work = f"{STATE}/work/{passed['request_id']}"
+        server.wait_until_succeeds(f"test -f {work}/audio.wav", timeout=60)
+        fmt, frames = read_wav(f"{work}/audio.wav")
+        assert fmt == (1, 2, 16000), fmt
+        assert abs(len(frames) // 2 - 2 * 16000) <= 1600, len(frames)
+        spec = json.loads(server.succeed(f"cat {work}/spec.json"))
+        assert "audio_path" not in spec, spec
+        assert abs(spec["duration_s"] - 2.0) < 0.2, spec
+        release_cuda()
+        end_held_job(passed["request_id"])
+        server.succeed(f"test -d {STATE}/audio/{passed['request_id']}")
+        after = transcribe()
+        submit(after)
+        wait_response(after["request_id"], failed_with("gpu_unavailable"), timeout=60)
+        no_reader_instance()
+        assert not failed_stt_units(), failed_stt_units()
+
+    with subtest("a text file with a recording extension is refused while a good recording in the same batch is queued (B-P2-3)"):
+        hold_gpu("gpu-hold-batch", 900)
+        good = transcribe()
+        bad = transcribe(extension="mp3")
+        submit(good)
+        submit(bad, source=f"{AUDIO}/corrupt.mp3", extension="mp3")
+        assert failed_with("unreadable_audio")(response(bad["request_id"], timeout=30)), response(bad["request_id"])
+        assert wait_queued(good["request_id"])["queue_position"] == 1
+        inbox_empty()
+        assert not failed_stt_units(), failed_stt_units()
+        server.succeed("systemctl stop gpu-hold-batch.service")
+        wait_response(good["request_id"], failed_with("gpu_unavailable"), timeout=60)
+        no_reader_instance()
+        assert not failed_stt_units(), failed_stt_units()
+
+    with subtest("a reader instance reaches nothing but its own recording, and probe and decode run as different one-off users (B-P2-4)"):
+        for node_name, major, minor in (("nvidia0", 195, 0), ("nvidiactl", 195, 255), ("nvidia-uvm", 510, 0)):
+            server.succeed(f"mknod -m 0666 /dev/{node_name} c {major} {minor}")
+        switch_to("reader-check")
+        # The test runs the queue by hand (a switch starts the path unit and the timer again, so
+        # they are stopped after it): the worker starts only when asked, so that the stand-in work
+        # folders planted below survive the dead-worker cleanup at its start.
+        server.succeed("systemctl stop stt-worker.path stt-sweep.timer")
+        hang_cuda()
+        stt_uid = int(server.succeed("id -u stt"))
+        a, b, c, a2 = (str(uuid.uuid4()) for _ in range(4))
+
+        def audio_paths(i):
+            return [f"{STATE}/audio/{i}", f"{STATE}/audio/{i}/audio.wav", f"{STATE}/audio/{i}.json"]
+
+        def job_paths(i):
+            return [f"{STATE}/jobs/{i}", f"{STATE}/jobs/{i}/job.json"]
+
+        def work_paths(i):
+            return [f"{STATE}/work/{i}", f"{STATE}/work/{i}/audio.wav", f"{STATE}/work/{i}/spec.json"]
+
+        # Not-yet-existing paths are fine in the list; the paths the checks rely on are asserted below.
+        TARGET_GROUPS = [
+            ("audio-A", audio_paths(a)), ("audio-B", audio_paths(b)),
+            ("jobs-A", job_paths(a)), ("jobs-B", job_paths(b)), ("jobs-A2", job_paths(a2)),
+            ("work-A", work_paths(a)), ("work-B", work_paths(b)), ("work-A2", work_paths(a2)),
+            ("outbox", [OUTBOX, f"{OUTBOX}/{a}.json", f"{OUTBOX}/{b}.json"]),
+            ("inbox", [INBOX]),
+            ("state-root", [STATE, f"{STATE}/state.lock", f"{STATE}/worker.lock", f"{STATE}/queue"]),
+            ("gpu-lock", ["/run/stt", GPU_LOCK, "/var/lib/stt-models"]),
+            ("devices", ["/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm"]),
+        ]
+        GROUP_NAMES = [name for name, _ in TARGET_GROUPS] + list(FIXED_GROUPS)
+        document = {"groups": [{"name": name, "paths": paths} for name, paths in TARGET_GROUPS]}
+        server.succeed(
+            "mkdir -p -m 0755 /run/vm-double"
+            f" && echo {base64.b64encode(json.dumps(document).encode()).decode()} | base64 -d > {TARGETS_FILE}"
+            f" && chmod 0644 {TARGETS_FILE}"
+        )
+
+        def plant_work(i):
+            """A stand-in for another job's work folder with its decoded audio and its spec."""
+            server.succeed(as_user("stt", f"umask 077 && mkdir {STATE}/work/{i} && echo decoy > {STATE}/work/{i}/audio.wav && echo decoy > {STATE}/work/{i}/spec.json"))
+
+        def start_read(decoys, lock_unit, existing):
+            """Starts the worker behind the operator's lock, plants stand-in work folders and lets the read begin."""
+            server.succeed("systemctl start --no-block stt-worker.service")
+            server.wait_until_succeeds("systemctl show -P ActiveState stt-worker.service | grep -Ex 'activating|active'", timeout=30)
+            time.sleep(3)
+            for decoy in decoys:
+                plant_work(decoy)
+            for path in existing + [f"{STATE}/work/{decoy}" for decoy in decoys]:
+                server.succeed(f"test -e {path}")
+            server.succeed(f"systemctl stop {lock_unit}.service")
+
+        def finish_read(request_id):
+            """Waits for the decoded audio of the job (the double's report) and parses it."""
+            server.wait_until_succeeds(f"test -f {STATE}/work/{request_id}/audio.wav", timeout=120)
+            server.succeed(f"test -f {STATE}/work/{request_id}/spec.json")
+            fmt, frames = read_wav(f"{STATE}/work/{request_id}/audio.wav")
+            assert fmt == (1, 2, 16000), fmt
+            return json.loads(frames.decode("utf-8"))
+
+        def probe_report(request_id):
+            record = json.loads(server.succeed(f"cat {STATE}/jobs/{request_id}/job.json"))
+            packed = round(record["duration_s"] * 2**30)
+            return {
+                "uid": packed & 0x1FFFF,
+                "own_fd_readable": bool(packed >> 17 & 1),
+                "successes": packed >> 18 & 0xFF,
+                "reached": [name for index, name in enumerate(GROUP_NAMES) if packed >> 26 >> index & 1],
+            }
+
+        def assert_confined(report, who):
+            assert report["own_fd_readable"] is True, (who, report)
+            if "groups" in report:
+                assert report["control"] == 2, (who, report)
+                reached = {name: count for name, count in report["groups"].items() if count}
+                assert not reached, (who, reached)
+            else:
+                assert report["reached"] == [] and report["successes"] == 0, (who, report)
+            assert report["uid"] != stt_uid and 61184 <= report["uid"] <= 65519, (who, report, stt_uid)
+
+        common = [
+            f"{STATE}/audio/{a}/audio.wav", f"{STATE}/audio/{b}/audio.wav", f"{STATE}/jobs/{a}/job.json",
+            f"{STATE}/jobs/{b}/job.json", f"{OUTBOX}/{a}.json", f"{OUTBOX}/{b}.json", INBOX, GPU_LOCK,
+            f"{STATE}/state.lock", "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm",
+        ]
+
+        # A: job A (requester one, with hints) and job B (requester two) wait behind the operator's lock.
+        hold_gpu("gpu-hold-a", 900)
+        submit(transcribe(a, hints=HINTS))
+        wait_queued(a)
+        submit(transcribe(b, requester=OTHER))
+        wait_queued(b)
+        start_read([b], "gpu-hold-a", common)
+        # While A's decode instance is held open, a third request's length probe runs next to it.
+        decode_instance = wait_reader_instance()
+        decode_uid = int(prop(decode_instance, "UID"))
+        submit(transcribe(c))
+        wait_queued(c)
+        server.succeed(f"systemctl is-active {decode_instance}")
+        assert int(prop(decode_instance, "UID")) == decode_uid
+        report_a = finish_read(a)
+        server.succeed(f"rm -r {STATE}/work/{b}")
+        assert_confined(report_a, "decode of A")
+        assert report_a["uid"] == decode_uid, (report_a, decode_uid)
+        probes = {name: probe_report(name_id) for name, name_id in (("A", a), ("B", b), ("C", c))}
+        for name, report in probes.items():
+            assert_confined(report, f"probe of {name}")
+        assert probes["C"]["uid"] != report_a["uid"], (
+            "probe and decode ran at the same time under one UID", probes["C"], report_a, prop(decode_instance, "User")
+        )
+        assert response(delete(c))["outcome"] == "deleted"
+        end_held_job(a)
+        no_reader_instance()
+
+        # B: another requester's job, read while a stand-in for A's decoded audio exists.
+        hold_gpu("gpu-hold-b", 900)
+        start_read([a], "gpu-hold-b", common + [f"{STATE}/audio/{a}.json"])
+        report_b = finish_read(b)
+        server.succeed(f"rm -r {STATE}/work/{a}")
+        assert_confined(report_b, "decode of B")
+        end_held_job(b)
+        no_reader_instance()
+
+        # A': a second pass over A's recording reaches that recording through the descriptor only.
+        again = transcribe(a2, audio={"from_request": a})
+        submit(again, source=None)
+        wait_queued(a2)
+        hold_gpu("gpu-hold-a2", 900)
+        start_read([a, b], "gpu-hold-a2", common + [f"{STATE}/jobs/{a2}/job.json"])
+        report_a2 = finish_read(a2)
+        for decoy in (a, b):
+            server.succeed(f"rm -r {STATE}/work/{decoy}")
+        assert_confined(report_a2, "decode of A2")
+        end_held_job(a2)
+        no_reader_instance()
+        assert not failed_stt_units(), failed_stt_units()
+
+        release_cuda()
+        for node_name in ("nvidia0", "nvidiactl", "nvidia-uvm"):
+            server.succeed(f"rm /dev/{node_name}")
+        server.succeed("systemctl start stt-worker.path stt-sweep.timer")
+        switch_to()
+
+    WORKER_DETAIL = {
+        "unreadable_audio": "The recording could not be read as audio.",
+        "engine_error": "The server could not start the audio reader.",
+    }
+
+    for double, intake_reason, worker_reason, wait in (
+        ("reader-no-verdict", "unreadable_audio", "unreadable_audio", 90),
+        ("reader-hang", "unreadable_audio", "unreadable_audio", 330),
+        ("reader-memory", "unreadable_audio", "unreadable_audio", 90),
+        ("reader-not-started", None, "engine_error", 90),
+    ):
+        with subtest(f"{double}: only the affected job fails, the next job completes and no instance is left (B-P2-5)"):
+            lock = f"gpu-hold-{double}"
+            if double == "reader-memory":
+                # The test VM panics on any out-of-memory kill; the unit's memory cap killing the
+                # reader is exactly what this subtest expects.
+                panic_on_oom = server.succeed("sysctl -n vm.panic_on_oom").strip()
+                server.succeed("sysctl -w vm.panic_on_oom=0")
+            # The job to be decoded by the failing reader is accepted by the healthy one first.
+            hold_gpu(lock, 900)
+            victim = transcribe()
+            submit(victim)
+            wait_queued(victim["request_id"])
+            switch_to(double)
+            server.succeed(f"systemctl stop {lock}.service")
+            late = transcribe()
+            submit(late)
+            if intake_reason is None:
+                inbox_empty()
+                server.fail(f"test -e {OUTBOX}/{late['request_id']}.json")
+                server.succeed(f"journalctl --no-pager -u stt-intake.service | grep -F '{late['request_id']} intake error'")
+            else:
+                assert failed_with(intake_reason)(response(late["request_id"], timeout=90)), response(late["request_id"])
+                inbox_empty()
+            done = wait_response(victim["request_id"], failed_with(worker_reason), timeout=wait)
+            assert done["failure"]["detail"] == WORKER_DETAIL[worker_reason], done
+            no_reader_instance()
+            if double == "reader-memory":
+                server.wait_until_succeeds("journalctl --no-pager -o cat -u 'stt-reader@*' | grep -i 'oom'", timeout=30)
+                server.succeed(f"sysctl -w vm.panic_on_oom={panic_on_oom}")
+            # A request the reader could not even be asked about ends the intake run with an error exit
+            # (001 FR-032a); that is the one unit state the failure doubles may leave behind.
+            allowed = {"stt-intake.service"} if intake_reason is None else set()
+            assert failed_stt_units() <= allowed, failed_stt_units()
+            server.succeed("systemctl reset-failed 'stt-*'")
+            switch_to()
+            following = transcribe()
+            submit(following)
+            wait_response(following["request_id"], failed_with("gpu_unavailable"), timeout=60)
+            no_reader_instance()
+            assert not failed_stt_units(), failed_stt_units()
+
+    with subtest("a deletion, the 23:58 purge and a stopped worker end a held read at once and leave no file (B-P2-6)"):
+        switch_to("reader-hold-decode")
+
+        def held_read():
+            job = transcribe()
+            submit(job)
+            wait_response(job["request_id"], lambda doc: doc["state"] == "running", timeout=60)
+            wait_reader_instance()
+            return job["request_id"]
+
+        def no_files_of(request_id):
+            no_reader_instance()
+            server.wait_until_succeeds(
+                f"test ! -e {STATE}/audio/{request_id} && test -z \"$(ls -A {STATE}/work)\"", timeout=60
+            )
+
+        deleted = held_read()
+        started = time.monotonic()
+        assert response(delete(deleted))["outcome"] == "deleted"
+        no_files_of(deleted)
+        assert time.monotonic() - started < 60, time.monotonic() - started
+        idle("stt-worker.service")
+
+        stopped_worker = held_read()
+        stop_worker()
+        no_reader_instance()
+        sweep()
+        assert failed_with("interrupted")(response(stopped_worker)), response(stopped_worker)
+        server.succeed(f"test -z \"$(ls -A {STATE}/work)\"")
+
+        purged = held_read()
+        local = vm_now().astimezone(KST)
+        set_clock(datetime(local.year, local.month, local.day, 23, 58, 10, tzinfo=KST))
+        sweep()
+        no_files_of(purged)
+        idle("stt-worker.service")
+        assert not failed_stt_units(), failed_stt_units()
+        switch_to()
+
+    with subtest("the reader units' journal holds no job ID (B-P2-7, FR-019)"):
+        reader_log = server.succeed("journalctl --no-pager -o cat -u 'stt-reader@*'")
+        assert reader_log.strip(), "the memory double left lines, so an empty log would mean the query is wrong"
+        server.fail(f"journalctl --no-pager -o cat -u 'stt-reader@*' | grep -E '{UUID_PATTERN}'")
   '';
 }

@@ -256,12 +256,12 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ### Tests (write first) ⚠️
 
-- [ ] T030 [US2] `nix/vm-test.nix` 에 B-P2-1~3 부분 시험: (1) [contracts/module.md](contracts/module.md) §4 의 읽기 단위·소켓 조회 값이 §2 의 표와
+- [X] T030 [US2] `nix/vm-test.nix` 에 B-P2-1~3 부분 시험: (1) [contracts/module.md](contracts/module.md) §4 의 읽기 단위·소켓 조회 값이 §2 의 표와
   같다 — `MemorySwapMax=0`·`LimitCORE=0`·`KillSignal`·`CollectMode`·`PrivateTmp` 포함(FR-012 의 스왑·덤프 없음). (2) 2초 사인파 job 이 읽기 단계를 지나 `gpu_unavailable` 로 끝나고, 001 VM 시험의 `hangingCuda` 로 엔진을 붙잡아 둔 동안
   `work/<id>/audio.wav`(16-bit 모노 16 kHz)가 있고 `spec.json` 에 `audio_path` 가 없다 — 받기·워커가 자기 샌드박스에서 소켓에 접속했음도 이것으로
   성립한다(B-P2-2). (3) 기존 `corrupt.mp3` 와 정상 녹음을 같은 묶음으로 맡기면 텍스트는 `unreadable_audio`, 정상은 `queued`, `systemctl --failed`
   에 stt 단위가 없다. verify RED: 읽기 단위가 없어 조회와 job 이 실패한다. closes US2-5(VM), US3-1(VM), SC-004, supports FR-012, 해결 `[VERIFY]` B-P2-1·B-P2-2
-- [ ] T031 [US2] `nix/vm-test.nix` 에 B-P2-4 권한 점검: specialisation 이 읽기 단위의 `ExecStart` 를 권한 점검 대역으로 바꾼다. 대역은 quickstart
+- [X] T031 [US2] `nix/vm-test.nix` 에 B-P2-4 권한 점검: specialisation 이 읽기 단위의 `ExecStart` 를 권한 점검 대역으로 바꾼다. 대역은 quickstart
   B-P2-4 목록의 자원(쓰기 가능한 자리의 자료 쓰기 포함)을 열어 보고, 성공 수, 자기가 받은 녹음 기술자를 읽을 수 있었는지, 자기 UID 를 판정 자리에
   담아 돌려준다. VM 에는 장치 번호만 같은 가짜 `/dev/nvidia0`·`nvidiactl`·`nvidia-uvm` 노드를 먼저 만든다. 요청자가 다른 작업 A·B 와 A 의 재전사
   A′ 를 두고, A 의 읽기와 A′ 의 읽기에서 각각 돌린다. 단언: 모든 성공 수 0. 두 읽기 모두 자기 녹음 기술자는 읽힘(US2-2 — A′ 는 공유 녹음에
@@ -269,11 +269,11 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   `systemctl list-units --all 'stt-reader@*'` 가 비어 있고 호스트 `/tmp`·`/var/tmp` 에 그 인스턴스의 사설 폴더가 없음. 대역은 녹음 내용을 해석하지
   않는다. verify RED: 읽기 단위가 없다. closes US2-1, US2-2, US2-3, US2-4, US2-6, US2-7(VM, 정상 끝), 경계 사례 2, SC-002,
   해결 `[VERIFY]` B-P2-4
-- [ ] T032 [US3] `nix/vm-test.nix` 에 B-P2-5 실패 대역: [contracts/reader.md](contracts/reader.md) §9 의 VM 줄을 specialisation 으로 하나씩 넣는다.
+- [X] T032 [US3] `nix/vm-test.nix` 에 B-P2-5 실패 대역: [contracts/reader.md](contracts/reader.md) §9 의 VM 줄을 specialisation 으로 하나씩 넣는다.
   단언: 받기에서는 그 요청만 거절되거나 치워지고, 처리에서는 그 작업만 `unreadable_audio`(띄우지 못함은 `engine_error`)이며, 바로 뒤의 정상
   작업이 `gpu_unavailable` 까지 가고, `systemctl --failed` 에 stt 단위가 없으며, 각 실패 뒤 `stt-reader@*` 인스턴스가 남지 않는다.
   verify RED: 읽기 단위가 없다. closes US3-2, US3-3, US3-4, US3-5, US3-6, US3-8(VM), US2-7(VM, 실패·강제 종료), SC-005
-- [ ] T033 [US4] `nix/vm-test.nix` 에 B-P2-6·7: 멈추는 대역으로 읽기를 붙잡아 둔 채 (1) 「다 지우기」 → 1분 안에 `stt-reader@*` 인스턴스가 없고 그
+- [X] T033 [US4] `nix/vm-test.nix` 에 B-P2-6·7: 멈추는 대역으로 읽기를 붙잡아 둔 채 (1) 「다 지우기」 → 1분 안에 `stt-reader@*` 인스턴스가 없고 그
   작업의 파일 0, (2) VM 시계를 23:58 로 옮겨 청소 → 같음, (3) `systemctl stop stt-worker` → 인스턴스가 끝나고 청소 뒤 `interrupted`, `work/` 비어
   있음. 그리고 `journalctl -u 'stt-reader@*'` 에 작업 ID 가 하나도 없다. verify RED: 읽기 단위가 없다. closes US4-4, US4-5, US4-6(VM),
   SC-008(VM), supports FR-013, FR-019
