@@ -696,7 +696,6 @@ def load_model(model_name: str, device: str) -> "WhisperModel":
     Examples:
         >>> load_model("large-v3", "cuda")  # doctest: +SKIP
     """
-    import numpy as np
     from faster_whisper import WhisperModel
 
     compute = "int8_float16"

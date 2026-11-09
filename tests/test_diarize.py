@@ -800,8 +800,9 @@ class TestDiarizedBlocksFromWav:
         )
 
     def test_same_blocks_and_same_diarizer_input_as_diarized_blocks(
-        self, seen, tmp_path
+        self, seen, tmp_path, monkeypatch
     ):
+        from stt import diarize as dz
         from stt import transcribe
 
         whole = transcribe.diarized_blocks(
@@ -811,6 +812,10 @@ class TestDiarizedBlocksFromWav:
         seen_whole = list(seen["calls"])
         seen["calls"].clear()
 
+        def forbidden_to_wav(src, dst):
+            raise AssertionError("the WAV-taking half must not run ffmpeg")
+
+        monkeypatch.setattr(dz, "to_wav", forbidden_to_wav)
         split = transcribe.diarized_blocks_from_wav(
             tone, "talk.m4a", self._segments(), self._args(), None
         )
