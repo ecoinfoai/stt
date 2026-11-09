@@ -42,7 +42,11 @@ from stt.server.reader import (
 Outcome = Literal["ok", "failed", "unavailable", "stopped", "timeout"]
 
 _PIPE_READ_BYTES = 65536
-_LIMITS_S = {"probe": PROBE_LIMIT_S, "decode": DECODE_LIMIT_S}
+
+
+def _require_finite_positive(name: str, value: float) -> None:
+    if not 0 < value < math.inf:
+        raise ValueError(f"{name} must be finite and above 0")
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,8 @@ class ReaderConfig:
     decode_limit_s: float = DECODE_LIMIT_S
 
     def __post_init__(self) -> None:
+        for name in ("start_timeout_s", "verdict_grace_s", "poll_s"):
+            _require_finite_positive(name, getattr(self, name))
         for name, bound in (("probe_limit_s", PROBE_LIMIT_S), ("decode_limit_s", DECODE_LIMIT_S)):
             if not 0 < getattr(self, name) <= bound:
                 raise ValueError(f"{name} must be above 0 and at most {bound}")
@@ -319,7 +325,9 @@ def decode(
 
     Raises:
         OSError: If the recording cannot be opened (a symbolic link included); nothing was sent.
-        ValueError: If the recording is not a regular file; nothing was sent.
+        ValueError: If `job_limit_s` is not finite and above 0, or the recording is not a regular file; nothing
+            was sent.
     """
+    _require_finite_positive("job_limit_s", job_limit_s)
     reply = _exchange(config, "decode", recording, config.decode_limit_s, job_running, job_limit_s)
     return DecodeResult(reply.outcome, reply.audio)
