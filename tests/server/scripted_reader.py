@@ -5,8 +5,8 @@ Usage: ``python scripted_reader.py --script JSON [--end MODE] [--marker PATH] [-
 The connection to the caller is inherited as standard input, exactly as
 systemd hands it to a real reader instance. The fake receives the request
 message with its descriptors (``SCM_RIGHTS``) and keeps them open (with
-``--skip-request`` it leaves the request unread, so that closing the connection
-resets it), then plays the script: a JSON list of steps, each one of
+``--skip-request`` it waits for the request but leaves it unread, so that closing
+the connection resets it), then plays the script: a JSON list of steps, each one of
 
     {"send": TEXT}: send TEXT (UTF-8) as one message.
     {"send_fd": TEXT}: send TEXT with a descriptor of ``/dev/null`` attached.
@@ -30,6 +30,7 @@ import argparse
 import array
 import json
 import os
+import select
 import socket
 import stat
 import sys
@@ -58,6 +59,19 @@ def receive_fds(connection: socket.socket) -> list[int]:
             fds.frombytes(data[: len(data) - len(data) % fds.itemsize])
             received.extend(fds)
     return received
+
+
+def await_request(connection: socket.socket) -> list[int]:
+    """Waits until the request has arrived, without receiving it.
+
+    Args:
+        connection: The accepted SEQPACKET connection.
+
+    Returns:
+        An empty list of descriptors.
+    """
+    select.select([connection], [], [], HOLD_LIMIT_S)
+    return []
 
 
 def play(connection: socket.socket, script: list[dict[str, Any]]) -> None:
@@ -130,7 +144,7 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     with socket.socket(fileno=0) as connection:
-        fds = [] if args.skip_request else receive_fds(connection)
+        fds = await_request(connection) if args.skip_request else receive_fds(connection)
         play(connection, json.loads(args.script))
         if args.end == "hold":
             result = hold(connection, fds)

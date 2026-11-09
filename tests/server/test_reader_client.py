@@ -620,7 +620,9 @@ def test_stopped_ends_the_real_supervisor_and_its_decode_child(
     assert time.monotonic() - began < 5.0
 
 
-def test_the_job_state_is_asked_about_every_poll_interval(emulated_reader_socket: SocketFactory, recording: Path) -> None:
+def test_the_job_state_is_asked_about_every_poll_interval(
+    emulated_reader_socket: SocketFactory, recording: Path
+) -> None:
     server = emulated_reader_socket(scripted([STARTED], end="hold"))
     calls: list[float] = []
 
@@ -629,7 +631,9 @@ def test_the_job_state_is_asked_about_every_poll_interval(emulated_reader_socket
         return True
 
     began = time.monotonic()
-    result = reader_client.decode(make_config(server.path, poll_s=0.1), recording, job_running=running, job_limit_s=0.55)
+    result = reader_client.decode(
+        make_config(server.path, poll_s=0.1), recording, job_running=running, job_limit_s=0.55
+    )
 
     server.wait_for_exits(1)
     assert result.outcome == "timeout"
@@ -720,7 +724,8 @@ def test_the_client_holds_no_descriptor_after_any_outcome(
         reader_client.probe(make_config("/nonexistent/stt-reader.sock"), recording),
     ]
 
-    assert [result.outcome for result in results] == ["ok", "failed", "stopped", "timeout", "unavailable", "unavailable"]
+    outcomes = [result.outcome for result in results]
+    assert outcomes == ["ok", "failed", "stopped", "timeout", "unavailable", "unavailable"]
     for server in (ok, attached, held, unanswered):
         server.wait_for_exits(1 if server is not held else 2)
     assert_fd_count_settles_at(baseline)

@@ -148,7 +148,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   `test_us5_10_formats_outside_the_list_are_unreadable`·`test_us5_10_format_outside_the_list_is_refused_even_with_a_listed_extension`). (d) decode 출력이 `faster_whisper.audio.decode_audio(path)` 의 `int16`
   값과 바이트까지 같다(형식마다). (e) 자식은 경로를 받지 않고 기술자만으로 읽는다(인자에 경로가 없음). verify RED: 모듈 없음.
   closes US3-1(프로토콜 쪽), 경계 사례 9, supports SC-007, FR-006
-- [ ] T014 [P] `tests/server/test_reader_client.py`(새) — 호출하는 쪽, T011 의 장치와 대역으로. 다섯 결과의 경계(§7): 접속 실패·「시작」 전
+- [X] T014 [P] `tests/server/test_reader_client.py`(새) — 호출하는 쪽, T011 의 장치와 대역으로. 다섯 결과의 경계(§7): 접속 실패·「시작」 전
   끊김·`started: false`·시작 시간 넘김 → `unavailable`. 「시작」 뒤의 판정 없는 끊김·`failed`·규칙에 어긋난 판정·판정 시간 넘김·홀수 바이트 출력·
   `MAX_DECODED_BYTES` 를 넘는 출력 → `failed`. 작업이 `running` 이 아니게 됨 → `stopped`(연결과 파이프를 닫았음을 단언). 작업 상한 → `timeout`.
   녹음이 기호 링크이면 접속하기 전에 오류(`O_NOFOLLOW`). 시간 값은 시험에서 짧게 주입한다. verify RED: 모듈 없음.
@@ -164,7 +164,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   `_AUDIO_FORMATS` 를 지우고 `reader.AUDIO_FORMATS` 를 불러 쓰게 한다(`probe_duration` 은 T027 까지 받기에 남는다). RED → GREEN: turns T012,
   T013 GREEN, 기존 받기 시험 그대로 통과.
   supports US2-7, US3-1~5, FR-006, FR-009, FR-011, FR-019
-- [ ] T017 `src/stt/server/reader_client.py`(새): `ReaderConfig`(소켓 경로·시작 시간·판정 여유·`poll_s`), `probe()`·`decode()` 와 다섯 결과,
+- [X] T017 `src/stt/server/reader_client.py`(새): `ReaderConfig`(소켓 경로·시작 시간·판정 여유·`poll_s`), `probe()`·`decode()` 와 다섯 결과,
   §7 의 열기·검사 규칙. RED → GREEN: turns T014 GREEN. supports US3-2~5, US3-8, FR-015, FR-016, FR-018
 - [ ] T018 `src/stt/server/cli.py`: `stt server read`(→ `reader.serve`), `intake`·`work` 의 `--reader-socket` → `ReaderConfig`. 받기·워커에는 아직
   넘기지 않는다(T025·T027). RED → GREEN: turns T015 GREEN. supports FR-006
