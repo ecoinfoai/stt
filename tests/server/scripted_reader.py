@@ -21,13 +21,12 @@ request's pipe descriptor fails with a broken pipe, ``"open"`` when it
 succeeds, ``null`` when the request carried no pipe).
 
 The fake never reads or interprets recording content and imports only the
-standard library.
+standard library and its sibling ``fake_reader.py``.
 """
 
 from __future__ import annotations
 
 import argparse
-import array
 import json
 import os
 import select
@@ -37,28 +36,9 @@ import sys
 import time
 from typing import Any
 
-MESSAGE_LIMIT = 4096
-MAX_FDS = 16
+from fake_reader import MESSAGE_LIMIT, receive_fds
+
 HOLD_LIMIT_S = 30.0
-
-
-def receive_fds(connection: socket.socket) -> list[int]:
-    """Receives one request message and returns the descriptors attached to it.
-
-    Args:
-        connection: The accepted SEQPACKET connection.
-
-    Returns:
-        The received descriptors, at most ``MAX_FDS``.
-    """
-    _, ancillary, _, _ = connection.recvmsg(MESSAGE_LIMIT, socket.CMSG_SPACE(MAX_FDS * 4))
-    received: list[int] = []
-    for level, kind, data in ancillary:
-        if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
-            fds = array.array("i")
-            fds.frombytes(data[: len(data) - len(data) % fds.itemsize])
-            received.extend(fds)
-    return received
 
 
 def await_request(connection: socket.socket) -> list[int]:
