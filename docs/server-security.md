@@ -10,7 +10,7 @@
 | unit | filter | added | narrowed | reason | observed | mdwe | mdwe_evidence |
 |---|---|---|---|---|---|---|---|
 | `stt-intake` | `@system-service` | - | - | - | - | on | - |
-| `stt-worker` | `@system-service` | - | - | - | - | pending | - |
+| `stt-worker` | `@system-service` | - | - | - | - | on | - |
 | `stt-sweep` | `@system-service` | - | - | - | - | on | - |
 | `stt-models` | `@system-service` | - | - | - | - | on | - |
 | `stt-reader@` | `@system-service` | - | @privileged, @keyring, process_vm_readv, process_vm_writev, io_uring_setup, io_uring_enter, io_uring_register, userfaultfd | 녹음 해독기를 노리는 입력이 읽기 프로세스를 장악해도 다른 프로세스의 메모리를 읽거나 쓰지 못하고, 권한 호출과 커널 비동기 입출력 길을 쓰지 못하게 한다. 해독은 이 호출 없이 된다(사용자 관리자에서 확인, 2026-11-09) | - | on | - |
@@ -26,8 +26,8 @@
   기록이 남는 것을 먼저 확인했으므로, 0줄은 묶음 밖 호출이 없었다는 뜻이다. 관측 설정은 지웠다. 앞으로 관측에서 묶음 밖 호출이
   나오면 그 호출만 해당 단위의 `added` 에 적고, `reason`(무엇이 쓰는가)과 `observed`(관측한 날, 호출 번호)를 채운 뒤에 `nix/module.nix` 에
   이 표의 같은 줄을 가리키는 주석과 함께 더한다. 표에 없는 예외는 두지 않는다.
-- 워커의 쓰기·실행 메모리 금지(`mdwe`)는 `pending` 이다. 호스트에서 켠 채로 1차·2차 전사를 돌려 보고 `on` 또는 `off`(거부된 지점을
-  `mdwe_evidence` 에 적음)로 확정한다. 나머지 세 단위는 VM 시험이 켠 채로 통과한 것을 근거로 `on` 이다.
+- 워커의 쓰기·실행 메모리 금지(`mdwe`)는 `on` 이다. P1 배포(2026-11-09) 뒤 호스트에서 켠 채로 60초·1시간 녹음의 1차·2차(화자 구분)
+  전사가 CUDA 에서 끝났고 결과가 기준과 같았다. 나머지 세 단위는 VM 시험이 켠 채로 통과한 것을 근거로 `on` 이다.
 
 ## 2. 녹음 읽기 격리
 

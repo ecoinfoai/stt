@@ -101,11 +101,11 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ### Deploy P1 (운영자 승인 뒤)
 
-- [ ] T008 [US1] P1 배포: 운영자 승인을 받아 이 브랜치의 P1 까지의 커밋(문서 + T004~T007)을 master 에 합치고 push 한다. 운영자가
+- [X] T008 [US1] P1 배포: 운영자 승인을 받아 이 브랜치의 P1 까지의 커밋(문서 + T004~T007)을 master 에 합치고 push 한다. 운영자가
   nixos-config 의 `stt` 입력을 갱신하고 `nxr` 한다. 배포한 커밋과 날을 `specs/002-decoder-isolation/handoff/p1-reply.md` 에 적는다.
   P1 합치기는 기능 브랜치를 마치는 것이 아니다 — 설정만 바뀌는 중간 배포라 운영자 승인으로 합치고, 최종 감사(T040)가 P1 의 바뀜도 함께 본다.
   RED 해당 없음 — 배포. supports US1-1~6
-- [ ] T009 [US1] C-P1-2 호스트 확인(운영자와): [contracts/module.md](contracts/module.md) §4 의 첫 `systemctl show` 출력을 그대로
+- [X] T009 [US1] C-P1-2 호스트 확인(운영자와): [contracts/module.md](contracts/module.md) §4 의 첫 `systemctl show` 출력을 그대로
   `handoff/p1-reply.md` 에 싣는다. T001 의 두 녹음을 같은 두 방식으로 다시 전사해 전사록·문단 목록을 비교한다(다르면 운영자가 받아들인 뒤에만
   완료). 워커가 쓰기·실행 메모리 금지로 CUDA 에서 거부되면 워커만 `false` 로 바꾸고 거부 지점을 §1 에 적고(`mdwe=off`), `nix/vm-test.nix` 의
   T004 단언도 그 값으로 고쳐 T004·T005 를 다시 GREEN 으로 만든 뒤 T008 을 되풀이한다. 거부가 없으면 `mdwe=on` 으로 적는다. 받기의 받아들임·거절, 「다 지우기」, 청소, 모델 받기가 평소대로 끝나고 `journalctl -k -g 'type=1326'` 이 비어 있음을
