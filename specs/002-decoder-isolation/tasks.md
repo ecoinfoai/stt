@@ -182,7 +182,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ### Tests for User Story 2·3·4 (write first) ⚠️
 
-- [ ] T019 [P] [US2] `tests/server/test_decoder_us2.py`(새), T011 의 장치 + 진짜 감독 + 가짜 엔진(`--record`): (a) US2-5 — 엔진이 받은
+- [X] T019 [P] [US2] `tests/server/test_decoder_us2.py`(새), T011 의 장치 + 진짜 감독 + 가짜 엔진(`--record`): (a) US2-5 — 엔진이 받은
   `spec.json` 에 `audio_path` 가 없고, 엔진이 연 파일은 `work_dir/audio.wav` 하나이며 그 WAV 는 16 kHz 모노 16-bit 이고 0600 이다(SC-003).
   (b) US2-6 — 작업 둘의 해독은 연결 둘(프로세스 둘)이고, 연결마다 녹음 기술자가 하나다. (c) US2-8 — 정상 첨부와 텍스트 첨부가 든 받기 한 번이
   진짜 감독을 거쳐 응답 둘을 10초 안에(벽시계 — 「직후」 1분보다 넉넉히 짧게) 낸다. (d) 경계 사례 1·2 — 1차가 대기 중일 때 그 녹음을 가리킨 2차와, 길이 재기와 해독이 겹칠 때 각 읽기가
