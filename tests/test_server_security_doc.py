@@ -45,16 +45,23 @@ def _hardening_block(module: str) -> str:
 def _unit_blocks(module: str) -> dict[str, str]:
     """Maps every `stt-*` entry of `systemd.services` to its definition text.
 
-    The text runs to the next entry, so helper calls such as `stage "..." { ... }` are included.
+    Handles `systemd.services = { name = ...; }` and `systemd.services."name" = ...`, quoted
+    names (a template such as `"stt-reader@"` cannot be a bare attribute), and any position
+    relative to the other `systemd.*` sections. The text of an entry runs to the next entry,
+    so helper calls such as `stage "..." { ... }` are included.
     """
-    section = re.search(r"systemd\.services = \{.*?(?=^    systemd\.paths = )", module, re.S | re.M)
-    assert section, "nix/module.nix has no systemd.services section before systemd.paths"
-    services = section.group(0)
-    entries = list(re.finditer(r"(?m)^( {6})(stt-[a-z@-]+) =\s", services))
+    segment_start = re.compile(r"(?m)^    systemd\.services(?:\.|\s*=)")
+    segment_end = re.compile(r'(?m)^    (?!systemd\.services)[A-Za-z][\w."@-]*\s*=')
+    entry = re.compile(r'(?m)^(?: {4}systemd\.services\.| {6})"?(stt-[A-Za-z0-9@_-]+)"?\s*=')
     blocks: dict[str, str] = {}
-    for position, entry in enumerate(entries):
-        end = entries[position + 1].start() if position + 1 < len(entries) else len(services)
-        blocks[entry.group(2)] = services[entry.end() : end]
+    for start in segment_start.finditer(module):
+        end = segment_end.search(module, start.end())
+        segment = module[start.start() : end.start() if end else len(module)]
+        entries = list(entry.finditer(segment))
+        for position, found in enumerate(entries):
+            stop = entries[position + 1].start() if position + 1 < len(entries) else len(segment)
+            blocks[found.group(1)] = segment[found.end() : stop]
+    assert blocks, "nix/module.nix has no stt-* entry in systemd.services"
     return blocks
 
 
@@ -63,13 +70,23 @@ def _setting(block: str, name: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
-def _quoted(value: str) -> list[str]:
-    return re.findall(r'"([^"]*)"', value)
+def _filter_tokens(value: str) -> tuple[set[str], set[str]]:
+    """Splits a Nix list of filter strings into (allowed, denied) tokens.
+
+    A string may hold several space-separated names; a leading `~` applies to all of them.
+    """
+    allowed: set[str] = set()
+    denied: set[str] = set()
+    for item in re.findall(r'"([^"]*)"', value):
+        negated = item.startswith("~")
+        names = item.lstrip("~").split()
+        (denied if negated else allowed).update(names)
+    return allowed, denied
 
 
-def _module_units() -> dict[str, dict[str, object]]:
+def _units_from(module_text: str) -> dict[str, dict[str, object]]:
     """Returns, per unit that carries a SystemCallFilter, the settings the module gives it."""
-    module = _strip_comments(MODULE.read_text())
+    module = _strip_comments(module_text)
     hardening = _hardening_block(module)
     units: dict[str, dict[str, object]] = {}
     for name, block in _unit_blocks(module).items():
@@ -86,13 +103,13 @@ def _module_units() -> dict[str, dict[str, object]]:
                 mdwe = found
         if syscall_filter is None:
             continue
-        entries = _quoted(syscall_filter)
-        units[name] = {
-            "added": {entry for entry in entries if not entry.startswith("~") and entry != BASE_GROUP},
-            "narrowed": {entry for entry in entries if entry.startswith("~")},
-            "mdwe": mdwe == "true",
-        }
+        allowed, denied = _filter_tokens(syscall_filter)
+        units[name] = {"added": allowed - {BASE_GROUP}, "narrowed": denied, "mdwe": mdwe == "true"}
     return units
+
+
+def _module_units() -> dict[str, dict[str, object]]:
+    return _units_from(MODULE.read_text())
 
 
 def _table(marker: str) -> list[dict[str, str]]:
@@ -116,7 +133,10 @@ def _table(marker: str) -> list[dict[str, str]]:
 
 
 def _items(cell: str) -> set[str]:
-    return set() if cell in ("", "-") else set(cell.replace(",", " ").split())
+    """Reads a table cell as a set of names; a `~` prefix on a name is ignored."""
+    if cell in ("", "-"):
+        return set()
+    return {name.lstrip("~") for name in cell.replace(",", " ").split()}
 
 
 @pytest.fixture(scope="module")
@@ -159,3 +179,68 @@ def test_mdwe_state_matches_the_module_and_off_has_evidence(module_units, doc_ro
             assert (row["mdwe"] == "on") == settings["mdwe"], name
         if row["mdwe"] == "off":
             assert row["mdwe_evidence"] not in ("", "-"), name
+
+
+SYNTHETIC_MODULE = """
+{ config, lib, ... }:
+let
+  hardening = {
+    SystemCallFilter = [ "@system-service" ];
+    MemoryDenyWriteExecute = true;
+  };
+  stage = description: serviceConfig: { serviceConfig = hardening // serviceConfig; };
+in
+{
+  config = {
+    systemd.services = {
+      stt-intake = stage "intake" {
+        ExecStart = "x";
+      };
+
+      "stt-reader@" = {
+        serviceConfig = {
+          SystemCallFilter = [
+            "@system-service"
+            "~@privileged"
+            "~process_vm_readv process_vm_writev io_uring_setup"
+          ];
+          MemoryDenyWriteExecute = true;
+        };
+      };
+
+      stt-sweep = stage "sweep" {
+        ExecStart = "y";
+      };
+    }
+    // lib.optionalAttrs true {
+      stt-models = {
+        serviceConfig = hardening // { ExecStart = "z"; };
+      };
+    };
+
+    systemd.sockets = {
+      stt-reader = {
+        listenStreams = [ "/run/x" ];
+      };
+    };
+
+    systemd.services."stt-extra@" = {
+      serviceConfig.SystemCallFilter = [ "@system-service" "mount" ];
+    };
+  };
+}
+"""
+
+
+def test_collector_reads_quoted_template_names_and_multi_token_filters():
+    units = _units_from(SYNTHETIC_MODULE)
+    assert set(units) == {"stt-intake", "stt-reader@", "stt-sweep", "stt-models", "stt-extra@"}
+    assert units["stt-reader@"] == {
+        "added": set(),
+        "narrowed": {"@privileged", "process_vm_readv", "process_vm_writev", "io_uring_setup"},
+        "mdwe": True,
+    }
+    for name in ("stt-intake", "stt-sweep", "stt-models"):
+        assert units[name] == {"added": set(), "narrowed": set(), "mdwe": True}, name
+    assert units["stt-extra@"]["added"] == {"mount"}
+    assert units["stt-extra@"]["mdwe"] is False
