@@ -300,6 +300,12 @@ pkgs.testers.runNixOSTest {
         assert "OnCalendar=*-*-* *:*:00" in prop(timer, "TimersCalendar"), prop(timer, "TimersCalendar")
         assert "requests/inbox/*.json" in prop("stt-intake.path", "Paths")
         assert "queue/*" in prop("stt-worker.path", "Paths")
+        fetcher.wait_for_unit("multi-user.target")
+        for unit, node in [(unit, server) for unit in UNITS] + [("stt-models.service", fetcher)]:
+            assert prop(unit, "SystemCallArchitectures", node) == "native", (unit, prop(unit, "SystemCallArchitectures", node))
+            syscall_filter = prop(unit, "SystemCallFilter", node)
+            assert syscall_filter and not syscall_filter.startswith("~"), (unit, syscall_filter)
+            assert prop(unit, "MemoryDenyWriteExecute", node) == "yes", (unit, prop(unit, "MemoryDenyWriteExecute", node))
 
     with subtest("a request is queued within seconds and waits behind the operator's GPU lock (B-1, B-7)"):
         hold_gpu("gpu-hold-1", 20)
@@ -493,5 +499,11 @@ pkgs.testers.runNixOSTest {
         fetcher.succeed("systemctl start stt-worker.service")
         assert prop(models, "ExecMainStartTimestampMonotonic", fetcher) != fetched_at
         assert prop("stt-worker.service", "Result", fetcher) == "success"
+
+    with subtest("no system call was blocked on either node (B-P1-3)"):
+        for node in (server, fetcher):
+            node.succeed("journalctl -k --no-pager -n 1")
+            blocked = node.succeed("journalctl -k --no-pager -q -g 'type=1326' || true").strip()
+            assert blocked == "", blocked
   '';
 }
