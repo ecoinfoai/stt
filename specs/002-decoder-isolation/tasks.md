@@ -216,13 +216,13 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   의 길이 재기 시험은 T013(길이·형식)과 T020(b)(사본 없음)로 옮긴 뒤 지운다. `tests/server/conftest.py` 도우미의 `ReaderConfig` 연결은 이 과제에서
   하지 않는다 — 워커·받기가 그 인자를 받기 전에 넣으면 기존 서버 시험이 한꺼번에 인자 오류로 깨져 T019~T021 의 RED 이유가 가려진다(T025·T027 에서
   한다). verify RED: 고친 단언이 지금 코드에서 실패한다(`audio_path` 있음, 읽기 연결 없음). supports US2-5, US4-7, SC-007
-- [ ] T023 [P] [US2] `tests/test_transcribe.py`·`tests/test_diarize.py` 에 더한다: `transcribe_file`·`diarized_blocks`(`src/stt/transcribe.py:745`·
+- [X] T023 [P] [US2] `tests/test_transcribe.py`·`tests/test_diarize.py` 에 더한다: `transcribe_file`·`diarized_blocks`(`src/stt/transcribe.py:745`·
   `:871`)에서 떼어 낼 「해독된 음성을 받는」 두 함수가, 같은 사인파에서 지금 두 함수와 같은 결과(가짜 모델로 넘긴 인자·빔·VAD·힌트·단어 시각,
   화자 배정)를 낸다. 지금 두 함수의 기존 시험은 바뀌지 않는다. verify RED: 함수 없음. supports US4-7, FR-010, FR-022, SC-007
 
 ### Implementation for User Story 2·3·4 (turn T019–T023 GREEN)
 
-- [ ] T024 [US2] `src/stt/transcribe.py`: `transcribe_file` 의 모델 호출 부분을 float32 샘플을 받는 함수로, `diarized_blocks` 의 `to_wav` 다음 부분을
+- [X] T024 [US2] `src/stt/transcribe.py`: `transcribe_file` 의 모델 호출 부분을 float32 샘플을 받는 함수로, `diarized_blocks` 의 `to_wav` 다음 부분을
   WAV 경로를 받는 함수로 떼어 내고, 지금 두 함수는 그 함수를 부르게 한다. 새 함수의 docstring 은 영어다. 기존 한국어 오류 문장은 바꾸지 않는다 — 새 함수로 옮겨 가도 같다(plan Complexity Tracking, 운영자
   승인 2026-11-09).
   RED → GREEN: turns T023 GREEN, 기존 명령줄 시험 그대로 통과. supports US4-7, FR-022

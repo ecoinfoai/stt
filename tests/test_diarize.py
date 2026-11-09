@@ -729,3 +729,103 @@ class TestSentenceEmbeddings:
         wav = _write_wav(tmp_path / "a.wav", 2.0)
         pipeline = SimpleNamespace(_embedding=_FakeEmbedding(nan_length=16000))
         assert sentence_embeddings(pipeline, wav, [[word(0.0, 1.0, "네. ")]]) == [None]
+
+
+def _write_tone_wav(path: Path, seconds: float = 1.0) -> Path:
+    """Writes a 440 Hz 16-bit mono WAV."""
+    import math
+    import struct
+    import wave
+
+    rate = 16000
+    frames = b"".join(
+        struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * i / rate)))
+        for i in range(int(seconds * rate))
+    )
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(frames)
+    return path
+
+
+class TestDiarizedBlocksFromWav:
+    """The WAV-taking half of diarized_blocks gives the same blocks as the whole."""
+
+    @pytest.fixture()
+    def seen(self, monkeypatch, tmp_path):
+        from stt import diarize as dz
+
+        seen: dict = {"calls": []}
+        turns = [Turn(0.0, 3.0, "SPEAKER_00"), Turn(3.0, 9.0, "SPEAKER_01")]
+        centroids = {"SPEAKER_00": [1.0, 0.0], "SPEAKER_01": [0.0, 1.0]}
+
+        def fake_to_wav(src, dst):
+            return _write_tone_wav(dst)
+
+        def fake_diarize_wav(pipeline, wav, speakers, voices, threshold):
+            seen["calls"].append(
+                (wav.read_bytes(), speakers, voices, threshold)
+            )
+            return Diarization(turns, centroids)
+
+        def fake_embeddings(pipeline, wav, sentences):
+            seen["calls"].append(("embeddings", wav.read_bytes(), [len(s) for s in sentences]))
+            return [[1.0, 0.0], [0.0, 1.0]]
+
+        monkeypatch.setattr(dz, "to_wav", fake_to_wav)
+        monkeypatch.setattr(dz, "diarize_wav", fake_diarize_wav)
+        monkeypatch.setattr(dz, "sentence_embeddings", fake_embeddings)
+        return seen
+
+    @staticmethod
+    def _segments() -> list[SimpleNamespace]:
+        return [
+            SimpleNamespace(
+                start=0.0, end=2.0, text="Question.",
+                words=[word(0.0, 2.0, "Question. ")],
+            ),
+            SimpleNamespace(
+                start=4.0, end=8.0, text="Answer.",
+                words=[word(4.0, 8.0, "Answer. ")],
+            ),
+        ]
+
+    @staticmethod
+    def _args() -> SimpleNamespace:
+        return SimpleNamespace(
+            voice_db=None, speakers=2, voice_threshold=0.5,
+            min_speaker_seconds=0.0, gap=2.0, max_chars=800,
+        )
+
+    def test_same_blocks_and_same_diarizer_input_as_diarized_blocks(
+        self, seen, tmp_path
+    ):
+        from stt import transcribe
+
+        whole = transcribe.diarized_blocks(
+            tmp_path / "talk.m4a", self._segments(), self._args(), None
+        )
+        tone = _write_tone_wav(tmp_path / "tone.wav")
+        seen_whole = list(seen["calls"])
+        seen["calls"].clear()
+
+        split = transcribe.diarized_blocks_from_wav(
+            tone, "talk.m4a", self._segments(), self._args(), None
+        )
+
+        assert split == whole
+        assert seen["calls"] == seen_whole
+        assert [b.speaker for b in split] == ["SPEAKER_00", "SPEAKER_01"]
+
+    def test_without_words_raises_with_the_given_name(self, tmp_path):
+        from stt import transcribe
+
+        tone = _write_tone_wav(tmp_path / "tone.wav")
+        segments = [SimpleNamespace(start=0.0, end=1.0, text="x", words=None)]
+        with pytest.raises(RuntimeError) as error:
+            transcribe.diarized_blocks_from_wav(
+                tone, "talk.m4a", segments, self._args(), None
+            )
+        assert "talk.m4a" in str(error.value)

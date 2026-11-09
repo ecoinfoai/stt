@@ -730,3 +730,61 @@ def test_transcribe_file_allow_empty(tmp_path):
     with pytest.raises(RuntimeError) as default_error:
         transcribe.transcribe_file(model, media, "en", None, 5)
     assert "silent.m4a" in str(default_error.value)
+
+
+def _sine_samples(seconds: float = 1.0):
+    """A 440 Hz float32 tone at 16 kHz, the shape the GPU stage receives."""
+    import numpy as np
+
+    rate = 16000
+    t = np.arange(int(rate * seconds)) / rate
+    return (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+
+class _RecordingModel:
+    """A model that records every transcribe() call and yields fixed segments."""
+
+    def __init__(self, segments):
+        self.segments = segments
+        self.calls: list[dict] = []
+
+    def transcribe(self, audio, **kwargs):
+        self.calls.append({"audio": audio, **kwargs})
+        return iter(self.segments), SimpleNamespace(duration=1.0, language="ko")
+
+
+def test_transcribe_samples_passes_the_same_settings_as_transcribe_file(tmp_path):
+    """Same tone in, same model arguments out, apart from the audio itself."""
+    segments = [SimpleNamespace(start=0.0, end=1.0, text="x", words=[])]
+    samples = _sine_samples()
+    by_file = _RecordingModel(segments)
+    by_samples = _RecordingModel(segments)
+
+    file_result = transcribe.transcribe_file(
+        by_file, tmp_path / "a.m4a", "ko", "hint one, hint two", 7,
+        word_timestamps=True,
+    )
+    samples_result = transcribe.transcribe_samples(
+        by_samples, samples, "a.m4a", "ko", "hint one, hint two", 7,
+        word_timestamps=True,
+    )
+
+    assert samples_result == file_result
+    file_call, samples_call = by_file.calls[0], by_samples.calls[0]
+    assert samples_call.pop("audio") is samples
+    assert isinstance(file_call.pop("audio"), str)
+    assert samples_call == file_call
+    assert samples_call["beam_size"] == 7
+    assert samples_call["vad_filter"] is True
+    assert samples_call["hotwords"] == "hint one, hint two"
+    assert samples_call["word_timestamps"] is True
+
+
+def test_transcribe_samples_empty_result_raises_with_the_given_name():
+    model = _RecordingModel([])
+    with pytest.raises(RuntimeError) as default_error:
+        transcribe.transcribe_samples(model, _sine_samples(), "silent.m4a", "en", None, 5)
+    assert "silent.m4a" in str(default_error.value)
+    assert transcribe.transcribe_samples(
+        model, _sine_samples(), "silent.m4a", "en", None, 5, allow_empty=True
+    ) == ([], 1.0, "ko")

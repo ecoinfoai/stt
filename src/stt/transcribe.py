@@ -28,6 +28,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:  # 무거운 import는 실행 시점으로 미룬다.
+    import numpy as np
     from faster_whisper import WhisperModel
 
     from stt.diarize import Block
@@ -695,6 +696,7 @@ def load_model(model_name: str, device: str) -> "WhisperModel":
     Examples:
         >>> load_model("large-v3", "cuda")  # doctest: +SKIP
     """
+    import numpy as np
     from faster_whisper import WhisperModel
 
     compute = "int8_float16"
@@ -773,8 +775,51 @@ def transcribe_file(
     Examples:
         >>> transcribe_file(m, Path("a.m4a"), "ko", None, 5)  # doctest: +SKIP
     """
+    return transcribe_samples(
+        model, str(media), media.name, language, terms, beam_size,
+        word_timestamps=word_timestamps, allow_empty=allow_empty,
+    )
+
+
+def transcribe_samples(
+    model: "WhisperModel",
+    samples: "np.ndarray | str",
+    name: str,
+    language: str | None,
+    terms: str | None,
+    beam_size: int,
+    word_timestamps: bool = False,
+    allow_empty: bool = False,
+) -> tuple[list[SegmentLike], float, str]:
+    """Transcribes already-decoded audio and returns its segments.
+
+    This is the model-call half of transcribe_file; the server's GPU stage
+    calls it directly so that it never reads or decodes a recording.
+
+    Args:
+        model: A loaded WhisperModel.
+        samples: Mono float32 samples at 16 kHz. transcribe_file also passes
+            a media path here and lets the model decode it.
+        name: File name used in the empty-result error message.
+        language: Language code such as 'ko', or None to detect it.
+        terms: Hotwords string to pass to the model, or None.
+        beam_size: Beam search size (larger is more accurate and slower).
+        word_timestamps: If True, also receive word-level times (for
+            speaker diarization).
+        allow_empty: If True, a result without segments is returned as an
+            empty list instead of raising.
+
+    Returns:
+        A (segments, audio duration in seconds, language code) tuple.
+
+    Raises:
+        RuntimeError: If the result is empty and allow_empty is False.
+
+    Examples:
+        >>> transcribe_samples(m, samples, "a.m4a", "ko", None, 5)  # doctest: +SKIP
+    """
     segments_iter, info = model.transcribe(
-        str(media),
+        samples,
         language=language,
         beam_size=beam_size,
         vad_filter=True,
@@ -786,7 +831,7 @@ def transcribe_file(
     segments = list(segments_iter)  # The transcription itself runs here.
     if not segments and not allow_empty:
         raise RuntimeError(
-            f"빈 전사 결과: '{media.name}'에서 음성을 찾지 못했습니다. "
+            f"빈 전사 결과: '{name}'에서 음성을 찾지 못했습니다. "
             f"무음 파일이 아닌지 확인하세요."
         )
     return segments, info.duration, info.language
@@ -895,26 +940,75 @@ def diarized_blocks(
 
     from stt import diarize as dz
 
+    _word_list(segments, media.name)
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = dz.to_wav(media, Path(tmp) / "audio.wav")
+        return diarized_blocks_from_wav(wav, media.name, segments, args, pipeline)
+
+
+def _word_list(segments: Sequence[SegmentLike], name: str) -> list:
+    """Collects the words of all segments.
+
+    Args:
+        segments: Segments received with word_timestamps=True.
+        name: File name used in the error message.
+
+    Returns:
+        The words, in segment order.
+
+    Raises:
+        RuntimeError: If the segments carry no word-level timestamps.
+    """
     words = [w for segment in segments for w in (segment.words or [])]
     if not words:
         raise RuntimeError(
-            f"빈 단어 타임스탬프: '{media.name}'에서 단어 단위 시각을 "
+            f"빈 단어 타임스탬프: '{name}'에서 단어 단위 시각을 "
             f"받지 못했습니다. 화자 분리에는 word_timestamps가 필요합니다."
         )
+    return words
+
+
+def diarized_blocks_from_wav(
+    wav: Path,
+    name: str,
+    segments: Sequence[SegmentLike],
+    args: argparse.Namespace,
+    pipeline,
+) -> list[Block]:
+    """Split the transcript into speaker paragraphs, given a decoded WAV.
+
+    This is the part of diarized_blocks after the WAV conversion; the
+    server's GPU stage calls it directly so that it never runs ffmpeg.
+
+    Args:
+        wav: 16 kHz mono 16-bit PCM WAV file of the recording.
+        name: File name used in the error message.
+        segments: Segments received with word_timestamps=True.
+        args: Parsed CLI arguments.
+        pipeline: Diarization pipeline loaded by diarize.load_pipeline().
+
+    Returns:
+        Speaker paragraphs (diarize.Block), in time order.
+
+    Raises:
+        RuntimeError: If the segments carry no word-level timestamps.
+
+    Examples:
+        >>> diarized_blocks_from_wav(Path("a.wav"), "a.m4a", segs, ns, p)  # doctest: +SKIP
+    """
+    from stt import diarize as dz
+
+    words = _word_list(segments, name)
     voiced = None
-    with tempfile.TemporaryDirectory() as tmp:
-        wav = dz.to_wav(media, Path(tmp) / "audio.wav")
-        voices = (
-            dz.load_voice_db(args.voice_db) if args.voice_db else None
+    voices = dz.load_voice_db(args.voice_db) if args.voice_db else None
+    diarization = dz.diarize_wav(
+        pipeline, wav, args.speakers, voices, args.voice_threshold
+    )
+    if len(diarization.centroids) > 1:
+        embeddings = dz.sentence_embeddings(
+            pipeline, wav, dz.group_sentences(words)
         )
-        diarization = dz.diarize_wav(
-            pipeline, wav, args.speakers, voices, args.voice_threshold
-        )
-        if len(diarization.centroids) > 1:
-            embeddings = dz.sentence_embeddings(
-                pipeline, wav, dz.group_sentences(words)
-            )
-            voiced = [dz.pick_voice(e, diarization.centroids) for e in embeddings]
+        voiced = [dz.pick_voice(e, diarization.centroids) for e in embeddings]
     return dz.assign_blocks(
         words, diarization.turns, args.min_speaker_seconds,
         gap_s=args.gap, max_chars=args.max_chars, sentence_speakers=voiced,
