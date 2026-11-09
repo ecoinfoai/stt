@@ -177,8 +177,8 @@ def test_us5_1_exactly_three_hours_accepted(layout: Layout, wav: Path, reader_so
 
 
 def test_us5_2_unreadable_file_refused(layout: Layout, tmp_path: Path) -> None:
-    noise = tmp_path / "noise.m4a"
-    noise.write_bytes(os.urandom(4096))
+    noise = tmp_path / "notes.m4a"
+    noise.write_text("This is plain text, not audio.\n", encoding="utf-8")
     request_id = new_id()
     put_attachment(layout.inbox, f"{request_id}.audio.m4a", noise)
     put_body(
@@ -287,8 +287,8 @@ def test_us5_2_non_utf8_metadata_does_not_make_the_recording_unreadable(layout: 
 
 
 PROBE_FAULTS = {
-    "value_error": child_command("--mode", "exit-error"),
-    "type_error": child_command("--mode", "write-raw", "--payload", json.dumps({"duration_s": "5"})),
+    "child_error": child_command("--mode", "exit-error"),
+    "wrong_type_result": child_command("--mode", "write-raw", "--payload", json.dumps({"duration_s": "5"})),
 }
 
 

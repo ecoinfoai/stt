@@ -336,7 +336,7 @@ def test_decoder_us3_8_intake_logs_and_drops_a_request_when_the_reader_cannot_be
 
     lines = capfd.readouterr().out.splitlines()
     assert len(lines) == 1
-    assert re.fullmatch(rf"{request_id} intake error \S+", lines[0])
+    assert re.fullmatch(rf"{request_id} intake error ReaderUnavailableError", lines[0])
     assert not (layout.outbox / f"{request_id}.json").exists()
     assert inbox_names(layout) == []
     assert list(layout.audio.iterdir()) == []
