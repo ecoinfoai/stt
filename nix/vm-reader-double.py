@@ -34,6 +34,11 @@ TARGETS_PATH = "/run/vm-double/targets.json"
 CHECK_HOLD_S = 30
 CHUNK = b"\x01" * (16 << 20)
 CHUNK_LIMIT = 64
+SCRATCH_PLACES = ("/tmp", "/var/tmp", "/dev/shm")
+# x86-64 numbers of the calls in the ``@keyring`` group; the VM test runs on x86-64 only.
+KEYRING_CALLS = (("add_key", 248), ("request_key", 249), ("keyctl", 250))
+KEY_SPEC_THREAD_KEYRING = -1
+KEYCTL_GET_KEYRING_ID = 0
 REQUEST_LIMIT = 4096
 MAX_FDS = 3
 
@@ -143,6 +148,32 @@ def visible_processes() -> int:
     return sum(name.isdigit() for name in os.listdir("/proc"))
 
 
+def keyring_calls_allowed() -> int:
+    """Counts the ``@keyring`` calls the unit's filter lets through.
+
+    Each call is made once in a forked child with fixed arguments on the child's own thread keyring (the
+    keyring dies with the child, nothing shared is touched). A call the filter denies kills the child with
+    SIGSYS; a call it allows ends the child normally, whatever the call returned.
+    """
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    arguments = {
+        "add_key": (b"user", b"double-probe", b"x", 1, KEY_SPEC_THREAD_KEYRING),
+        "request_key": (b"user", b"double-probe", None, 0),
+        "keyctl": (KEYCTL_GET_KEYRING_ID, KEY_SPEC_THREAD_KEYRING, 1),
+    }
+    allowed = 0
+    for name, number in KEYRING_CALLS:
+        pid = os.fork()
+        if pid == 0:
+            libc.syscall(ctypes.c_long(number), *arguments[name])
+            os._exit(0)
+        _, status = os.waitpid(pid, 0)
+        allowed += int(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0)
+    return allowed
+
+
 def recording_readable(fd: int) -> bool:
     """Returns whether a few bytes can be read from the recording descriptor (they are not looked at)."""
     try:
@@ -161,8 +192,9 @@ def check_report(fds: Sequence[int]) -> dict[str, Any]:
     groups["own-fd-write"] = worked(lambda: os.write(recording, b"x")) + worked(
         lambda: close_after(os.open(f"/proc/self/fd/{recording}", os.O_WRONLY))
     )
-    groups["scratch-write"] = sum(data_written(directory) for directory in ("/tmp", "/var/tmp", os.getcwd()))
+    groups["scratch-write"] = sum(data_written(directory) for directory in (*SCRATCH_PLACES, os.getcwd()))
     groups["other-processes"] = other_processes()
+    groups["keyring"] = keyring_calls_allowed()
     return {
         "uid": os.getuid(),
         "own_fd_readable": recording_readable(recording),
@@ -177,17 +209,18 @@ def pack(report: dict[str, Any]) -> float:
 
     The caller accepts a finite number between 0 and 10800 and nothing else, so the report
     travels as ``N / 2**30`` with N below 2**43: bits 0-15 the UID (dynamic UIDs are below 65520),
-    bit 16 whether the recording descriptor was readable, bits 17-21 the number of successes (at most
-    31), bit 22 whether the control reach worked (``control == 2``), bits 23-25 the number of
-    processes visible in /proc (at most 7), and from bit 26 one bit per group in report order.
-    The quotient is exact in a double.
+    bit 16 whether the recording descriptor was readable, bits 17-19 the number of successes (at most
+    7), bit 20 whether the control reach worked (``control == 2``), bits 21-23 the number of
+    processes visible in /proc (at most 7), and from bit 24 one bit per group in report order (19
+    groups fit: bits 24-42). The quotient is exact in a double.
     """
     groups = report["groups"]
+    assert len(groups) <= 19, "more groups than the packed report has bits for"
     mask = sum(1 << index for index, count in enumerate(groups.values()) if count)
-    successes = min(sum(groups.values()), 31)
+    successes = min(sum(groups.values()), 7)
     control = int(report["control"] == 2)
     visible = min(report["visible_pids"], 7)
-    packed = report["uid"] | int(report["own_fd_readable"]) << 16 | successes << 17 | control << 22 | visible << 23 | mask << 26
+    packed = report["uid"] | int(report["own_fd_readable"]) << 16 | successes << 17 | control << 20 | visible << 21 | mask << 24
     return packed / 2**30
 
 

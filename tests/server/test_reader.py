@@ -48,6 +48,14 @@ class Descriptors:
         self._open.add(fd)
         return fd
 
+    def recording_read_write(self) -> int:
+        self._count += 1
+        path = self._directory / f"recording{self._count}.bin"
+        path.write_bytes(b"not interpreted by anyone")
+        fd = os.open(path, os.O_RDWR | os.O_CLOEXEC)
+        self._open.add(fd)
+        return fd
+
     def open_file(self, path: Path) -> int:
         fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
         self._open.add(fd)
@@ -217,6 +225,8 @@ REJECTED_REQUESTS = [
     ("decode-with-two-pipes", DECODE_BODY, ("pipe", "pipe")),
     ("decode-with-descriptors-swapped", DECODE_BODY, ("pipe", "file")),
     ("decode-with-a-directory", DECODE_BODY, ("file", "dir")),
+    ("probe-with-a-read-write-file", PROBE_BODY, ("file-rw",)),
+    ("decode-with-a-read-write-file", DECODE_BODY, ("file-rw", "pipe")),
 ]
 
 
@@ -236,6 +246,8 @@ def test_a_request_that_breaks_the_protocol_gets_started_false_and_starts_no_chi
     for kind in kinds:
         if kind == "file":
             fds.append(descriptors.recording())
+        elif kind == "file-rw":
+            fds.append(descriptors.recording_read_write())
         elif kind == "pipe":
             fds.append(descriptors.pipe()[1])
         else:

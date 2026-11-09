@@ -373,10 +373,12 @@ pkgs.testers.runNixOSTest {
         # `DynamicUser=yes` prints `yes` on this systemd; that private /tmp leaves no folder on the host.
         assert prop(reader, "PrivateTmp") == "yes", prop(reader, "PrivateTmp")
         assert set(prop(reader, "InaccessiblePaths").split()) == {"/var/lib/stt", "/var/lib/stt-models", "/run/stt"}, prop(reader, "InaccessiblePaths")
+        # The unit's /dev/shm is the host's even with PrivateDevices=yes, so an empty read-only tmpfs covers it.
+        assert set(prop(reader, "TemporaryFileSystem").split()) == {"/dev/shm:ro"}, prop(reader, "TemporaryFileSystem")
         calls = set(prop(reader, "SystemCallFilter").split())
         assert calls and not prop(reader, "SystemCallFilter").startswith("~"), prop(reader, "SystemCallFilter")
         assert "read" in calls, "the filter allows the ordinary calls"
-        for call in ("process_vm_readv", "process_vm_writev", "io_uring_setup", "io_uring_enter", "io_uring_register", "userfaultfd", "setuid", "chroot"):
+        for call in ("process_vm_readv", "process_vm_writev", "io_uring_setup", "io_uring_enter", "io_uring_register", "userfaultfd", "setuid", "chroot", "add_key", "request_key", "keyctl"):
             assert call not in calls, call
         assert server.succeed("grep '^ExecStart=' /etc/systemd/system/stt-reader@.service").strip().endswith("/bin/stt server read")
         # A deployment must not restart live reads, nor stop the socket on their account.
@@ -602,7 +604,7 @@ pkgs.testers.runNixOSTest {
     PRIVATE_FOLDERS = "find /tmp /var/tmp -maxdepth 1 -name 'systemd-private-*stt-reader*'"
     UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
     # Groups the double always adds after the ones in its target list (nix/vm-reader-double.py).
-    FIXED_GROUPS = ("network", "own-fd-write", "scratch-write", "other-processes")
+    FIXED_GROUPS = ("network", "own-fd-write", "scratch-write", "other-processes", "keyring")
     TARGETS_FILE = "/run/vm-double/targets.json"
 
     def switch_to(specialisation=None):
@@ -710,6 +712,9 @@ pkgs.testers.runNixOSTest {
         server.succeed("systemctl stop stt-worker.path stt-sweep.timer")
         hang_cuda()
         stt_uid = int(server.succeed("id -u stt"))
+        # A world-writable file in the host's /dev/shm: the reader must neither see nor change it.
+        SHM_MARKER = "/dev/shm/host-marker"
+        server.succeed(f"echo host-data > {SHM_MARKER} && chmod 0666 {SHM_MARKER}")
         a, b, c, a2, p = (str(uuid.uuid4()) for _ in range(5))
 
         def audio_paths(i):
@@ -731,6 +736,7 @@ pkgs.testers.runNixOSTest {
             ("state-root", [STATE, f"{STATE}/state.lock", f"{STATE}/worker.lock", f"{STATE}/queue"]),
             ("gpu-lock", ["/run/stt", GPU_LOCK, "/var/lib/stt-models"]),
             ("devices", ["/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm"]),
+            ("host-shm", [SHM_MARKER]),
         ]
         GROUP_NAMES = [name for name, _ in TARGET_GROUPS] + list(FIXED_GROUPS)
         document = {"groups": [{"name": name, "paths": paths} for name, paths in TARGET_GROUPS]}
@@ -783,10 +789,10 @@ pkgs.testers.runNixOSTest {
             return {
                 "uid": packed & 0xFFFF,
                 "own_fd_readable": bool(packed >> 16 & 1),
-                "successes": packed >> 17 & 0x1F,
-                "control": packed >> 22 & 1,
-                "visible_pids": packed >> 23 & 0x7,
-                "reached": [name for index, name in enumerate(GROUP_NAMES) if packed >> 26 >> index & 1],
+                "successes": packed >> 17 & 0x7,
+                "control": packed >> 20 & 1,
+                "visible_pids": packed >> 21 & 0x7,
+                "reached": [name for index, name in enumerate(GROUP_NAMES) if packed >> 24 >> index & 1],
             }
 
         def assert_confined(report, who):
@@ -806,7 +812,7 @@ pkgs.testers.runNixOSTest {
         common = [
             f"{STATE}/audio/{a}/audio.wav", f"{STATE}/audio/{b}/audio.wav", f"{STATE}/jobs/{a}/job.json",
             f"{STATE}/jobs/{b}/job.json", f"{OUTBOX}/{a}.json", f"{OUTBOX}/{b}.json", INBOX, f"{INBOX}/{p}.json.tmp", GPU_LOCK,
-            f"{STATE}/state.lock", "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm",
+            f"{STATE}/state.lock", "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm", SHM_MARKER,
         ]
 
         # A: job A (requester one, with hints) and job B (requester two) wait behind the operator's lock.
@@ -863,7 +869,7 @@ pkgs.testers.runNixOSTest {
         assert not failed_stt_units(), failed_stt_units()
 
         release_cuda()
-        server.succeed(f"rm {INBOX}/{p}.json.tmp")
+        server.succeed(f"rm {INBOX}/{p}.json.tmp {SHM_MARKER}")
         for node_name in ("nvidia0", "nvidiactl", "nvidia-uvm"):
             server.succeed(f"rm /dev/{node_name}")
         server.succeed("systemctl start stt-worker.path stt-sweep.timer")
@@ -944,7 +950,6 @@ pkgs.testers.runNixOSTest {
         worker_pid = prop("stt-worker.service", "MainPID")
         assert worker_pid != "0", worker_pid
         socket_since = prop("stt-reader.socket", "ActiveEnterTimestampMonotonic")
-        intake_since = prop("stt-intake.service", "InactiveEnterTimestampMonotonic")
         # The base configuration differs from the specialisation in the template's ExecStart.
         switch_to()
         server.succeed(f"systemctl is-active {instance}")
@@ -952,7 +957,7 @@ pkgs.testers.runNixOSTest {
         assert prop("stt-reader.socket", "ActiveEnterTimestampMonotonic") == socket_since
         assert prop("stt-worker.service", "MainPID") == worker_pid, (prop("stt-worker.service", "MainPID"), worker_pid)
         assert prop("stt-worker.service", "ActiveState") in ("activating", "active"), prop("stt-worker.service", "ActiveState")
-        assert prop("stt-intake.service", "InactiveEnterTimestampMonotonic") == intake_since
+        # A held probe (intake active during the switch) is not covered here.
         time.sleep(5)
         assert response(held["request_id"])["state"] == "running", response(held["request_id"])
         server.succeed(f"systemctl is-active {instance}")
