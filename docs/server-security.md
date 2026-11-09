@@ -152,7 +152,8 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
   범위를 막음」을 적고 다음 달 확인에서 다시 본다.
 - **올리는 순서**: (1) 잠금 파일 갱신(PyAV 는 `uv lock --upgrade-package av`, nixpkgs 는 `nix flake update nixpkgs`) → (2) 빌드·시험 →
   (3) 배포 → (4) 기준 녹음 비교(`cmp` 로 s16 비교, 전사록·문단 목록 비교) → (5) 4.1 표 고치기(`version`·`last_updated`·`comparison`).
-  판을 올리고 표를 안 고치면 시험이 CI 에서 실패한다.
+  CI 시험이 지키는 것은 `av` 두 줄의 `version`(`uv.lock` 과 대조)과 `nixpkgs ffmpeg` 줄의 `version`(`flake.lock` 과 대조)뿐이다.
+  `last_updated`·`comparison` 과 나머지 줄은 CI 가 아니라 운영자가 직접 고친다.
 - 서버 경로의 해독기는 PyAV 휠의 FFmpeg 하나이므로 매달의 갱신은 보통 `av` 하나로 끝나고 nixpkgs 전체를 올릴 필요가 없다. `nixpkgs ffmpeg`
   의 공지는 서버 경로 밖(명령줄)이라는 이유로 올리지 않을 수 있고, 그 이유를 적는다.
 

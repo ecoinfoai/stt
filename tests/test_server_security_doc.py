@@ -311,10 +311,11 @@ def _advisory_gaps(rows: list[dict[str, str]]) -> list[str]:
     """Returns the advisories updated later than 7 days after publication without a reason."""
     gaps = []
     for row in rows:
+        published = _iso_date(row["published"])
+        updated = None if row["updated"] in ("", "-") else _iso_date(row["updated"])
         if row["reason"] not in ("", "-"):
             continue
-        deadline = _iso_date(row["published"]) + timedelta(days=ADVISORY_DAYS)
-        if row["updated"] in ("", "-") or _iso_date(row["updated"]) > deadline:
+        if updated is None or updated > published + timedelta(days=ADVISORY_DAYS):
             gaps.append(row["advisory"])
     return gaps
 
@@ -401,3 +402,11 @@ def test_advisory_gaps_apply_the_seven_day_rule_and_the_reason_escape():
     assert _advisory_gaps([{**base, "updated": "2026-04-21", "reason": "-"}]) == ["A"]
     assert _advisory_gaps([{**base, "updated": "-", "reason": "-"}]) == ["A"]
     assert _advisory_gaps([{**base, "updated": "-", "reason": "text"}]) == []
+
+
+def test_advisory_dates_must_be_iso_even_when_a_reason_is_given():
+    base = {"advisory": "A", "component": "c", "reason": "text"}
+    with pytest.raises(AssertionError):
+        _advisory_gaps([{**base, "published": "13 April 2026", "updated": "-"}])
+    with pytest.raises(AssertionError):
+        _advisory_gaps([{**base, "published": "2026-04-13", "updated": "next week"}])
