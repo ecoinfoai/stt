@@ -13,7 +13,6 @@ Neither side writes logs or anything else to standard output or error.
 from __future__ import annotations
 
 import array
-import fcntl
 import json
 import math
 import os
@@ -116,6 +115,9 @@ def _parse_request(data: bytes) -> tuple[str, float] | None:
 
 
 def _descriptors_fit(op: str, fds: Sequence[int]) -> bool:
+    # Imported here because the client-side constants of this module also load where fcntl does not exist.
+    import fcntl
+
     kinds = _DESCRIPTOR_KINDS[op]
     if len(fds) != len(kinds) or not all(is_kind(os.fstat(fd).st_mode) for is_kind, fd in zip(kinds, fds)):
         return False
