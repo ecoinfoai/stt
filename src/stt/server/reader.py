@@ -7,7 +7,10 @@ decode child and answers with its verdict. The decode child
 is the only code that imports PyAV; it reads the recording through the
 descriptor it was handed and never sees a path.
 
-Neither side writes logs or anything else to standard output or error.
+The decode child writes nothing to standard output or error. The supervisor writes
+one fixed line to standard error (the unit's journal) when the child ends abnormally
+or its decode stopped early at invalid data; the line holds no job ID, path, file
+name or decoder text.
 """
 
 from __future__ import annotations
@@ -38,6 +41,8 @@ MAX_DECODED_BYTES = 362_880_000
 # (m4a, mp3, wav, flac, ogg, opus, aac, wma). Opening any other format could
 # follow references to other files, such as a playlist's.
 AUDIO_FORMATS = "mov,mp3,wav,flac,ogg,aac,asf"
+# The decode child's exit status for "the output is complete up to the first invalid frame".
+EARLY_STOP_EXIT = 3
 
 DEFAULT_CHILD_COMMAND: tuple[str, ...] = (sys.executable, "-m", "stt.server.reader", "child")
 
@@ -200,8 +205,23 @@ def _read_duration(result_read: int) -> float | None:
     return duration if 0 <= duration < math.inf else None
 
 
+def _stopped_early(op: str, returncode: int) -> bool:
+    return op == "decode" and returncode == EARLY_STOP_EXIT
+
+
+def _journal_line(op: str, returncode: int) -> str | None:
+    """Returns the fixed line for a child that ended abnormally or stopped early, None for a normal end."""
+    if returncode == 0:
+        return None
+    if _stopped_early(op, returncode):
+        return "reader child decode stopped early at invalid data"
+    if returncode < 0:
+        return f"reader child {op} killed by signal {-returncode}"
+    return f"reader child {op} exited with status {returncode}"
+
+
 def _verdict(op: str, returncode: int, result_read: int | None) -> dict[str, Any]:
-    if returncode != 0:
+    if returncode != 0 and not _stopped_early(op, returncode):
         return _FAILED
     if result_read is None:
         return {"status": "ok"}
@@ -233,6 +253,8 @@ def _supervise(connection: socket.socket, child_command: Sequence[str], request_
         if outcome != "exited":
             child.kill()
         returncode = child.wait()
+        if outcome == "exited" and (line := _journal_line(op, returncode)) is not None:
+            print(line, file=sys.stderr, flush=True)
         if outcome != "hangup":
             _send(connection, _verdict(op, returncode, result_read) if outcome == "exited" else _FAILED)
     finally:
@@ -314,21 +336,23 @@ def _open_container(recording: BinaryIO) -> Any:
     return open_container(recording, format_whitelist=AUDIO_FORMATS)
 
 
-def _probe(recording_fd: int, output_fd: int) -> None:
+def _probe(recording_fd: int, output_fd: int) -> bool:
     with open(recording_fd, "rb") as recording, _open_container(recording) as container:
         duration = container_duration_s(container)
     with open(output_fd, "wb") as output:
         output.write(json.dumps({"duration_s": duration}).encode("utf-8"))
+    return False
 
 
-def _decode(recording_fd: int, output_fd: int) -> None:
+def _decode(recording_fd: int, output_fd: int) -> bool:
     from stt.audio_decode import write_s16
 
     with open(recording_fd, "rb") as recording, open(output_fd, "wb") as output, _open_container(recording) as container:
-        write_s16(container, output)
+        return write_s16(container, output)
 
 
-_CHILD_ACTIONS: dict[str, Callable[[int, int], None]] = {"probe": _probe, "decode": _decode}
+# Each action returns whether the decode stopped early at invalid data (always False for probe).
+_CHILD_ACTIONS: dict[str, Callable[[int, int], bool]] = {"probe": _probe, "decode": _decode}
 
 
 def main(argv: list[str]) -> int:
@@ -338,15 +362,16 @@ def main(argv: list[str]) -> int:
         argv: Command-line arguments without the program name.
 
     Returns:
-        0 on success; 1 on bad arguments or any error, with nothing written anywhere.
+        0 on success; `EARLY_STOP_EXIT` when the decode stopped at the first invalid frame (everything
+        before it is written); 1 on bad arguments or any error, with nothing written anywhere.
     """
     try:
         if len(argv) != 4 or argv[0] != "child":
             raise ValueError("expected: child probe|decode <recording fd> <output fd>")
-        _CHILD_ACTIONS[argv[1]](int(argv[2]), int(argv[3]))
+        stopped_early = _CHILD_ACTIONS[argv[1]](int(argv[2]), int(argv[3]))
     except Exception:
         return 1
-    return 0
+    return EARLY_STOP_EXIT if stopped_early else 0
 
 
 if __name__ == "__main__":

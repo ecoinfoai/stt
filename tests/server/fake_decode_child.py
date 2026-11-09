@@ -9,6 +9,9 @@ fixed way:
     exit-error: exit with code 1.
     hang: sleep until killed.
     sigkill: kill itself with SIGKILL.
+    sigsys: kill itself with SIGSYS, as the system call filter does.
+    early-stop: write ``--count`` zero bytes (default one second of silence) to the output
+        descriptor, then exit with the early-stop code (``reader.EARLY_STOP_EXIT``).
     write-raw: write ``--payload`` (UTF-8) to the output descriptor, exit 0.
     write-raw-then-error: as write-raw, then exit with code 1.
     write-bytes: write ``--count`` zero bytes to the output descriptor, exit 0.
@@ -38,9 +41,10 @@ import stat
 import sys
 import time
 
-MODES = ("exit-error", "hang", "sigkill", "write-raw", "write-raw-then-error", "write-bytes", "verify-spawn")
+MODES = ("exit-error", "hang", "sigkill", "sigsys", "early-stop", "write-raw", "write-raw-then-error", "write-bytes", "verify-spawn")
 VALID_RESULT = b'{"duration_s": 1.5}'
 ONE_SECOND_OF_SILENCE_BYTES = 32000
+EARLY_STOP_EXIT = 3
 
 
 def write_all(fd: int, data: bytes) -> None:
@@ -144,6 +148,12 @@ def main(argv: list[str]) -> int:
     if args.mode == "sigkill":
         os.kill(os.getpid(), signal.SIGKILL)
         return 0
+    if args.mode == "sigsys":
+        os.kill(os.getpid(), signal.SIGSYS)
+        return 0
+    if args.mode == "early-stop":
+        write_all(args.output_fd, bytes(args.count or ONE_SECOND_OF_SILENCE_BYTES))
+        return EARLY_STOP_EXIT
     if args.mode == "write-raw":
         write_all(args.output_fd, args.payload.encode("utf-8"))
         return 0

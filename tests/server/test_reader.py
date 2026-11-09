@@ -24,8 +24,10 @@ import pytest
 from stt.server import reader
 
 from .conftest import (
+    FAKE_FRAME_SAMPLES,
     FASTER_WHISPER_DECODER_MAX_AV_MAJOR,
     EmulatedReaderSocket,
+    FakeFrameContainer,
     av_major,
     encode_tone,
     make_wav,
@@ -191,6 +193,7 @@ def test_constants_match_the_contract() -> None:
     assert reader.SAMPLE_RATE == 16000
     assert reader.MAX_DECODED_BYTES == 362_880_000
     assert reader.AUDIO_FORMATS == "mov,mp3,wav,flac,ogg,aac,asf"
+    assert reader.EARLY_STOP_EXIT == 3
 
 
 # ------------------------------------------------- supervisor: (a) rejected requests
@@ -564,12 +567,11 @@ def test_the_supervisor_loads_nothing_outside_the_standard_library(descriptors: 
     ("child", "body", "kinds", "last_message"),
     [
         (fake_child("write-raw", payload=VALID_PROBE_RESULT), PROBE_BODY, ("file",), {"status": "ok", "duration_s": 2.5}),
-        (fake_child("exit-error"), PROBE_BODY, ("file",), {"status": "failed"}),
         (fake_child("exit-error"), {"op": "bogus", "limit_s": 1}, ("file",), {"started": False}),
     ],
-    ids=["ok", "child-failure", "rejected-request"],
+    ids=["ok", "rejected-request"],
 )
-def test_the_supervisor_writes_nothing_to_stdout_or_stderr(
+def test_a_normal_answer_leaves_standard_output_and_error_empty(
     descriptors: Descriptors,
     child: list[str],
     body: dict[str, Any],
@@ -581,6 +583,45 @@ def test_the_supervisor_writes_nothing_to_stdout_or_stderr(
     assert messages[-1] == last_message
     assert run.code == 0
     assert run.stdout == b""
+    assert run.stderr == b""
+
+
+JOURNAL_LINE_CASES = [
+    ("probe-exit-1", "probe", PROBE_BODY, "exit-error", {"status": "failed"}, b"reader child probe exited with status 1\n"),
+    ("decode-exit-1", "decode", DECODE_BODY, "exit-error", {"status": "failed"}, b"reader child decode exited with status 1\n"),
+    ("decode-sigsys", "decode", DECODE_BODY, "sigsys", {"status": "failed"}, b"reader child decode killed by signal 31\n"),
+    ("probe-sigkill", "probe", PROBE_BODY, "sigkill", {"status": "failed"}, b"reader child probe killed by signal 9\n"),
+    ("decode-early-stop", "decode", DECODE_BODY, "early-stop", {"status": "ok"}, b"reader child decode stopped early at invalid data\n"),
+    ("probe-early-stop-code", "probe", PROBE_BODY, "early-stop", {"status": "failed"}, b"reader child probe exited with status 3\n"),
+]
+
+
+@pytest.mark.parametrize(
+    ("op", "body", "mode", "verdict", "line"),
+    [case[1:] for case in JOURNAL_LINE_CASES],
+    ids=[case[0] for case in JOURNAL_LINE_CASES],
+)
+def test_the_supervisor_writes_one_fixed_line_when_the_child_ends_abnormally_and_the_verdict_stays(
+    descriptors: Descriptors, op: str, body: dict[str, Any], mode: str, verdict: dict[str, Any], line: bytes
+) -> None:
+    kinds = ("file",) if op == "probe" else ("file", "pipe")
+
+    run, messages = converse(supervisor_command(fake_child(mode)), descriptors, body, kinds)
+
+    assert messages == [{"started": True}, verdict]
+    assert run.code == 0
+    assert run.stdout == b""
+    assert run.stderr == line
+
+
+@pytest.mark.parametrize("op", ["probe", "decode"])
+def test_a_child_the_supervisor_kills_leaves_no_line(descriptors: Descriptors, op: str) -> None:
+    kinds = ("file",) if op == "probe" else ("file", "pipe")
+    body = {"op": op, "limit_s": 0.4}
+
+    run, messages = converse(supervisor_command(fake_child("hang")), descriptors, body, kinds)
+
+    assert messages == [{"started": True}, {"status": "failed"}]
     assert run.stderr == b""
 
 
@@ -944,3 +985,35 @@ def test_the_child_ends_with_code_1_on_bad_arguments(arguments: list[str]) -> No
 
     assert proc.returncode == 1
     assert proc.stdout == b"" and proc.stderr == b""
+
+
+# ------------------------------------- decode child: a damaged frame (no recording involved)
+
+
+def run_decode_child_in_process(directory: Path, container: FakeFrameContainer, monkeypatch: pytest.MonkeyPatch) -> tuple[int, bytes]:
+    monkeypatch.setattr(reader, "_open_container", lambda recording: container)
+    placeholder = directory / "placeholder.bin"
+    placeholder.write_bytes(b"not interpreted by anyone")
+    output = directory / "decoded.s16"
+    recording_fd = os.open(placeholder, os.O_RDONLY)
+    output_fd = os.open(output, os.O_WRONLY | os.O_CREAT, 0o600)
+    code = reader.main(["child", "decode", str(recording_fd), str(output_fd)])
+    return code, output.read_bytes()
+
+
+def test_the_decode_child_ends_with_the_early_stop_code_after_writing_everything_before_a_damaged_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, written = run_decode_child_in_process(tmp_path, FakeFrameContainer(3, fail_after=True), monkeypatch)
+
+    assert code == reader.EARLY_STOP_EXIT
+    assert len(written) == 3 * FAKE_FRAME_SAMPLES * 2
+
+
+def test_the_decode_child_ends_with_code_0_when_nothing_is_damaged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, written = run_decode_child_in_process(tmp_path, FakeFrameContainer(3, fail_after=False), monkeypatch)
+
+    assert code == 0
+    assert len(written) == 3 * FAKE_FRAME_SAMPLES * 2
