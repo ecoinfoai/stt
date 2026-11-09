@@ -660,7 +660,7 @@ pkgs.testers.runNixOSTest {
         submit(passed)
         wait_response(passed["request_id"], lambda doc: doc["state"] == "running", timeout=30)
         work = f"{STATE}/work/{passed['request_id']}"
-        fmt, frames = wait_wav(f"{work}/audio.wav")
+        fmt, frames = wait_wav(f"{work}/audio.wav", lambda frames: abs(len(frames) // 2 - 2 * 16000) <= 1600)
         assert fmt == (1, 2, 16000), fmt
         assert abs(len(frames) // 2 - 2 * 16000) <= 1600, len(frames)
         spec = json.loads(server.succeed(f"cat {work}/spec.json"))
@@ -748,7 +748,8 @@ pkgs.testers.runNixOSTest {
             server.succeed("systemctl start --no-block stt-worker.service")
             server.wait_until_succeeds("systemctl show -P ActiveState stt-worker.service | grep -Ex 'activating|active'", timeout=30)
             # The worker clears the work folders of a dead worker first; once it sleeps between attempts
-            # to take the GPU lock (clock_nanosleep, 230 on x86-64) that is behind it.
+            # to take the GPU lock (clock_nanosleep, 230 on x86-64) that is behind it. This relies on
+            # the worker polling the held lock with time.sleep, which uses clock_nanosleep on Python 3.11+.
             server.wait_until_succeeds(
                 "test \"$(cut -d' ' -f1 /proc/$(systemctl show -P MainPID stt-worker.service)/syscall)\" = 230", timeout=30
             )
@@ -815,6 +816,7 @@ pkgs.testers.runNixOSTest {
         server.succeed(f"systemctl is-active {decode_instance}")
         assert int(prop(decode_instance, "UID")) == decode_uid
         # The pattern finds the private folders of other running units, and none for the reader instance.
+        # Assumes systemd-logind runs with PrivateTmp on this systemd, so that its folder is there to find.
         server.succeed("test -n \"$(find /tmp -maxdepth 1 -name 'systemd-private-*systemd-logind*')\"")
         server.succeed(f"test -z \"$({PRIVATE_FOLDERS})\"")
         report_a = finish_read(a)
@@ -937,25 +939,34 @@ pkgs.testers.runNixOSTest {
             wait_reader_instance()
             return job["request_id"]
 
-        def no_files_of(request_id):
-            """Nothing of the job is left but its record: no instance, recording, work folder, queue mark, result or hint."""
+        def no_files_of(request_id, response_state):
+            """Nothing of the job is left but what the end state keeps.
+
+            No instance, recording, work folder, queue mark or result folder. The job record and the
+            response are expected to be there with state `response_state` and no hint when it is a state
+            ("deleted"); when it is None the record has expired with the purge and both must be gone.
+            """
             no_reader_instance()
             server.wait_until_succeeds(
                 f"test ! -e {STATE}/audio/{request_id} && test ! -e {OUTBOX}/{request_id}"
                 f" && test -z \"$(ls -A {STATE}/work; ls -A {STATE}/queue)\"",
                 timeout=60,
             )
-            record_path = f"{STATE}/jobs/{request_id}/job.json"
-            if server.execute(f"test -e {record_path}")[0] == 0:
-                record = json.loads(server.succeed(f"cat {record_path}"))
-                assert record["hints"] is None, record
-            for word in HINTS:
-                server.fail(f"grep -rF {word} {STATE}/jobs/{request_id} {OUTBOX}/{request_id}.json")
+            kept = [f"{STATE}/jobs/{request_id}/job.json", f"{OUTBOX}/{request_id}.json"]
+            for path in kept:
+                present = server.execute(f"test -e {path}")[0] == 0
+                assert present == (response_state is not None), (path, present, response_state)
+                if present:
+                    for word in HINTS:
+                        server.fail(f"grep -qF {word} {path}")
+            if response_state is not None:
+                assert json.loads(server.succeed(f"cat {kept[0]}"))["hints"] is None
+                assert response(request_id)["state"] == response_state
 
         deleted = held_read()
         started = time.monotonic()
         assert response(delete(deleted))["outcome"] == "deleted"
-        no_files_of(deleted)
+        no_files_of(deleted, "deleted")
         assert time.monotonic() - started < 60, time.monotonic() - started
         idle("stt-worker.service")
 
@@ -970,7 +981,7 @@ pkgs.testers.runNixOSTest {
         local = vm_now().astimezone(KST)
         set_clock(datetime(local.year, local.month, local.day, 23, 58, 10, tzinfo=KST))
         sweep()
-        no_files_of(purged)
+        no_files_of(purged, None)
         idle("stt-worker.service")
         assert not failed_stt_units(), failed_stt_units()
         switch_to()
