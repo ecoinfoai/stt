@@ -754,6 +754,9 @@ def transcribe_file(
 ) -> tuple[list[SegmentLike], float, str]:
     """Transcribes one media file and returns its segments.
 
+    The file is decoded by stt's own decoder (stt.audio_decode), not by faster-whisper,
+    whose decoder does not work with PyAV 19.
+
     Args:
         model: A loaded WhisperModel.
         media: Path of the media file to transcribe.
@@ -774,15 +777,17 @@ def transcribe_file(
     Examples:
         >>> transcribe_file(m, Path("a.m4a"), "ko", None, 5)  # doctest: +SKIP
     """
+    from stt.audio_decode import decode_samples
+
     return transcribe_samples(
-        model, str(media), media.name, language, terms, beam_size,
+        model, decode_samples(media), media.name, language, terms, beam_size,
         word_timestamps=word_timestamps, allow_empty=allow_empty,
     )
 
 
 def transcribe_samples(
     model: "WhisperModel",
-    samples: "np.ndarray | str",
+    samples: "np.ndarray",
     name: str,
     language: str | None,
     terms: str | None,
@@ -797,8 +802,8 @@ def transcribe_samples(
 
     Args:
         model: A loaded WhisperModel.
-        samples: Mono float32 samples at 16 kHz. transcribe_file also passes
-            a media path here and lets the model decode it.
+        samples: Mono float32 samples at 16 kHz, as transcribe_file decodes
+            them and as the server's reader delivers them.
         name: File name used in the empty-result error message.
         language: Language code such as 'ko', or None to detect it.
         terms: Hotwords string to pass to the model, or None.

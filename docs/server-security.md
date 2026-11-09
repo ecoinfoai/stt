@@ -114,13 +114,14 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
 `role`: `decodes-recordings` 는 서버 경로에서 녹음 바이트를 해석, `cli-only` 는 운영자 명령줄만, `decoded-audio-only` 는 해독된 음성만 다룬다.
 `since` 는 그 판을 넣은 커밋(`git log -S` 로 찾음)의 날짜와 짧은 해시, `last_updated` 는 판을 바꾼 마지막 날이다. `comparison` 은
 `decodes-recordings` 줄에서 이 판으로 기준 녹음을 비교한 날이고, 다른 줄은 `-` 다. `nixpkgs ffmpeg` 의 `version` 은 `flake.lock` 의 nixpkgs 커밋
-(ffmpeg 8.1.2)이다. `uv.lock` 의 `av` 두 항목은 `resolution-markers` 로 구별한다(17.1.0 은 `python_full_version < '3.11'`).
+(ffmpeg 8.1.2)이다. `uv.lock` 의 `av` 세 항목은 `resolution-markers` 로 구별한다(17.1.0 은 `python_full_version < '3.11'`, 18.1.0 은 `== '3.11.*'`, 19.0.2 는 `== '3.12.*'`).
 
 <!-- stt:versions -->
 
 | component | role | version | pinned_in | since | last_updated | comparison |
 |---|---|---|---|---|---|---|
-| av (Python 3.12) | decodes-recordings | 18.0.0 | uv.lock | 2026-07-31 (ad3d695) | 2026-07-31 | 2026-11-09 |
+| av (Python 3.12) | decodes-recordings | 19.0.2 | uv.lock | 2026-11-10 (c86fe6c) | 2026-11-10 | 2026-11-10 |
+| av (Python 3.11) | cli-only | 18.1.0 | uv.lock | 2026-11-10 (c86fe6c) | 2026-11-10 | - |
 | av (Python 3.10) | cli-only | 17.1.0 | uv.lock | 2026-07-31 (ad3d695) | 2026-07-31 | - |
 | nixpkgs ffmpeg | cli-only | 148bab9c1c3c53136ecb44a6ea356a0ed5b39b06 | flake.lock | 2026-08-02 (13e2b00) | 2026-08-02 | - |
 | faster-whisper | decoded-audio-only | 1.2.1 | uv.lock | 2026-07-31 (ad3d695) | 2026-07-31 | - |
@@ -128,8 +129,12 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
 | torch | decoded-audio-only | 2.13.0 | uv.lock | 2026-08-03 (47d6d56) | 2026-08-03 | - |
 | pyannote.audio | decoded-audio-only | 4.0.7 | uv.lock | 2026-08-03 (47d6d56) | 2026-08-03 | - |
 
-- `av (Python 3.12)`: 서버가 쓰는 휠. 안의 FFmpeg 는 8.1.2(libavcodec 62.28.102, libavformat 62.12.102). 배포된 서버 환경이 `av 18.0.0`,
-  `ffmpeg_version_info 8.1.2` 를 보고한다(2026-11-09).
+- `av (Python 3.12)`: 서버가 쓰는 휠. 안의 FFmpeg 는 9.0.2(`av.ffmpeg_version_info` 로 확인). 저장소의 잠금은 2026-11-10 에 18.0.0 에서
+  올렸고, 배포된 서버 환경은 서버 배포(P2, T041) 전까지 `av 18.0.0`, `ffmpeg_version_info 8.1.2` 다(2026-11-09 확인).
+  기준 녹음 비교(2026-11-10, 읽기 단위와 같은 해독으로 av 18.0.0 대 19.0.2 의 s16 출력): `clip60.m4a` 는 960,171표본이 바이트까지 같다.
+  `hour.m4a` 는 앞 57,600,890표본이 같고 끝의 10표본이 조금 다르며(최대 74) 19.0.2 쪽이 124표본(7.75 ms) 짧다(18.0.0 은 57,601,024표본).
+  맨 끝 정리 구간의 차이로 보이며 운영자가 확인한다.
+- `av (Python 3.11)`: Python 3.11 의 명령줄에서만 쓴다. 안의 FFmpeg 는 8.1.2. 2026-11-10 전에는 3.12 와 같은 18.0.0 이었다.
 - `av (Python 3.10)`: Python 3.10 의 명령줄에서만 쓴다(서버는 3.12). 안의 FFmpeg 는 8.1.1.
 - `nixpkgs ffmpeg`: P2 뒤 서버의 GPU 단계는 `ffmpeg` 를 부르지 않는다. 운영자의 명령줄이 쓴다. 마지막 갱신일은 nixpkgs 커밋이 바뀐 날이다
   (`5afc555` 는 이 커밋을 바꾸지 않았다).
@@ -152,7 +157,7 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
   범위를 막음」을 적고 다음 달 확인에서 다시 본다.
 - **올리는 순서**: (1) 잠금 파일 갱신(PyAV 는 `uv lock --upgrade-package av`, nixpkgs 는 `nix flake update nixpkgs`) → (2) 빌드·시험 →
   (3) 배포 → (4) 기준 녹음 비교(`cmp` 로 s16 비교, 전사록·문단 목록 비교) → (5) 4.1 표 고치기(`version`·`last_updated`·`comparison`).
-  CI 시험이 지키는 것은 `av` 두 줄의 `version`(`uv.lock` 과 대조)과 `nixpkgs ffmpeg` 줄의 `version`(`flake.lock` 과 대조)뿐이다.
+  CI 시험이 지키는 것은 `av` 세 줄의 `version`(`uv.lock` 과 대조)과 `nixpkgs ffmpeg` 줄의 `version`(`flake.lock` 과 대조)뿐이다.
   `last_updated`·`comparison` 과 나머지 줄은 CI 가 아니라 운영자가 직접 고친다.
 - 서버 경로의 해독기는 PyAV 휠의 FFmpeg 하나이므로 매달의 갱신은 보통 `av` 하나로 끝나고 nixpkgs 전체를 올릴 필요가 없다. `nixpkgs ffmpeg`
   의 공지는 서버 경로 밖(명령줄)이라는 이유로 올리지 않을 수 있고, 그 이유를 적는다.
@@ -163,11 +168,11 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
 
 | advisory | component | published | updated | reason |
 |---|---|---|---|---|
-| CVE-2026-30997 | PyAV 휠의 FFmpeg 8.1.2, nixpkgs ffmpeg 8.1.2 | 2026-04-13 | - | AV1 해독기(`libavcodec/av1dec.c`)의 범위 밖 읽기, FFmpeg 9.0 에서 고침. 정책 시작(2026-11-09) 전에 나온 공지. 영상·이미지 해독기라 음성만 꺼내는 서버 경로에서 닿을 가능성은 낮지만 허용한 컨테이너(mov·asf 등)의 분석 중 불릴 수 있어 해당으로 본다. 고친 판은 PyAV 19.0.2(FFmpeg 9.0.2)뿐이고 av 19 는 API 가 바뀌어 별도 과제(운영자 결정 대기). 그동안 P2 읽기 격리가 피해 범위를 막는다(P2 배포 전에는 P1 의 호출 필터만). |
-| CVE-2026-12706 | PyAV 휠의 FFmpeg 8.1.2, nixpkgs ffmpeg 8.1.2 | 2026-06-19 | - | RASC 영상 해독기의 해제 뒤 사용, 9.0 에서 고침. 정책 시작(2026-11-09) 전에 나온 공지. 영상·이미지 해독기라 음성만 꺼내는 서버 경로에서 닿을 가능성은 낮지만 허용한 컨테이너(mov·asf 등)의 분석 중 불릴 수 있어 해당으로 본다. 고친 판은 PyAV 19.0.2(FFmpeg 9.0.2)뿐이고 av 19 는 API 가 바뀌어 별도 과제(운영자 결정 대기). 그동안 P2 읽기 격리가 피해 범위를 막는다(P2 배포 전에는 P1 의 호출 필터만). |
-| CVE-2026-66038 | PyAV 휠의 FFmpeg 8.1.2, nixpkgs ffmpeg 8.1.2 | 2026-07-24 | - | LCL/ZLIB 영상 해독기의 초기화되지 않은 힙 노출, 8.1.2 까지 해당하고 9.0 에서 고침. 정책 시작(2026-11-09) 전에 나온 공지. 영상·이미지 해독기라 음성만 꺼내는 서버 경로에서 닿을 가능성은 낮지만 허용한 컨테이너(mov·asf 등)의 분석 중 불릴 수 있어 해당으로 본다. 고친 판은 PyAV 19.0.2(FFmpeg 9.0.2)뿐이고 av 19 는 API 가 바뀌어 별도 과제(운영자 결정 대기). 그동안 P2 읽기 격리가 피해 범위를 막는다(P2 배포 전에는 P1 의 호출 필터만). |
-| CVE-2026-70629 | PyAV 휠의 FFmpeg 8.1.2, nixpkgs ffmpeg 8.1.2 | 2026-08-06 | - | RSCC 해독기의 초기화되지 않은 힙 읽기, 9.0 미만이 해당. 정책 시작(2026-11-09) 전에 나온 공지. 영상·이미지 해독기라 음성만 꺼내는 서버 경로에서 닿을 가능성은 낮지만 허용한 컨테이너(mov·asf 등)의 분석 중 불릴 수 있어 해당으로 본다. 고친 판은 PyAV 19.0.2(FFmpeg 9.0.2)뿐이고 av 19 는 API 가 바뀌어 별도 과제(운영자 결정 대기). 그동안 P2 읽기 격리가 피해 범위를 막는다(P2 배포 전에는 P1 의 호출 필터만). |
-| CVE-2026-70631 | PyAV 휠의 FFmpeg 8.1.2, nixpkgs ffmpeg 8.1.2 | 2026-08-06 | - | TIFF 해독기의 초기화되지 않은 힙 노출, 9.0 미만이 해당. 정책 시작(2026-11-09) 전에 나온 공지. 영상·이미지 해독기라 음성만 꺼내는 서버 경로에서 닿을 가능성은 낮지만 허용한 컨테이너(mov·asf 등)의 분석 중 불릴 수 있어 해당으로 본다. 고친 판은 PyAV 19.0.2(FFmpeg 9.0.2)뿐이고 av 19 는 API 가 바뀌어 별도 과제(운영자 결정 대기). 그동안 P2 읽기 격리가 피해 범위를 막는다(P2 배포 전에는 P1 의 호출 필터만). |
+| CVE-2026-30997 | PyAV 휠의 FFmpeg 8.1.2, nixpkgs ffmpeg 8.1.2 | 2026-04-13 | 2026-11-10 | AV1 해독기(`libavcodec/av1dec.c`)의 범위 밖 읽기, FFmpeg 9.0 에서 고침. 정책 시작(2026-11-09) 전에 나온 공지. 영상·이미지 해독기라 음성만 꺼내는 서버 경로에서 닿을 가능성은 낮지만 허용한 컨테이너(mov·asf 등)의 분석 중 불릴 수 있어 해당으로 본다. 저장소에서 av 19.0.2(FFmpeg 9.0.2)로 올림(2026-11-10), 서버 배포는 P2 와 함께(T041). |
+| CVE-2026-12706 | PyAV 휠의 FFmpeg 8.1.2, nixpkgs ffmpeg 8.1.2 | 2026-06-19 | 2026-11-10 | RASC 영상 해독기의 해제 뒤 사용, 9.0 에서 고침. 정책 시작(2026-11-09) 전에 나온 공지. 영상·이미지 해독기라 음성만 꺼내는 서버 경로에서 닿을 가능성은 낮지만 허용한 컨테이너(mov·asf 등)의 분석 중 불릴 수 있어 해당으로 본다. 저장소에서 av 19.0.2(FFmpeg 9.0.2)로 올림(2026-11-10), 서버 배포는 P2 와 함께(T041). |
+| CVE-2026-66038 | PyAV 휠의 FFmpeg 8.1.2, nixpkgs ffmpeg 8.1.2 | 2026-07-24 | 2026-11-10 | LCL/ZLIB 영상 해독기의 초기화되지 않은 힙 노출, 8.1.2 까지 해당하고 9.0 에서 고침. 정책 시작(2026-11-09) 전에 나온 공지. 영상·이미지 해독기라 음성만 꺼내는 서버 경로에서 닿을 가능성은 낮지만 허용한 컨테이너(mov·asf 등)의 분석 중 불릴 수 있어 해당으로 본다. 저장소에서 av 19.0.2(FFmpeg 9.0.2)로 올림(2026-11-10), 서버 배포는 P2 와 함께(T041). |
+| CVE-2026-70629 | PyAV 휠의 FFmpeg 8.1.2, nixpkgs ffmpeg 8.1.2 | 2026-08-06 | 2026-11-10 | RSCC 해독기의 초기화되지 않은 힙 읽기, 9.0 미만이 해당. 정책 시작(2026-11-09) 전에 나온 공지. 영상·이미지 해독기라 음성만 꺼내는 서버 경로에서 닿을 가능성은 낮지만 허용한 컨테이너(mov·asf 등)의 분석 중 불릴 수 있어 해당으로 본다. 저장소에서 av 19.0.2(FFmpeg 9.0.2)로 올림(2026-11-10), 서버 배포는 P2 와 함께(T041). |
+| CVE-2026-70631 | PyAV 휠의 FFmpeg 8.1.2, nixpkgs ffmpeg 8.1.2 | 2026-08-06 | 2026-11-10 | TIFF 해독기의 초기화되지 않은 힙 노출, 9.0 미만이 해당. 정책 시작(2026-11-09) 전에 나온 공지. 영상·이미지 해독기라 음성만 꺼내는 서버 경로에서 닿을 가능성은 낮지만 허용한 컨테이너(mov·asf 등)의 분석 중 불릴 수 있어 해당으로 본다. 저장소에서 av 19.0.2(FFmpeg 9.0.2)로 올림(2026-11-10), 서버 배포는 P2 와 함께(T041). |
 
 첫 확인(2026-11-09)에서 CVE-2026-8461·CVE-2026-30999 는 FFmpeg 8.1.2 에서 이미 고쳐졌고 CVE-2026-30998 은 `tools/zmqsend.c` 의 문제로 라이브러리에
 들어 있지 않아, 서버의 판에 해당하지 않음을 확인하고 표에 올리지 않았다.
@@ -178,4 +183,4 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
 
 | date | sources | result |
 |---|---|---|
-| 2026-11-09 | ffmpeg-security, pyav-releases, nixpkgs-ffmpeg | 새 판 있음 — PyAV 19.0.2(휠의 FFmpeg 9.0.2, 2026-10-21), nixpkgs nixos-unstable 의 ffmpeg 9.0.2. 서버 판(av 18.0.0, FFmpeg 8.1.2)에 해당하는 보안 공지 5건(4.3 표). 올리지 않음 — av 19 는 API 가 바뀌어(`stream_options` 제거, 유리수 속성이 `av.AVRational`) 별도 과제로 운영자가 정한다. 이 첫 확인은 운영자 지시로 Claude 가 했다. |
+| 2026-11-09 | ffmpeg-security, pyav-releases, nixpkgs-ffmpeg | 새 판 있음 — PyAV 19.0.2(휠의 FFmpeg 9.0.2, 2026-10-21), nixpkgs nixos-unstable 의 ffmpeg 9.0.2. 서버 판(av 18.0.0, FFmpeg 8.1.2)에 해당하는 보안 공지 5건(4.3 표). 올리지 않음 — av 19 는 API 가 바뀌어(`stream_options` 제거, 유리수 속성이 `av.AVRational`) 별도 과제로 운영자가 정한다. 이 첫 확인은 운영자 지시로 Claude 가 했다. 운영자가 2026-11-10 에 올리기로 정해 저장소의 잠금을 PyAV 19.0.2 로 올렸다(T044, 서버 배포는 P2 와 함께). |

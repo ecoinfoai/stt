@@ -22,7 +22,7 @@ import stat
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, BinaryIO
 
 SOCKET_PATH = "/run/stt-reader.sock"
@@ -50,9 +50,6 @@ _DESCRIPTOR_KINDS: dict[str, tuple[Callable[[int], bool], ...]] = {
 # One more than the most any valid request carries, so that an extra descriptor is seen rather than dropped.
 _MAX_REQUEST_FDS = 3
 _FAILED = {"status": "failed"}
-
-_FIFO_SAMPLES = 500_000
-_BYTES_PER_SAMPLE = 2
 
 
 def _send(connection: socket.socket, message: dict[str, Any]) -> bool:
@@ -312,9 +309,9 @@ def container_duration_s(container: Any) -> float:
 
 
 def _open_container(recording: BinaryIO) -> Any:
-    import av
+    from stt.audio_decode import open_container
 
-    return av.open(recording, metadata_errors="ignore", container_options={"format_whitelist": AUDIO_FORMATS})
+    return open_container(recording, format_whitelist=AUDIO_FORMATS)
 
 
 def _probe(recording_fd: int, output_fd: int) -> None:
@@ -324,37 +321,11 @@ def _probe(recording_fd: int, output_fd: int) -> None:
         output.write(json.dumps({"duration_s": duration}).encode("utf-8"))
 
 
-def _valid_frames(frames: Iterator[Any]) -> Iterator[Any]:
-    import av
-
-    while True:
-        try:
-            yield next(frames)
-        except StopIteration:
-            return
-        except av.error.InvalidDataError:
-            continue
-
-
-def _write_resampled(resampler: Any, frame: Any, output: BinaryIO) -> None:
-    for resampled in resampler.resample(frame):
-        output.write(bytes(resampled.planes[0])[: resampled.samples * _BYTES_PER_SAMPLE])
-
-
 def _decode(recording_fd: int, output_fd: int) -> None:
-    import av
+    from stt.audio_decode import write_s16
 
-    resampler = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
-    fifo = av.audio.fifo.AudioFifo()
     with open(recording_fd, "rb") as recording, open(output_fd, "wb") as output, _open_container(recording) as container:
-        for frame in _valid_frames(container.decode(audio=0)):
-            frame.pts = None
-            fifo.write(frame)
-            if fifo.samples >= _FIFO_SAMPLES:
-                _write_resampled(resampler, fifo.read(), output)
-        if fifo.samples > 0:
-            _write_resampled(resampler, fifo.read(), output)
-        _write_resampled(resampler, None, output)
+        write_s16(container, output)
 
 
 _CHILD_ACTIONS: dict[str, Callable[[int, int], None]] = {"probe": _probe, "decode": _decode}

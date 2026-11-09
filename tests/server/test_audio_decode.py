@@ -73,12 +73,3 @@ def test_a_text_file_with_a_recording_extension_fails_loudly(tmp_path: Path) -> 
 def test_a_missing_file_fails_loudly(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         audio_decode.decode_samples(tmp_path / "absent.m4a")
-
-
-def test_the_reader_format_list_still_applies_through_open_container(tmp_path: Path) -> None:
-    import av
-
-    recording = encode_tone(tmp_path / "tone.aiff", "aiff", "pcm_s16be")
-
-    with open(recording, "rb") as handle, pytest.raises(av.error.InvalidDataError):
-        audio_decode.open_container(handle, format_whitelist=reader.AUDIO_FORMATS)

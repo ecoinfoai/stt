@@ -321,9 +321,7 @@ class TestGpuOnlyCommandLine:
 
     @staticmethod
     def _media(tmp_path):
-        media = tmp_path / "talk.m4a"
-        media.touch()
-        return media
+        return write_silent_wav(tmp_path / "talk.m4a")
 
     def test_parse_args_rejects_cpu_device(self, capsys):
         with pytest.raises(SystemExit) as stopped:
