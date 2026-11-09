@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import socket
 import subprocess
 import sys
@@ -495,12 +496,16 @@ def _run_read_command(stdin: Any, *flags: str) -> subprocess.CompletedProcess[by
     )
 
 
-def _imported_top_level_modules(importtime_output: bytes) -> set[str]:
-    names = set()
-    for line in importtime_output.decode("utf-8", "replace").splitlines():
-        if line.startswith("import time:") and "|" in line:
-            names.add(line.rsplit("|", 1)[1].strip().split(".")[0])
-    return names
+_DUMP_LOADED_MODULES = (
+    "import atexit, json, runpy, sys\n"
+    "atexit.register(lambda: sys.stderr.write(json.dumps(sorted(sys.modules))))\n"
+    "sys.argv = ['stt', 'server', 'read']\n"
+    "runpy.run_module('stt', run_name='__main__', alter_sys=True)\n"
+)
+
+
+def _loaded_top_level_modules(dump: bytes) -> set[str]:
+    return {name.split(".")[0] for name in json.loads(dump)}
 
 
 def test_the_read_command_ends_with_code_2_and_no_output_when_stdin_is_not_a_connected_socket() -> None:
@@ -513,19 +518,23 @@ def test_the_read_command_ends_with_code_2_and_no_output_when_stdin_is_not_a_con
 
 def test_the_read_command_imports_nothing_outside_the_standard_library() -> None:
     baseline = subprocess.run(
-        [sys.executable, "-X", "importtime", "-c", "pass"], capture_output=True, timeout=20, check=True
+        [sys.executable, "-c", "import json, sys; sys.stderr.write(json.dumps(sorted(sys.modules)))"],
+        capture_output=True, timeout=20, check=True,
     )
     server_end, client = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     with server_end, client:
         client.close()
-        run = _run_read_command(server_end, "-X", "importtime")
+        run = subprocess.run(
+            [sys.executable, "-c", _DUMP_LOADED_MODULES],
+            stdin=server_end, capture_output=True, timeout=20, check=False,
+        )
 
     assert run.returncode == 1
     foreign = (
-        _imported_top_level_modules(run.stderr)
-        - _imported_top_level_modules(baseline.stderr)
+        _loaded_top_level_modules(run.stderr)
+        - _loaded_top_level_modules(baseline.stderr)
         - sys.stdlib_module_names
         - {"stt"}
     )
     assert foreign == set()
-    assert "stt.server.reader" in run.stderr.decode("utf-8", "replace")
+    assert "stt.server.reader" in json.loads(run.stderr)
