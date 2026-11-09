@@ -153,7 +153,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   `MAX_DECODED_BYTES` 를 넘는 출력 → `failed`. 작업이 `running` 이 아니게 됨 → `stopped`(연결과 파이프를 닫았음을 단언). 작업 상한 → `timeout`.
   녹음이 기호 링크이면 접속하기 전에 오류(`O_NOFOLLOW`). 시간 값은 시험에서 짧게 주입한다. verify RED: 모듈 없음.
   supports US3-2~5, US3-8, FR-015, FR-016, FR-018
-- [ ] T015 [P] `tests/server/test_server_cli.py` 에 더한다: `stt server read` 가 등록돼 있고, `stt server intake`·`stt server work` 가
+- [X] T015 [P] `tests/server/test_server_cli.py` 에 더한다: `stt server read` 가 등록돼 있고, `stt server intake`·`stt server work` 가
   `--reader-socket` 을 받으며 기본값이 `/run/stt-reader.sock` 이다. verify RED: 인자 파싱 오류. supports FR-006
 
 ### Implementation (turn T012–T015 GREEN)
@@ -166,7 +166,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   supports US2-7, US3-1~5, FR-006, FR-009, FR-011, FR-019
 - [X] T017 `src/stt/server/reader_client.py`(새): `ReaderConfig`(소켓 경로·시작 시간·판정 여유·`poll_s`), `probe()`·`decode()` 와 다섯 결과,
   §7 의 열기·검사 규칙. RED → GREEN: turns T014 GREEN. supports US3-2~5, US3-8, FR-015, FR-016, FR-018
-- [ ] T018 `src/stt/server/cli.py`: `stt server read`(→ `reader.serve`), `intake`·`work` 의 `--reader-socket` → `ReaderConfig`. 받기·워커에는 아직
+- [X] T018 `src/stt/server/cli.py`: `stt server read`(→ `reader.serve`), `intake`·`work` 의 `--reader-socket` → `ReaderConfig`. 받기·워커에는 아직
   넘기지 않는다(T025·T027). RED → GREEN: turns T015 GREEN. supports FR-006
 
 **Checkpoint**: 읽기 프로토콜이 pytest 에서 진짜 감독·진짜 자식·대역으로 돈다. 받기·워커는 그대로다.
