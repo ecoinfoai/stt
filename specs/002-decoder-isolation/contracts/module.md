@@ -35,16 +35,16 @@
 | `DynamicUser` | `yes` | 읽기마다 일회용 UID(`stt` 가 아닌 동적 범위). 템플릿의 모든 인스턴스가 같은 이름·같은 UID 를 받는다(아래 「UID 에 대하여」). 함께 걸리는 것: `PrivateTmp`, `RemoveIPC`, `NoNewPrivileges`, `RestrictSUIDSGID`, `ProtectSystem=strict`, `ProtectHome=read-only`. 이 systemd(261.1)는 `PrivateTmp` 를 `disconnected` 가 아니라 `yes` 로 보여 준다(VM 에서 확인) |
 | `CollectMode` | `inactive-or-failed` | 실패한 인스턴스가 쌓이지 않게(`systemd.socket(5)` 권고). **`[Unit]` 설정이다** — `[Service]` 에 두면 무시된다(`unitConfig`) |
 | `PrivateDevices` | `yes` | GPU 장치 없음(FR-008) |
-| `PrivateNetwork` · `RestrictAddressFamilies` | `yes` · `none` | 망 없음, 소켓 생성 금지 — 받은 연결은 그대로 쓴다 `[VERIFY]` B-P2-1 |
-| `InaccessiblePaths` | `/var/lib/stt` `/var/lib/stt-models` `/run/stt` | 권한 위에 한 겹 더. `gpu.lock`(0644) 붙잡기 막기(R12) |
+| `PrivateNetwork` · `RestrictAddressFamilies` | `yes` · `none` | 망 없음, 소켓 생성 금지 — 받은 연결은 그대로 쓴다(VM 시험 B-P2-1 이 확인 — 닫힘) |
+| `InaccessiblePaths` | `-/var/lib/stt` `-/var/lib/stt-models` `-/run/stt` `-/nix/var` | 권한 위에 한 겹 더. `gpu.lock`(0644) 붙잡기 막기(R12). 모든 항목에 `-` 를 붙인다: `/run`·`/var` 를 빈 tmpfs 로 덮으면 그 아래 경로가 없어도 단위가 실패하지 않아야 한다. `/nix/var` 는 Nix 데이터베이스(0644 파일)를 가린다(감사 H1). `/nix/store` 는 그대로 읽힌다 |
 | `ProtectHome` | `yes` | |
-| `TemporaryFileSystem` | `/dev/shm:ro` | `PrivateDevices=yes` 에도 단위의 `/dev/shm` 은 호스트의 것과 같다(같은 장치·아이노드, 1777). 읽기 단위가 호스트 `/dev/shm` 의 파일을 읽거나 쓰지 못하게 비어 있는 읽기 전용 tmpfs 로 덮는다 `[VERIFY]` B-P2-1 |
-| `PrivateIPC` · `PrivatePIDs` · `ProtectProc` · `ProcSubset` | `yes` · `yes` · `invisible` · `pid` | 다른 프로세스·IPC 가 보이지 않게 `[VERIFY]` B-P2-1 |
+| `TemporaryFileSystem` | `/dev/shm:ro` `/run:ro` `/var:ro` | `PrivateDevices=yes` 에도 단위의 `/dev/shm` 은 호스트의 것과 같다(같은 장치·아이노드, 1777). 읽기 단위가 호스트 `/dev/shm` 의 파일을 읽거나 쓰지 못하게 비어 있는 읽기 전용 tmpfs 로 덮는다(VM 시험 B-P2-1 이 확인 — 닫힘). 같은 까닭으로 `/run`·`/var` 도 덮는다: 호스트의 누구나 읽을 수 있는 잠금 파일(`/run/nixos/switch-to-configuration.lock`, `/nix/var/nix/db/…`)에 `flock` 을 걸어 배포를 막는 길을 없앤다(감사 H1, R12). 읽기는 `/run` 아래에서 아무것도 필요로 하지 않는다 — 연결과 로그는 기술자로 받는다. `DynamicUser` 의 사설 `/tmp`·`/var/tmp` 와 함께 되는지는 VM 에서 확인한다(R12) |
+| `PrivateIPC` · `PrivatePIDs` · `ProtectProc` · `ProcSubset` | `yes` · `yes` · `invisible` · `pid` | 다른 프로세스·IPC 가 보이지 않게(VM 시험 B-P2-1 이 확인 — 닫힘) |
 | `ProtectKernelTunables` · `ProtectKernelModules` · `ProtectKernelLogs` · `ProtectControlGroups` · `ProtectClock` · `ProtectHostname` | 모두 `yes` | |
 | `RestrictNamespaces` · `RestrictRealtime` · `LockPersonality` | 모두 `yes` | |
 | `CapabilityBoundingSet` | `""` | |
 | `SystemCallArchitectures` | `native` | |
-| `SystemCallFilter` | `@system-service`, `~@privileged`, `~@keyring`, `~process_vm_readv process_vm_writev io_uring_setup io_uring_enter io_uring_register userfaultfd` | FR-008 의 「더 좁은 제한」(R5, 🟢 사용자 관리자로 해독 확인). `~@keyring`(`add_key`·`request_key`·`keyctl`): 같은 동적 UID 를 나눠 쓰는 인스턴스끼리 커널 사용자 키링을 통해 자료를 주고받지 못하게 한다 `[VERIFY]` B-P2-1 |
+| `SystemCallFilter` | `@system-service`, `~@privileged`, `~@keyring`, `~process_vm_readv process_vm_writev io_uring_setup io_uring_enter io_uring_register userfaultfd` | FR-008 의 「더 좁은 제한」(R5, 🟢 사용자 관리자로 해독 확인). `~@keyring`(`add_key`·`request_key`·`keyctl`): 같은 동적 UID 를 나눠 쓰는 인스턴스끼리 커널 사용자 키링을 통해 자료를 주고받지 못하게 한다(VM 시험 B-P2-1 이 확인 — 닫힘) |
 | `MemoryDenyWriteExecute` | `yes` | 🟢 PyAV 해독 확인(R3) |
 | `MemoryMax` · `MemorySwapMax` | `768M` · `0` | R9(측정 최대 104 MB 의 약 7배), FR-035 |
 | `LimitCORE` · `LimitFSIZE` | `0` · `0` | 덤프 없음, 파일에 자료를 쓰지 못함 |
@@ -107,7 +107,7 @@ systemctl show stt-reader.socket -p Listen -p Accept -p SocketUser -p SocketMode
   워커는 `SystemCallFilter=~`·`SystemCallArchitectures=`·`MemoryDenyWriteExecute=no` 로 나온다. `systemctl show 'x@.service'` 는 오류이고,
   인스턴스 이름은 띄우지 않고 조회된다(2026-11-09).
 - 읽기 단위의 `MemorySwapMax`·`LimitCORE`·`KillSignal`·`CollectMode`·`PrivateTmp` 는 FR-012(스왑·덤프 없음)와 §2.2 를 보는 값이다. VM 에서 본 꼴:
-  `RestrictAddressFamilies=` 는 빈 값, `PrivateTmp=yes`, `CollectMode` 는 `[Unit]` 에서 `inactive-or-failed`. `[VERIFY]` B-P2-1 은 VM 시험이 닫는다.
+  `RestrictAddressFamilies=` 는 빈 값, `PrivateTmp=yes`, `CollectMode` 는 `[Unit]` 에서 `inactive-or-failed`. B-P2-1 은 VM 시험이 닫았다.
 
 ## 5. 001 의 계약 문서에 고칠 것 (구현 때)
 

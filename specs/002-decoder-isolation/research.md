@@ -276,8 +276,16 @@
     `SocketMode=0600`, `MaxConnections=4`(받기 1 + 워커 1 + 여유).
   - `stt-reader@.service`: `CollectMode=inactive-or-failed`(`systemd.socket(5)` 의 권고 — 실패한 인스턴스가 쌓이지 않게),
     `StandardInput=socket`·`StandardOutput=null`·`StandardError=journal`.
-  - `InaccessiblePaths=/var/lib/stt /var/lib/stt-models /run/stt`: 권한으로도 막히지만 한 겹 더 둔다. 특히 `/run/stt/gpu.lock` 은 0644 라 일회용
+  - `InaccessiblePaths=-/var/lib/stt -/var/lib/stt-models -/run/stt -/nix/var`: 권한으로도 막히지만 한 겹 더 둔다. 특히 `/run/stt/gpu.lock` 은 0644 라 일회용
     사용자도 열어 `flock` 할 수 있다. 가리지 않으면 장악된 읽기가 GPU 줄을 붙잡을 수 있다.
+  - **호스트의 잠금 파일(최종 감사 H1, 2026-11-10)**: 같은 까닭이 호스트의 다른 0644 잠금 파일에도 닿는다. `flock(2)` 은 읽을 수 있는 기술자만 있으면 읽기 전용
+    마운트에서도 걸리고, `fcntl` 읽기 잠금은 `O_RDONLY` 면 된다. `flock`·`fcntl` 은 필터(`@system-service`)가 허용한다. 읽기 인스턴스는 길이 재기 35초, 해독
+    245초(받침 `RuntimeMaxSec=300`) 동안 산다. 그동안 `/run/nixos/switch-to-configuration.lock`(0644 root)을 쥐면 `nixos-rebuild switch` 가 막히거나 실패하고,
+    `/nix/var/nix/db/db.sqlite-shm`(0644)에 SQLite 잠금을 쥐면 nix-daemon 쓰기가 `SQLITE_BUSY` 를 만난다. 그래서 `/run`·`/var` 를 빈 읽기 전용 tmpfs 로 덮고
+    (`TemporaryFileSystem=/dev/shm:ro /run:ro /var:ro`), `/nix/var`(`/nix/store` 는 아니다 — 파이썬과 PyAV 가 거기서 읽힌다)를 가린다. 읽기는 `/run` 아래의 것을
+    쓰지 않는다: 연결은 표준 입력, 로그는 표준 오류(기술자)로 받는다. 가리는 경로는 모두 `-` 를 붙인다 — `/run`·`/var` 를 덮고 나면 `/run/stt`·`/var/lib/stt` 가
+    없어서, `-` 가 없으면 단위 시작이 실패한다. `[VERIFY]` (B-P2-1, 닫음 아래): `DynamicUser` 의 사설 `/tmp`·`/var/tmp` 와 함께 되는지, 파이썬·PyAV 가
+    그대로 뜨고 해독하는지를 VM 에서 본다. 안 되면 `/var` 전체 대신 그 아래 디렉터리를 가리는 쪽으로 물러서고 그 이유를 여기에 적는다.
   - 받기·워커는 `wants`·`after` 에 `stt-reader.socket` 을 두고, `ExecStart` 에 `--reader-socket /run/stt-reader.sock` 을 붙인다.
   - P1 의 세 설정은 읽기 단위에도 있고 더 좁다. P2 뒤로는 SC-001 의 「서버 단위」에 읽기 단위가 들어간다(단위 다섯).
   - nixos-config 는 바꿀 것이 없다. `DynamicUser` 의 이름 풀이(nss-systemd)가 없어도 UID 는 할당된다.
