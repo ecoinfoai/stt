@@ -33,12 +33,14 @@
 파이프의 쓰는 쪽도), 읽기 단위는 경로를 쓰지 않고 받은 기술자만 읽는다. 읽기 한 번이 인스턴스 하나이고, 끝나면 systemd 가 그 cgroup 을 지운다.
 
 **무엇에 닿지 못하는가.**
-- 파일: `/var/lib/stt`(다른 작업의 녹음·기록·해독된 음성·응답·`state.lock`)와 `/var/lib/stt-models`, `/run/stt`(`gpu.lock`)는 권한(일회용 UID 는
-  `stt` 가 아니다)과 `InaccessiblePaths` 의 두 겹으로 막힌다. 쓰기 가능한 자리에는 자료를 쓰지 못한다(`LimitFSIZE=0`, `ProtectSystem=strict`).
+- 파일: `/var/lib/stt`(다른 작업의 녹음·기록·해독된 음성·응답·`state.lock`)와 `/var/lib/stt-models` 는 권한(일회용 UID 는 `stt` 가 아니다)과
+  `InaccessiblePaths` 의 두 겹으로 막힌다. `/run/stt`(0755)와 그 안의 `gpu.lock`(0644)은 권한으로는 읽을 수 있으므로 `InaccessiblePaths` 한 겹만이
+  막는다(research R12). 쓰기 가능한 자리에는 자료를 쓰지 못한다(`LimitFSIZE=0`, `ProtectSystem=strict`).
 - 장치·망: `PrivateDevices`(GPU 장치 노드 없음), `PrivateNetwork`, `RestrictAddressFamilies=none`(소켓을 만들 수 없음. 받은 연결은 그대로 쓴다).
 - 다른 프로세스: `PrivatePIDs`·`ProtectProc=invisible`·`ProcSubset=pid`·`PrivateIPC`·`PrivateTmp`. 겹쳐 도는 인스턴스끼리도 서로를 보지 못한다.
   템플릿의 모든 인스턴스는 같은 동적 UID 를 받으므로(인스턴스별 `User=` 는 이름 길이 한도로 쓸 수 없다. contracts/module.md §2.2) UID 가 아니라 이
-  이름공간이 둘을 가른다.
+  이름공간이 둘을 가른다. 남는 것: 같은 동적 UID 를 쓰는 인스턴스끼리는 커널 사용자 키링을 나눈다(`@keyring` 호출은 `@system-service` 안에 있다).
+  겹쳐 도는 두 읽기가 모두 적대적일 때만 생길 수 있는 통로이고, 정상 읽기로 넘어가는 길은 아니다. `~@keyring` 은 더하지 않았다(운영자 결정 대기).
 - 권한: `CapabilityBoundingSet` 비움, `NoNewPrivileges`, 위 §1 의 좁은 호출 필터와 `MemoryDenyWriteExecute`.
 
 **상한.** 메모리 `MemoryMax=768M`(스왑 0), 프로세스 `TasksMax=32`, 시간은 감독이 길이 재기 30초·해독 240초(+판정 여유 5초)에서 자식을 죽이고, 단위의
@@ -79,8 +81,12 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
     ```
 
   녹음이 읽히지 않은 경우(`unreadable_audio`)와 달리, 읽기 단위를 못 띄운 것은 녹음 탓이 아니다.
-- **배포 메모**: 소켓 단위(`stt-reader.socket`)는 설정이 바뀔 때만 다시 뜬다. 다시 뜨는 동안 들어온 요청과 작업은 위와 같이 끝난다(운영자 결정
-  2026-11-08). 워커는 `restartIfChanged=false` 라 도는 전사를 끊지 않고, 다음 시작부터 새 설정을 쓴다.
+- **배포 메모**(`switch-to-configuration` 의 동작을 소스로 읽고 VM 시험으로 확인):
+  - 읽기 단위 템플릿(`stt-reader@.service`)이나 패키지가 바뀌어도 도는 읽기는 끝까지 마치고, 받기·워커와 소켓은 멈추지 않는다(`restartIfChanged=false`,
+    받기·워커는 소켓을 `Requires` 가 아니라 `Wants` 로 둔다). 다음 읽기부터 새 템플릿이다. 워커는 도는 전사를 끊지 않고 다음 시작부터 새 설정을 쓴다.
+  - 소켓 설정(경로·모드·`MaxConnections` 등)을 바꾼 배포는 스위치가 소켓 단위를 다시 띄우지 않는다. 적용하려면 운영자가
+    `systemctl restart stt-reader.socket` 을 따로 한다. 그동안 들어온 요청과 작업은 위와 같이 끝난다(워커 `engine_error`, 받기는 001 FR-032a 대로
+    응답 없음. 운영자 결정 2026-11-08).
 
 호출 번호는 `scmp_sys_resolver <번호>` 로 이름을 찾는다. 서버 전체의 `OnFailure` 알림은 nixos-config 의 별도 과제다.
 

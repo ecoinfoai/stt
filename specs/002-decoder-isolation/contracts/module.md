@@ -74,7 +74,7 @@
 | `stt-intake.service` | `wants`·`after` `stt-reader.socket`. `ExecStart = ${stt} server intake --reader-socket /run/stt-reader.sock` |
 | `stt-worker.service` | `wants`·`after` `stt-reader.socket`. `ExecStart = ${stt} server work --gpu-lock /run/stt/gpu.lock --reader-socket /run/stt-reader.sock` |
 
-- `requires` 가 아니라 `wants` 인 까닭(운영자 결정 2026-11-09, 통제자 판정 16): `Requires=` 는 소켓이 멈추면 받기·워커도 멈춘다. 그러면 소켓 단위를
+- `requires` 가 아니라 `wants` 인 까닭(통제자 판정 16, 2026-11-09): `Requires=` 는 소켓이 멈추면 받기·워커도 멈춘다. 그러면 소켓 단위를
   손볼 때 도는 전사가 `interrupted` 로 끝난다. `Wants=` 는 소켓을 함께 띄우되 멈춤을 전하지 않는다. 소켓이 없으면 읽기는 접속 실패로 끝나고
   받기·워커는 대체 길 없이 그 요청·작업만 실패로 끝낸다(헌법 V, FR-016). 순서는 `After=` 가 지킨다.
 
