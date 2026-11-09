@@ -234,6 +234,9 @@ def _supervise(connection: socket.socket, child_command: Sequence[str], request_
         if outcome != "hangup":
             _send(connection, _verdict(op, returncode, result_read) if outcome == "exited" else _FAILED)
     finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
         if result_read is not None:
             os.close(result_read)
     return 0
