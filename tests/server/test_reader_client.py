@@ -131,6 +131,25 @@ def test_a_limit_the_reader_would_refuse_is_rejected_when_the_config_is_made(fie
         reader_client.ReaderConfig(**{field: value})
 
 
+@pytest.mark.parametrize("field", ["start_timeout_s", "verdict_grace_s", "poll_s"])
+@pytest.mark.parametrize("value", [0, -1, math.nan, math.inf, -math.inf])
+def test_a_waiting_time_that_is_not_finite_and_positive_is_rejected_when_the_config_is_made(
+    field: str, value: float
+) -> None:
+    with pytest.raises(ValueError, match=f"{field} must be finite and above 0"):
+        reader_client.ReaderConfig(**{field: value})
+
+
+@pytest.mark.parametrize("value", [0, -1, math.nan, math.inf, -math.inf])
+def test_a_job_limit_that_is_not_finite_and_positive_is_rejected_by_decode_before_anything_is_sent(
+    tmp_path: Path, value: float
+) -> None:
+    config = make_config(tmp_path / "missing.sock")
+
+    with pytest.raises(ValueError, match="job_limit_s must be finite and above 0"):
+        reader_client.decode(config, tmp_path / "missing.wav", job_running=lambda: True, job_limit_s=value)
+
+
 # --------------------------------------------------- opening the recording
 
 
