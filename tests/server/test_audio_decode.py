@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -10,7 +13,15 @@ import pytest
 from stt import audio_decode
 from stt.server import reader
 
-from .conftest import FASTER_WHISPER_DECODER_MAX_AV_MAJOR, av_major, encode_tone, make_wav, wav_samples
+from .conftest import (
+    FAKE_FRAME_SAMPLES,
+    FASTER_WHISPER_DECODER_MAX_AV_MAJOR,
+    FakeFrameContainer,
+    av_major,
+    encode_tone,
+    make_wav,
+    wav_samples,
+)
 
 
 def test_the_decoder_and_the_reader_agree_on_the_sample_rate() -> None:
@@ -71,3 +82,93 @@ def test_a_text_file_with_a_recording_extension_fails_loudly(tmp_path: Path) -> 
 def test_a_missing_file_fails_loudly(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         audio_decode.decode_samples(tmp_path / "absent.m4a")
+
+
+# ------------------------------------------------ a damaged frame ends the decode early
+
+
+
+
+def test_a_damaged_frame_ends_the_decode_with_everything_before_it_and_reports_the_early_stop() -> None:
+    output = io.BytesIO()
+
+    stopped_early = audio_decode.write_s16(FakeFrameContainer(3, fail_after=True), output)
+
+    assert stopped_early is True
+    assert output.getvalue() == np.full(3 * FAKE_FRAME_SAMPLES, 1000, dtype="<i2").tobytes()
+
+
+def test_a_recording_damaged_from_its_first_frame_gives_empty_output_and_reports_the_early_stop() -> None:
+    output = io.BytesIO()
+
+    stopped_early = audio_decode.write_s16(FakeFrameContainer(0, fail_after=True), output)
+
+    assert stopped_early is True
+    assert output.getvalue() == b""
+
+
+def test_an_undamaged_recording_does_not_report_an_early_stop() -> None:
+    output = io.BytesIO()
+
+    stopped_early = audio_decode.write_s16(FakeFrameContainer(3, fail_after=False), output)
+
+    assert stopped_early is False
+    assert len(output.getvalue()) == 3 * FAKE_FRAME_SAMPLES * 2
+
+
+def test_decode_samples_tells_the_caller_how_far_a_damaged_recording_got(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(audio_decode, "open_container", lambda source: FakeFrameContainer(10, fail_after=True))
+    reported: list[float] = []
+
+    decoded = audio_decode.decode_samples(tmp_path / "damaged.m4a", on_early_stop=reported.append)
+
+    assert len(decoded) == 10 * FAKE_FRAME_SAMPLES
+    assert reported == [10 * FAKE_FRAME_SAMPLES / audio_decode.SAMPLE_RATE]
+
+
+def test_decode_samples_reports_nothing_for_an_undamaged_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(audio_decode, "open_container", lambda source: FakeFrameContainer(10, fail_after=False))
+    reported: list[float] = []
+
+    audio_decode.decode_samples(tmp_path / "clean.m4a", on_early_stop=reported.append)
+
+    assert reported == []
+
+
+class _RecordingModel:
+    def transcribe(self, audio: Any, **kwargs: Any) -> tuple[Any, Any]:
+        segment = SimpleNamespace(start=0.0, end=1.0, text="x", words=[])
+        return iter([segment]), SimpleNamespace(duration=1.0, language="ko")
+
+
+def test_the_command_line_warns_once_on_standard_error_when_the_decode_stopped_early(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from stt import transcribe
+
+    monkeypatch.setattr(audio_decode, "open_container", lambda source: FakeFrameContainer(20, fail_after=True))
+
+    transcribe.transcribe_file(_RecordingModel(), tmp_path / "damaged.m4a", "ko", None, 5)
+
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "warning: decoding stopped at invalid data after 2.0 s; the transcript covers only that part\n"
+    )
+    assert captured.out == ""
+
+
+def test_the_command_line_prints_nothing_for_an_undamaged_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from stt import transcribe
+
+    monkeypatch.setattr(audio_decode, "open_container", lambda source: FakeFrameContainer(20, fail_after=False))
+
+    transcribe.transcribe_file(_RecordingModel(), tmp_path / "clean.m4a", "ko", None, 5)
+
+    captured = capsys.readouterr()
+    assert captured.err == "" and captured.out == ""

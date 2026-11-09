@@ -799,3 +799,42 @@ def intake_reads_through_reader_socket(reader_socket: ReaderSocket, monkeypatch:
         return real_run_once(layout, now, reader_socket.config if reader is None else reader)
 
     monkeypatch.setattr(intake, "run_once", run_once)
+
+
+# ------------------------------------------------ fake frames for the decoder
+
+FAKE_FRAME_SAMPLES = 1600
+
+
+class FakeFrameContainer:
+    """A container whose first audio stream yields tone frames, then an invalid-data error.
+
+    Only the frame sequence is faked; no recording exists, so no decoder interprets any bytes.
+    """
+
+    def __init__(self, good_frames: int, *, fail_after: bool) -> None:
+        self._good_frames = good_frames
+        self._fail_after = fail_after
+
+    def _frames(self) -> Iterator[Any]:
+        import av
+        import numpy as np
+
+        for _ in range(self._good_frames):
+            frame = av.AudioFrame.from_ndarray(
+                np.full((1, FAKE_FRAME_SAMPLES), 1000, dtype="<i2"), format="s16", layout="mono"
+            )
+            frame.sample_rate = 16000
+            yield frame
+        if self._fail_after:
+            raise av.error.InvalidDataError(1, "injected invalid data")
+
+    def decode(self, *, audio: int) -> Iterator[Any]:
+        assert audio == 0
+        return self._frames()
+
+    def __enter__(self) -> "FakeFrameContainer":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None

@@ -779,8 +779,15 @@ def transcribe_file(
     """
     from stt.audio_decode import decode_samples
 
+    def warn_early_stop(seconds: float) -> None:
+        print(
+            f"warning: decoding stopped at invalid data after {seconds:.1f} s; "
+            "the transcript covers only that part",
+            file=sys.stderr,
+        )
+
     return transcribe_samples(
-        model, decode_samples(media), media.name, language, terms, beam_size,
+        model, decode_samples(media, on_early_stop=warn_early_stop), media.name, language, terms, beam_size,
         word_timestamps=word_timestamps, allow_empty=allow_empty,
     )
 
