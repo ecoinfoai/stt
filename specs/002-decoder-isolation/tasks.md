@@ -321,7 +321,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   확인 기록표(첫 줄은 이 기능을 쓰는 날의 확인). 들어온 날·마지막 갱신일은 `git log -S` 로 찾은 커밋과 날짜이고, `av` 줄의 `comparison` 은 T009 의
   기준 녹음 비교 날이다(T042 에서 고친다). RED → GREEN: turns T036 GREEN. closes US5-1, US5-2, US5-4, US5-5, supports US5-3, FR-024~026
 
-- [ ] T044 [US5] 첫 매달 확인(2026-11-09)의 보안 공지 5건을 닫는 갱신(운영자 결정 2026-11-10): `uv lock --upgrade-package av` 로 Python 3.12
+- [X] T044 [US5] 첫 매달 확인(2026-11-09)의 보안 공지 5건을 닫는 갱신(운영자 결정 2026-11-10): `uv lock --upgrade-package av` 로 Python 3.12
   이상을 PyAV 19.0.2(FFmpeg 9.0.2)로 올린다. PyAV 19 는 `av.open` 의 `metadata_errors` 를 없앴고 faster-whisper 1.2.1 의 `decode_audio` 가 그것을
   써서 깨지므로, 명령줄도 녹음을 faster-whisper 에 경로로 넘기지 않고 stt 의 해독(읽기 단위와 같은 방식, 결과 바이트가 같음)으로 얻은 표본을
   넘긴다(FR-022: 명령줄 출력은 그대로). `docs/server-security.md` §4 의 `av` 줄·보안 공지·매달 확인 기록을 고치고, 기준 녹음 두 개의 s16 해독
