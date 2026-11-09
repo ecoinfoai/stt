@@ -379,12 +379,16 @@ pkgs.testers.runNixOSTest {
         for call in ("process_vm_readv", "process_vm_writev", "io_uring_setup", "io_uring_enter", "io_uring_register", "userfaultfd", "setuid", "chroot"):
             assert call not in calls, call
         assert server.succeed("grep '^ExecStart=' /etc/systemd/system/stt-reader@.service").strip().endswith("/bin/stt server read")
+        # A deployment must not restart live reads, nor stop the socket on their account.
+        server.succeed("grep -qx 'X-RestartIfChanged=false' /etc/systemd/system/stt-reader@.service")
 
         for unit, command in (
             ("stt-intake.service", "server intake --reader-socket /run/stt-reader.sock"),
             ("stt-worker.service", "server work --gpu-lock /run/stt/gpu.lock --reader-socket /run/stt-reader.sock"),
         ):
-            assert socket_unit in prop(unit, "Requires").split(), (unit, prop(unit, "Requires"))
+            # Wants, not Requires: stopping the socket must not stop a running stage (contracts/module.md section 3).
+            assert socket_unit in prop(unit, "Wants").split(), (unit, prop(unit, "Wants"))
+            assert socket_unit not in prop(unit, "Requires").split(), (unit, prop(unit, "Requires"))
             assert socket_unit in prop(unit, "After").split(), (unit, prop(unit, "After"))
             assert server.succeed(f"grep '^ExecStart=' /etc/systemd/system/{unit}").strip().endswith(f"/bin/stt {command}"), unit
 
@@ -827,6 +831,7 @@ pkgs.testers.runNixOSTest {
         server.succeed(f"rm -r {STATE}/work/{b}")
         assert_confined(report_a, "decode of A")
         assert report_a["uid"] == decode_uid, (report_a, decode_uid)
+        # The probe of C ran next to A's held decode instance, so it is the side that observes the overlap.
         probes = {name: probe_report(name_id) for name, name_id in (("A", a), ("B", b), ("C", c))}
         for name, report in probes.items():
             assert_confined(report, f"probe of {name}")
@@ -929,6 +934,37 @@ pkgs.testers.runNixOSTest {
             wait_response(following["request_id"], failed_with("gpu_unavailable"), timeout=60)
             no_reader_instance()
             assert not failed_stt_units(), failed_stt_units()
+
+    with subtest("a deployment that changes the reader template leaves a held read, the socket and the stages alone (module section 3)"):
+        switch_to("reader-hold-decode")
+        held = transcribe()
+        submit(held)
+        wait_response(held["request_id"], lambda doc: doc["state"] == "running", timeout=60)
+        instance = wait_reader_instance()
+        worker_pid = prop("stt-worker.service", "MainPID")
+        assert worker_pid != "0", worker_pid
+        socket_since = prop("stt-reader.socket", "ActiveEnterTimestampMonotonic")
+        intake_since = prop("stt-intake.service", "InactiveEnterTimestampMonotonic")
+        # The base configuration differs from the specialisation in the template's ExecStart.
+        switch_to()
+        server.succeed(f"systemctl is-active {instance}")
+        server.succeed("systemctl is-active stt-reader.socket")
+        assert prop("stt-reader.socket", "ActiveEnterTimestampMonotonic") == socket_since
+        assert prop("stt-worker.service", "MainPID") == worker_pid, (prop("stt-worker.service", "MainPID"), worker_pid)
+        assert prop("stt-worker.service", "ActiveState") in ("activating", "active"), prop("stt-worker.service", "ActiveState")
+        assert prop("stt-intake.service", "InactiveEnterTimestampMonotonic") == intake_since
+        time.sleep(5)
+        assert response(held["request_id"])["state"] == "running", response(held["request_id"])
+        server.succeed(f"systemctl is-active {instance}")
+        assert response(delete(held["request_id"]))["outcome"] == "deleted"
+        no_reader_instance()
+        idle("stt-worker.service")
+        # The next read runs under the new template: the real reader, so the job reaches the GPU check.
+        after = transcribe()
+        submit(after)
+        wait_response(after["request_id"], failed_with("gpu_unavailable"), timeout=60)
+        no_reader_instance()
+        assert not failed_stt_units(), failed_stt_units()
 
     with subtest("a deletion, the 23:58 purge and a stopped worker end a held read at once and leave no file (B-P2-6)"):
         switch_to("reader-hold-decode")
