@@ -10,8 +10,13 @@ import json
 import math
 import os
 import shutil
+import socket
 import struct
+import subprocess
 import sys
+import tempfile
+import threading
+import time
 import uuid
 import wave
 from datetime import datetime, timedelta, timezone
@@ -21,6 +26,8 @@ from typing import Any
 import pytest
 
 FAKE_ENGINE = Path(__file__).with_name("fake_engine.py")
+FAKE_READER = Path(__file__).with_name("fake_reader.py")
+FAKE_READER_REPORT_ENV = "FAKE_READER_REPORT"
 _TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -377,3 +384,152 @@ def pinned_models(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         (refs / "main").write_text(commit, encoding="utf-8")
     monkeypatch.setenv("HF_HOME", str(hf_home))
     return hf_home
+
+
+def fake_reader_cmd(mode: str) -> list[str]:
+    """Builds the command that runs ``fake_reader.py`` in `mode`.
+
+    Args:
+        mode: One of ``no-start``, ``not-started`` or ``no-verdict``.
+
+    Returns:
+        An argument list for ``EmulatedReaderSocket``.
+    """
+    return [sys.executable, str(FAKE_READER), "--mode", mode]
+
+
+class EmulatedReaderSocket:
+    """A temporary SEQPACKET socket that mirrors systemd ``Accept=yes``.
+
+    For every accepted connection it starts a new process from `cmd` with that
+    connection as standard input (argument list, no shell) and closes its own
+    copy. Each process gets a fresh report file named by the
+    ``FAKE_READER_REPORT`` environment variable; ``fake_reader.py`` writes the
+    number of descriptors it received there, a real reader ignores it.
+
+    Attributes:
+        path: Socket path to hand to the caller under test.
+    """
+
+    def __init__(self, cmd: list[str]) -> None:
+        # AF_UNIX paths are limited to ~107 bytes, which pytest's tmp_path can exceed.
+        self._dir = Path(tempfile.mkdtemp(prefix="stt-rd-"))
+        self.path = self._dir / "reader.sock"
+        self._cmd = list(cmd)
+        self._lock = threading.Lock()
+        self._procs: list[subprocess.Popen[bytes]] = []
+        self._reports: list[Path] = []
+        self._stop = threading.Event()
+        self._closed = False
+        self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        self._listener.bind(str(self.path))
+        self._listener.listen()
+        self._listener.settimeout(0.05)
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self) -> None:
+        while not self._stop.is_set():
+            try:
+                connection, _ = self._listener.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            with connection:
+                with self._lock:
+                    report = self._dir / f"{len(self._procs)}.fds"
+                    env = {**os.environ, FAKE_READER_REPORT_ENV: str(report)}
+                    self._procs.append(subprocess.Popen(self._cmd, stdin=connection, env=env))
+                    self._reports.append(report)
+
+    @property
+    def spawn_count(self) -> int:
+        """Returns how many reader processes have been started."""
+        with self._lock:
+            return len(self._procs)
+
+    def fd_counts(self) -> list[int | None]:
+        """Returns, per spawned process, the number of descriptors it reported.
+
+        An entry is None while the process has not reported (or never will).
+        """
+        with self._lock:
+            reports = list(self._reports)
+        return [int(r.read_text(encoding="utf-8")) if r.exists() else None for r in reports]
+
+    def wait_for_exits(self, count: int, timeout_s: float = 5.0) -> None:
+        """Waits until `count` processes were started and all of them have exited.
+
+        Args:
+            count: Expected number of started processes.
+            timeout_s: Longest wait.
+
+        Raises:
+            AssertionError: If that state is not reached in time.
+        """
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            with self._lock:
+                procs = list(self._procs)
+            if len(procs) >= count and all(p.poll() is not None for p in procs):
+                return
+            time.sleep(0.01)
+        raise AssertionError(f"reader processes did not settle: spawned={self.spawn_count}, expected={count}")
+
+    def close(self, grace_s: float = 5.0) -> None:
+        """Stops listening, reaps the processes and asserts none was still running.
+
+        Args:
+            grace_s: How long a process may take to exit by itself before it is
+                killed and counted as left running.
+
+        Raises:
+            AssertionError: If a spawned process was still running after `grace_s`.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._stop.set()
+        self._thread.join()
+        self._listener.close()
+        with self._lock:
+            procs = list(self._procs)
+        deadline = time.monotonic() + grace_s
+        running = 0
+        for proc in procs:
+            try:
+                proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                running += 1
+                proc.kill()
+                proc.wait()
+        shutil.rmtree(self._dir, ignore_errors=True)
+        assert running == 0, f"{running} reader process(es) still running at teardown"
+
+
+@pytest.fixture
+def emulated_reader_socket() -> Any:
+    """Returns a factory for opt-in emulated reader sockets.
+
+    ``factory(cmd)`` starts a socket that runs `cmd` once per connection; the
+    result exposes ``path``, ``spawn_count``, ``fd_counts()`` and
+    ``wait_for_exits()``. At teardown every socket is closed and the test fails
+    if a spawned process is still running.
+    """
+    created: list[EmulatedReaderSocket] = []
+
+    def factory(cmd: list[str]) -> EmulatedReaderSocket:
+        emulated = EmulatedReaderSocket(cmd)
+        created.append(emulated)
+        return emulated
+
+    yield factory
+    errors: list[AssertionError] = []
+    for emulated in created:
+        try:
+            emulated.close()
+        except AssertionError as exc:
+            errors.append(exc)
+    if errors:
+        raise errors[0]

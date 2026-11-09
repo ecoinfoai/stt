@@ -127,7 +127,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ### Tests (write first) ⚠️
 
-- [ ] T011 [P] 시험 도구: `tests/server/fake_reader.py`(새, 읽기 인스턴스 자리의 대역 — 동작은 [contracts/reader.md](contracts/reader.md) §9 의
+- [X] T011 [P] 시험 도구: `tests/server/fake_reader.py`(새, 읽기 인스턴스 자리의 대역 — 동작은 [contracts/reader.md](contracts/reader.md) §9 의
   「읽기 인스턴스 전체」 줄 그대로)와 `tests/server/conftest.py` 의 흉내 읽기 소켓 장치. 장치는 임시 SEQPACKET 소켓에서 연결을 받을 때마다 지정한
   명령(진짜 감독 `python -m stt server read` 또는 대역)을 새 프로세스로 띄우고 그 연결을 표준 입력으로 준다 — systemd `Accept=yes` 와 같다.
   띄운 횟수와 각 프로세스가 받은 기술자 수를 시험이 볼 수 있게 남기고, 시험이 끝나면 남은 프로세스가 없음을 단언한다. RED 해당 없음 — 시험
