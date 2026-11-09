@@ -500,10 +500,12 @@ pkgs.testers.runNixOSTest {
         assert prop(models, "ExecMainStartTimestampMonotonic", fetcher) != fetched_at
         assert prop("stt-worker.service", "Result", fetcher) == "success"
 
-    with subtest("no system call was blocked on either node (B-P1-3)"):
+    with subtest("no system call was blocked on either node, and a blocked call would show (B-P1-3)"):
         for node in (server, fetcher):
-            node.succeed("journalctl -k --no-pager -n 1")
-            blocked = node.succeed("journalctl -k --no-pager -q -g 'type=1326' || true").strip()
-            assert blocked == "", blocked
+            kernel_log = node.succeed("journalctl -k --no-pager -o cat")
+            assert "type=1326" not in kernel_log
+            # Positive control: without it an empty result could mean the VM never logs seccomp kills.
+            node.fail("systemd-run --wait --collect -p 'SystemCallFilter=~uname' uname")
+            node.wait_until_succeeds("journalctl -k --no-pager -o cat | grep -F type=1326", timeout=30)
   '';
 }
