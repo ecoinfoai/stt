@@ -110,7 +110,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   완료). 워커가 쓰기·실행 메모리 금지로 CUDA 에서 거부되면 워커만 `false` 로 바꾸고 거부 지점을 §1 에 적고(`mdwe=off`), `nix/vm-test.nix` 의
   T004 단언도 그 값으로 고쳐 T004·T005 를 다시 GREEN 으로 만든 뒤 T008 을 되풀이한다. 거부가 없으면 `mdwe=on` 으로 적는다. 받기의 받아들임·거절, 「다 지우기」, 청소, 모델 받기가 평소대로 끝나고 `journalctl -k -g 'type=1326'` 이 비어 있음을
   본다. RED 해당 없음 — 호스트 확인. closes US1-1, US1-2, US1-4, US1-5, US1-6(호스트), 경계 사례 7
-- [ ] T010 [US1] C-P1-3 회신 `specs/002-decoder-isolation/handoff/p1-reply.md`: data-model §9 의 P1 열 — 확인 결과, 요청 1(단위별 필터·
+- [X] T010 [US1] C-P1-3 회신 `specs/002-decoder-isolation/handoff/p1-reply.md`: data-model §9 의 P1 열 — 확인 결과, 요청 1(단위별 필터·
   아키텍처·예외와 이유·쓰기·실행 메모리), 요청 2·3(지금 상태와 P2 계획), 요청 4(지금 판과 날짜, FR-024 를 먼저), §5 질문, 질문 6(보관 기간,
   R17), 남는 위험(P1 만 배포된 동안의 같은 계정·같은 저장 위치·GPU 단위의 해독). 운영자에게 넘긴다. RED 해당 없음 — 회신 문서.
   closes SC-010(P1 몫), supports FR-027
