@@ -132,14 +132,14 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   명령(진짜 감독 `python -m stt server read` 또는 대역)을 새 프로세스로 띄우고 그 연결을 표준 입력으로 준다 — systemd `Accept=yes` 와 같다.
   띄운 횟수와 각 프로세스가 받은 기술자 수를 시험이 볼 수 있게 남기고, 시험이 끝나면 남은 프로세스가 없음을 단언한다. RED 해당 없음 — 시험
   도구. supports US2-6, US2-7, FR-028
-- [ ] T012 [P] `tests/server/test_reader.py`(새) — 감독. 해독 자식 자리에는 [contracts/reader.md](contracts/reader.md) §9 의 「해독 자식」 대역을
+- [X] T012 [P] `tests/server/test_reader.py`(새) — 감독. 해독 자식 자리에는 [contracts/reader.md](contracts/reader.md) §9 의 「해독 자식」 대역을
   인자로 넣는다. 단언: (a) §2 에 어긋나는 요청(모르는 키, 틀린 형, 범위 밖 `limit_s`, 기술자 개수·종류가 틀림)에 `{"started": false}` 를 보내고
   자식을 띄우지 않는다. (b) 정상 요청에 `{"started": true}`. (c) 자식이 끝 코드 0 이고 결과가 규칙에 맞을 때만 `ok`, 그 밖의 모든 끝은
   `failed`(§5-6). (d) 호출하는 쪽이 끊으면 자식이 죽고 거둬지며, 감독은 더 보내지 않고 끝난다. (e) `limit_s` 가 지나면 자식이 죽고 `failed`.
   (f) 감독 프로세스가 표준 라이브러리 밖의 모듈(`av` 등)을 불러오지 않는다. (g) 감독이 표준 출력·오류에 아무것도 쓰지 않는다.
   (h) `stt server read` 는 표준 입력이 연결 소켓이 아니면 끝 코드 2. verify RED: `stt.server.reader` 가 없어 ImportError.
   closes US2-7(프로토콜 쪽), supports US3-2~5, FR-009, FR-011, FR-015, FR-019
-- [ ] T013 [P] `tests/server/test_reader.py` — 진짜 해독 자식. `encode_tone` 의 사인파(M4A·MP3·ADTS·Ogg·FLAC)와 `make_wav` 로: (a) probe 의 길이가
+- [X] T013 [P] `tests/server/test_reader.py` — 진짜 해독 자식. `encode_tone` 의 사인파(M4A·MP3·ADTS·Ogg·FLAC)와 `make_wav` 로: (a) probe 의 길이가
   지금 `probe_duration` 과 같다 — 실제 파일의 길이는 하위 프로세스 자식으로 잰다(지금 `tests/server/test_intake.py` 의
   `test_us5_10_formats_of_the_schema_extensions_are_measured`·`test_probe_duration_reads_container_duration` 의 기대값). 「컨테이너 길이가 없으면
   첫 오디오 흐름의 패킷 길이 합」은 자식이 쓰는 길이 고르기 순수 함수를 프로세스 안에서 가짜 컨테이너로 시험한다(지금
@@ -158,7 +158,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ### Implementation (turn T012–T015 GREEN)
 
-- [ ] T016 `src/stt/server/reader.py`(새): [contracts/reader.md](contracts/reader.md) §4 상수(여기 한 번만), §5 감독(표준 라이브러리만, 자식 명령은
+- [X] T016 `src/stt/server/reader.py`(새): [contracts/reader.md](contracts/reader.md) §4 상수(여기 한 번만), §5 감독(표준 라이브러리만, 자식 명령은
   인자로 받고 기본값은 진짜 자식), §6 해독 자식(`python -m stt.server.reader child probe|decode <녹음 fd> <출력 fd>`, PyAV 는 자식 안에서만
   불러온다. 길이 고르기는 열린 컨테이너를 받는 순수 함수). `AUDIO_FORMATS` 는 여기에만 둔다 — 같은 과제에서 `src/stt/server/intake.py` 의
   `_AUDIO_FORMATS` 를 지우고 `reader.AUDIO_FORMATS` 를 불러 쓰게 한다(`probe_duration` 은 T027 까지 받기에 남는다). RED → GREEN: turns T012,

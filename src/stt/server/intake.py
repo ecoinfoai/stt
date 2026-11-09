@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Callable
 
-from stt.server import contract, deadlines, lifecycle
+from stt.server import contract, deadlines, lifecycle, reader
 from stt.server.layout import (
     Layout,
     UnsafeFileError,
@@ -43,10 +43,6 @@ _AUDIO_FILE_MODE = 0o600
 _REQUEST_SUFFIX = ".json"
 _ATTACHMENT_INFIX = ".audio."
 _SET_ASIDE_SUFFIX = ".unremovable"
-# FFmpeg demuxers of the attachment extensions the request schema allows
-# (m4a, mp3, wav, flac, ogg, opus, aac, wma). Probing any other format could
-# follow references to other files, such as a playlist's.
-_AUDIO_FORMATS = "mov,mp3,wav,flac,ogg,aac,asf"
 
 _NOT_A_REQUEST_LOG = "dropped an inbox file whose name is not a request id"
 _SET_ASIDE_LOG = "set aside an inbox entry that could not be removed"
@@ -79,7 +75,7 @@ class AudioTooLongError(Exception):
 def probe_duration(path: Path) -> float:
     """Returns the length of a recording in seconds.
 
-    Only the formats in ``_AUDIO_FORMATS`` are opened; FFmpeg refuses any other
+    Only the formats in ``reader.AUDIO_FORMATS`` are opened; FFmpeg refuses any other
     before it reads past the format probe. Uses the container duration; when
     the container has none, sums the audio packet durations without decoding.
 
@@ -97,7 +93,7 @@ def probe_duration(path: Path) -> float:
 
     try:
         with av.open(
-            str(path), metadata_errors="ignore", container_options={"format_whitelist": _AUDIO_FORMATS}
+            str(path), metadata_errors="ignore", container_options={"format_whitelist": reader.AUDIO_FORMATS}
         ) as container:
             if not container.streams.audio:
                 raise UnreadableAudioError
