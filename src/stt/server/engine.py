@@ -1,10 +1,12 @@
 """Transcription engine: the subprocess the worker starts for one job.
 
-Run as ``python -m stt.server.engine <work_dir>``. It reads ``spec.json`` from the
-work folder, checks that a GPU and the pinned models are present, transcribes with
-the same code the command line uses (``large-v3`` on ``cuda``, no fallback), writes
-``out/transcript.txt`` and ``out/result.json``, and records its verdict in
-``outcome.json``. Heavy libraries are imported only when a check or a step needs them.
+Run as ``python -m stt.server.engine <work_dir>``. It reads ``spec.json`` and the
+decoded recording ``audio.wav`` from the work folder, checks that a GPU and the pinned
+models are present, transcribes with the same model settings the command line uses
+(``large-v3`` on ``cuda``, no fallback), writes ``out/transcript.txt`` and
+``out/result.json``, and records its verdict in ``outcome.json``. It never decodes a
+recording and never starts ``ffmpeg``. Heavy libraries are imported only when a check
+or a step needs them.
 """
 
 from __future__ import annotations
@@ -16,12 +18,17 @@ import shutil
 import sys
 import tempfile
 import time
+import wave
 from pathlib import Path
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from stt.server import contract, models
 from stt.server.layout import atomic_write_text
 
+if TYPE_CHECKING:
+    import numpy as np
+
+AUDIO_NAME = "audio.wav"
 MODEL_NAME = "large-v3"
 DEVICE = "cuda"
 BEAM_SIZE = 5
@@ -32,7 +39,6 @@ _DETAILS: dict[str, str] = {
     "gpu_unavailable": "The engine could not find a usable GPU.",
     "models_unavailable": "The pinned models are not present in the model cache.",
     "gpu_out_of_memory": "The GPU ran out of memory while transcribing.",
-    "unreadable_audio": "The engine could not decode the audio.",
     "engine_error": "The engine stopped because of an unexpected error.",
 }
 
@@ -61,16 +67,12 @@ def classify_error(error: Exception) -> tuple[str, str]:
 
     Returns:
         ``(reason, detail)``: ``gpu_out_of_memory`` for CUDA out of memory,
-        ``unreadable_audio`` for a PyAV decode error, ``engine_error`` otherwise.
+        ``engine_error`` otherwise.
     """
-    import av.error
-
     from stt import transcribe
 
     if isinstance(error, RuntimeError) and transcribe.is_oom_error(error):
         reason = "gpu_out_of_memory"
-    elif isinstance(error, av.error.FFmpegError):
-        reason = "unreadable_audio"
     else:
         reason = "engine_error"
     return reason, _DETAILS[reason]
@@ -122,7 +124,29 @@ def _diarize_args() -> argparse.Namespace:
     )
 
 
-def _transcribe(spec: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def _read_samples(wav: Path) -> "np.ndarray":
+    """Reads the decoded recording as mono float32 samples in [-1, 1).
+
+    Args:
+        wav: The ``audio.wav`` the worker wrote: 1 channel, 2 bytes, 16 kHz.
+
+    Returns:
+        The samples, scaled like faster-whisper scales its own decoder output.
+
+    Raises:
+        ValueError: If the header is not 1 channel, 2 bytes per sample and 16 kHz.
+    """
+    import numpy as np
+
+    with wave.open(str(wav), "rb") as handle:
+        header = (handle.getnchannels(), handle.getsampwidth(), handle.getframerate())
+        if header != (1, 2, 16000):
+            raise ValueError("The decoded audio is not 16 kHz mono 16-bit PCM.")
+        raw = handle.readframes(handle.getnframes())
+    return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def _transcribe(work_dir: Path, spec: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Runs the transcription and returns the transcript text and the result document."""
     from stt import diarize as dz
     from stt import transcribe
@@ -130,8 +154,10 @@ def _transcribe(spec: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     started = time.monotonic()
     diarize: bool = spec["diarize"]
     hints: list[str] | None = spec["hints"]
-    media = Path(spec["audio_path"])
+    wav = work_dir / AUDIO_NAME
+    original_name: str = spec["original_name"]
 
+    samples = _read_samples(wav)
     model = transcribe.load_model(MODEL_NAME, DEVICE)
     report = None
     terms = None
@@ -143,18 +169,21 @@ def _transcribe(spec: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             transcribe.HOTWORD_TOKEN_LIMIT,
         )
         terms = ", ".join(hints[: report.applied]) or None
-    segments, duration, language = transcribe.transcribe_file(
-        model, media, spec["language"], terms, BEAM_SIZE, word_timestamps=diarize, allow_empty=True
+    segments, duration, language = transcribe.transcribe_samples(
+        model, samples, original_name, spec["language"], terms, BEAM_SIZE,
+        word_timestamps=diarize, allow_empty=True,
     )
     header = transcribe.build_header(
-        spec["original_name"], MODEL_NAME, language, duration, diarized=diarize
+        original_name, MODEL_NAME, language, duration, diarized=diarize
     )
     if not segments:
         body = ""
         paragraphs: list[dict[str, Any]] = []
     elif diarize:
         pipeline = dz.load_pipeline(DEVICE)
-        blocks = transcribe.diarized_blocks(media, segments, _diarize_args(), pipeline)
+        blocks = transcribe.diarized_blocks_from_wav(
+            wav, original_name, segments, _diarize_args(), pipeline
+        )
         body = dz.render_diarized(blocks, timestamps=True)
         paragraphs = [
             {
@@ -235,7 +264,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_failure(work_dir, reason, _DETAILS[reason])
         return 0
     try:
-        transcript, result = _transcribe(spec)
+        transcript, result = _transcribe(work_dir, spec)
         _write_results(work_dir, transcript, result)
     except Exception as error:  # Any failure becomes a verdict; its text must not leak.
         _write_failure(work_dir, *classify_error(error))

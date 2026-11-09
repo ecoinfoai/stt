@@ -7,9 +7,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import wave
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pytest
@@ -63,6 +64,12 @@ class FakeModel:
         return iter(self.segments), SimpleNamespace(duration=self.duration, language="en")
 
 
+def write_silence(path: Path) -> Path:
+    """Writes the decoded recording the worker leaves for the engine: 12 s of silence."""
+    os.chmod(make_wav(path, 12.0), 0o600)
+    return path
+
+
 class Harness:
     """Wires fakes into the engine and runs it on a prepared work folder."""
 
@@ -101,8 +108,9 @@ class Harness:
         diarize_speakers: bool = False,
         hints: list[str] | None = None,
         language: str = "en",
+        write_audio: Callable[[Path], object] = write_silence,
     ) -> int:
-        os.chmod(make_wav(self.work_dir / "audio.wav", 12.0), 0o600)
+        write_audio(self.work_dir / "audio.wav")
         spec = {
             "request_id": REQUEST_ID,
             "original_name": ORIGINAL_NAME,
@@ -430,7 +438,6 @@ def test_wrong_argument_count_is_a_usage_error() -> None:
 
 SECRET = "internal secret path"
 OOM_DETAIL = "The GPU ran out of memory while transcribing."
-UNREADABLE_DETAIL = "The engine could not decode the audio."
 ENGINE_ERROR_DETAIL = "The engine stopped because of an unexpected error."
 
 
@@ -512,18 +519,48 @@ def test_us5_8_unexpected_error_hides_internal_text(
     assert_silent_output(capfd)
 
 
-def test_decode_failure_is_unreadable_audio(
-    harness: Harness, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+def write_pcm_wav(path: Path, *, channels: int, width: int, rate: int) -> Path:
+    """Writes one second of silence with the given header fields."""
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(channels)
+        handle.setsampwidth(width)
+        handle.setframerate(rate)
+        handle.writeframes(bytes(channels * width * rate))
+    return path
+
+
+def write_headerless_file(path: Path) -> Path:
+    """Writes a text file that is not a WAV container at all."""
+    path.write_text("this is not a wav file", encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    "write_audio",
+    [
+        pytest.param(lambda p: write_pcm_wav(p, channels=2, width=2, rate=16000), id="stereo"),
+        pytest.param(lambda p: write_pcm_wav(p, channels=1, width=1, rate=16000), id="8_bit"),
+        pytest.param(lambda p: write_pcm_wav(p, channels=1, width=2, rate=44100), id="44_1_khz"),
+        pytest.param(write_headerless_file, id="not_a_wav"),
+    ],
+)
+def test_us2_5_audio_with_another_header_is_engine_error(
+    harness: Harness, capfd: pytest.CaptureFixture[str], write_audio: Callable[[Path], object]
 ) -> None:
-    import av.error
+    assert harness.run(write_audio=write_audio) == 0
 
-    monkeypatch.setattr(
-        harness.model, "transcribe", make_raiser(av.error.InvalidDataError(1, SECRET))
-    )
+    assert_engine_failed(harness, "engine_error", ENGINE_ERROR_DETAIL)
+    assert harness.load_calls == []
+    assert harness.model.calls == []
+    assert_silent_output(capfd)
 
-    assert harness.run() == 0
 
-    assert_engine_failed(harness, "unreadable_audio", UNREADABLE_DETAIL)
+def test_us2_5_missing_audio_file_is_engine_error(
+    harness: Harness, capfd: pytest.CaptureFixture[str]
+) -> None:
+    assert harness.run(write_audio=lambda path: None) == 0
+
+    assert_engine_failed(harness, "engine_error", ENGINE_ERROR_DETAIL)
     assert_silent_output(capfd)
 
 
@@ -533,12 +570,16 @@ def test_classify_error_maps_each_error_to_its_fixed_pair() -> None:
     assert engine.classify_error(RuntimeError("CUDA failed with error out of memory")) == (
         "gpu_out_of_memory", OOM_DETAIL,
     )
-    assert engine.classify_error(av.error.InvalidDataError(1, "x")) == (
-        "unreadable_audio", UNREADABLE_DETAIL,
-    )
     assert engine.classify_error(RuntimeError("something else")) == (
         "engine_error", ENGINE_ERROR_DETAIL,
     )
+    assert engine.classify_error(av.error.InvalidDataError(1, "x")) == (
+        "engine_error", ENGINE_ERROR_DETAIL,
+    )
+
+
+def test_engine_has_no_unreadable_audio_verdict() -> None:
+    assert "unreadable_audio" not in engine._DETAILS
 
 
 def test_classify_error_ignores_the_message_of_other_errors() -> None:
