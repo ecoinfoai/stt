@@ -1,4 +1,4 @@
-"""The ``stt server`` command group: ``intake``, ``work`` and ``sweep`` under their stage locks, and ``fetch-models``."""
+"""The ``stt server`` command group: ``intake``, ``work`` and ``sweep`` under their stage locks, ``fetch-models`` and ``read``."""
 
 from __future__ import annotations
 
@@ -9,8 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Sequence
 
+from stt.server.reader import SOCKET_PATH
+
 if TYPE_CHECKING:
     from stt.server.layout import Layout
+    from stt.server.reader_client import ReaderConfig
 
 DEFAULT_ROOT = Path("/var/lib/stt")
 DEFAULT_MODELS = Path("/var/lib/stt-models")
@@ -27,17 +30,23 @@ _BUSY_MESSAGES = {
 }
 
 
+def _reader_config(socket_path: str) -> ReaderConfig:
+    from stt.server.reader_client import ReaderConfig
+
+    return ReaderConfig(socket_path=socket_path)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Builds the ``stt server`` argument parser.
 
     Returns:
-        A parser with the ``intake``, ``work``, ``sweep`` and ``fetch-models`` subcommands.
+        A parser with the ``intake``, ``work``, ``sweep``, ``fetch-models`` and ``read`` subcommands.
     """
     parser = argparse.ArgumentParser(
         prog="stt server",
         description="Server-side transcription stages; each run drains its queue and exits.",
     )
-    commands = parser.add_subparsers(dest="command", metavar="{intake,work,sweep,fetch-models}", required=True)
+    commands = parser.add_subparsers(dest="command", metavar="{intake,work,sweep,fetch-models,read}", required=True)
 
     intake_parser = commands.add_parser(
         "intake", help="process every request in the inbox once", description="Process every request in the inbox once."
@@ -58,9 +67,20 @@ def build_parser() -> argparse.ArgumentParser:
         "DIR/.complete; do nothing when that list is already recorded. The only command that needs network access "
         "and the HF_TOKEN environment variable.",
     )
+    commands.add_parser(
+        "read",
+        help="serve the one decode request on standard input (the reader unit's ExecStart)",
+        description="Serve the one request on standard input, a connection from the reader socket, and exit. "
+        "Imports only the standard library and uses neither the state root nor a stage lock.",
+    )
     fetch_parser.add_argument("--models", type=Path, required=True, help="model cache folder to fill")
     for sub in (intake_parser, work_parser, sweep_parser):
         sub.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="state root (default: %(default)s)")
+    for sub in (intake_parser, work_parser):
+        sub.add_argument(
+            "--reader-socket", dest="reader", type=_reader_config, default=SOCKET_PATH,
+            help="socket of the reader unit that decodes recordings (default: %(default)s)",
+        )
     work_parser.add_argument(
         "--models", type=Path, default=DEFAULT_MODELS,
         help="model cache folder, used offline by the engine (default: %(default)s)",
@@ -87,6 +107,12 @@ def _fetch_models(args: argparse.Namespace) -> int:
         print(error, file=sys.stderr)
         return EXIT_FETCH_FAILED
     return 0
+
+
+def _read(args: argparse.Namespace) -> int:
+    from stt.server import reader
+
+    return reader.serve()
 
 
 def _work(args: argparse.Namespace, layout: Layout) -> int:
@@ -149,6 +175,7 @@ def main(argv: Sequence[str]) -> int:
         0 when the stage finished or the models are in place, 1 when a model download failed or intake or
         sweep could not handle some items (the rest are done), 2 for a usage error, a missing GPU lock file
         or an account other than the state root's owner, 75 when another run of the same stage holds its lock.
+        ``read`` returns what ``reader.serve`` returns: 0, 1 or 2.
     """
     parser = build_parser()
     try:
@@ -157,6 +184,8 @@ def main(argv: Sequence[str]) -> int:
         return stop.code if isinstance(stop.code, int) else EXIT_USAGE
     if args.command == "fetch-models":
         return _fetch_models(args)
+    if args.command == "read":
+        return _read(args)
     problem = _wrong_account(args.command, args.root)
     if problem is not None:
         print(problem, file=sys.stderr)
