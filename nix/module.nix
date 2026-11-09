@@ -80,11 +80,16 @@ let
   # itself (`unit-start-limit-hit`), which never watches again.
   pathTriggered = unit: unit // { startLimitIntervalSec = 0; };
   # Recordings are read only by the socket-activated reader (contracts/module.md section 3).
+  # Wants, not Requires: stopping the socket must not stop a running stage. Apply it last,
+  # so that it appends to the `wants` and `after` the unit already has.
   readerSocket = "/run/stt-reader.sock";
-  needsReader = unit: unit // {
-    requires = [ "stt-reader.socket" ];
-    after = [ "stt-reader.socket" ];
-  };
+  needsReader =
+    unit:
+    unit
+    // {
+      wants = (unit.wants or [ ]) ++ [ "stt-reader.socket" ];
+      after = (unit.after or [ ]) ++ [ "stt-reader.socket" ];
+    };
 
   folder = mode: user: group: {
     d = { inherit mode user group; };
@@ -154,8 +159,8 @@ in
         })
       );
 
-      stt-worker =
-        needsReader (pathTriggered (stage "stt worker: run queued jobs on the GPU" {
+      stt-worker = needsReader (
+        pathTriggered (stage "stt worker: run queued jobs on the GPU" {
           ExecStart = "${stt} server work --gpu-lock ${gpuLock} --reader-socket ${readerSocket}";
           PrivateDevices = false;
           DevicePolicy = "closed";
@@ -175,25 +180,25 @@ in
           # the worker then published engine_error and started the next job. Killed at once,
           # the running job becomes `interrupted` at the next worker start or sweep.
           KillSignal = "SIGKILL";
-        }))
+        })
         // {
           # A deployment does not kill a running transcription; the next start uses the new unit.
           restartIfChanged = false;
         }
         // lib.optionalAttrs fetchesModels {
-          # Replaces the `after` of needsReader, so it names the socket again.
-          after = [
-            "stt-reader.socket"
-            "stt-models.service"
-          ];
+          after = [ "stt-models.service" ];
           wants = [ "stt-models.service" ];
-        };
+        }
+      );
 
       # One instance per connection (Accept=yes). All instances share the template's dynamic UID: a
       # per-instance User= cannot work, the instance name outgrows the 31-character user-name limit
       # (contracts/module.md section 2.2). Concurrent reads are kept apart by the namespaces below.
       "stt-reader@" = {
         description = "stt reader: read one recording";
+        # A deployment must not restart a live read or, through the template, stop the socket
+        # (switch-to-configuration does both for a changed template). A read ends by itself.
+        restartIfChanged = false;
         # CollectMode belongs to [Unit]; in [Service] it is ignored.
         unitConfig.CollectMode = "inactive-or-failed";
         serviceConfig = {
