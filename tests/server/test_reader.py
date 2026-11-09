@@ -404,6 +404,38 @@ def receive_one(client: socket.socket) -> dict[str, Any]:
     return json.loads(data)
 
 
+# ------------------------------------------- supervisor: an error while it waits
+
+
+def test_a_child_is_killed_and_reaped_when_waiting_for_it_fails(
+    descriptors: Descriptors, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started: list[subprocess.Popen[bytes]] = []
+
+    class RecordingPopen(subprocess.Popen):  # type: ignore[type-arg]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            started.append(self)
+
+    def failing_pidfd_open(pid: int) -> int:
+        raise OSError("injected failure")
+
+    monkeypatch.setattr(reader.subprocess, "Popen", RecordingPopen)
+    monkeypatch.setattr(reader.os, "pidfd_open", failing_pidfd_open)
+    server_end, client = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    try:
+        with server_end, client:
+            send_request(client, PROBE_BODY, [descriptors.recording()])
+            with pytest.raises(OSError, match="injected failure"):
+                reader._supervise(server_end, fake_child("hang"), 5.0)
+        assert [child.poll() for child in started] == [-signal.SIGKILL]
+    finally:
+        for child in started:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+
+
 # --------------------------------------------------- supervisor: (e) limit_s
 
 
