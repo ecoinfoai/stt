@@ -55,6 +55,11 @@ let
     # The host's swap is not encrypted, and a core dump would hold decoded audio (FR-035).
     MemorySwapMax = 0;
     LimitCORE = 0;
+    # No SystemCallErrorNumber: a call outside the filter ends the process with SIGSYS,
+    # and the kernel log names it (research R1). Exceptions need a row in docs/server-security.md.
+    SystemCallArchitectures = "native";
+    SystemCallFilter = [ "@system-service" ];
+    MemoryDenyWriteExecute = true;
   };
   offline = {
     PrivateNetwork = true;
