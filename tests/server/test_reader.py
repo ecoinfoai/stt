@@ -428,7 +428,7 @@ def test_a_child_is_killed_and_reaped_when_waiting_for_it_fails(
             send_request(client, PROBE_BODY, [descriptors.recording()])
             with pytest.raises(OSError, match="injected failure"):
                 reader._supervise(server_end, fake_child("hang"), 5.0)
-        assert [child.poll() for child in started] == [-signal.SIGKILL]
+        assert [child.returncode for child in started] == [-signal.SIGKILL]
     finally:
         for child in started:
             if child.poll() is None:
