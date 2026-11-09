@@ -55,10 +55,10 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 **Purpose**: P1 을 걸기 전의 기준 결과와, 필터 예외를 정할 관측 근거를 모은다(research R2).
 
-- [ ] T001 C-0 기준 결과: 운영자와 함께 `clip60.m4a` 와 1시간 녹음을 1차(힌트·화자 구분 없음)·2차(힌트·화자 구분)로 서버에서 전사하고,
+- [X] T001 C-0 기준 결과: 운영자와 함께 `clip60.m4a` 와 1시간 녹음을 1차(힌트·화자 구분 없음)·2차(힌트·화자 구분)로 서버에서 전사하고,
   `transcript.txt` 와 `result.json` 의 `paragraphs` 를 운영자의 기기(저장소 밖)에 보관한다. 보관한 날과 위치만
   `specs/002-decoder-isolation/handoff/p1-reply.md` 초안에 적는다. RED 해당 없음 — 기준 수집. supports US1-5, SC-007
-- [ ] T002 C-P1-1 관측: quickstart C-P1-1 의 순서대로 네 단위에 `SystemCallLog=~@system-service` 를 런타임 drop-in 으로 걸고, 1차·2차 전사, 텍스트
+- [X] T002 C-P1-1 관측: quickstart C-P1-1 의 순서대로 네 단위에 `SystemCallLog=~@system-service` 를 런타임 drop-in 으로 걸고, 1차·2차 전사, 텍스트
   첨부 하나, 「다 지우기」, 청소 1분, `systemctl restart stt-models` 를 거친 뒤 `journalctl -k -g 'type=1326'` 을 모은다. 호출 번호는
   `scmp_sys_resolver` 로 이름을 찾고, 단위·호출·쓰는 곳·관측한 날을 `docs/server-security.md` 초안의 §1 표 자리에 적는다. 끝나면 drop-in 을
   지운다. RED 해당 없음 — 관측. supports US1-3, FR-002, 경계 사례 7
