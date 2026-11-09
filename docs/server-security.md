@@ -36,12 +36,12 @@
 - 파일: `/var/lib/stt`(다른 작업의 녹음·기록·해독된 음성·응답·`state.lock`)와 `/var/lib/stt-models` 는 권한(일회용 UID 는 `stt` 가 아니다)과
   `InaccessiblePaths` 의 두 겹으로 막힌다. `/run/stt`(0755)와 그 안의 `gpu.lock`(0644)은 권한으로는 읽을 수 있으므로 `InaccessiblePaths` 한 겹만이
   막는다(research R12).
-- 쓰기: 이 단위에서 쓰기가 되는 자리(`/tmp`·`/var/tmp`·현재 폴더의 일회용 사설 공간)에는 파일을 만들 수는 있어도 자료는 쓰지 못한다
-  (`LimitFSIZE=0`). 그 밖은 `ProtectSystem=strict` 로 읽기 전용이다. `/dev/shm` 은 `PrivateDevices=yes` 에도 호스트의 것과 같아(같은 장치·아이노드, 1777,
+- 쓰기: 이 단위에서 쓰기가 되는 자리는 인스턴스마다 따로인 사설 `/tmp`·`/var/tmp` 뿐이고, 거기에도 파일을 만들 수는 있어도 자료는 쓰지
+  못한다(`LimitFSIZE=0`). 현재 폴더를 비롯한 그 밖은 `ProtectSystem=strict` 로 읽기 전용이다. `/dev/shm` 은 `PrivateDevices=yes` 에도 호스트의 것과 같아(같은 장치·아이노드, 1777,
   만든 파일이 호스트에 남음) 읽기 전용 빈 tmpfs 로 덮는다(`TemporaryFileSystem=/dev/shm:ro`).
-- 호스트의 다른 파일: 위에서 닫은 경로 밖에서 누구나 읽을 수 있는 파일은 읽기 단위도 읽을 수 있다(`/var/lib/stt*`·`/run/stt` 는 닫혔지만 홈 등 그 밖의
-  경로는 `ProtectHome` 외에는 열려 있다). 이 호스트에서는 다른 서비스의 상태가 `/var/lib/private`(0700)에 있어 일회용 UID 로는 들어가지 못한다.
-  이 잔여 노출을 허용할지는 열린 운영자 질문이다(통제자 결정 20). 모듈은 바꾸지 않았다.
+- 호스트의 다른 파일: 위에서 닫은 경로 밖에서 누구나 읽을 수 있는 파일은 읽기 단위도 읽을 수 있다(`/var/lib/stt*`·`/run/stt` 는 `InaccessiblePaths` 로,
+  홈은 `ProtectHome=true` 로 닫혔지만 그 밖의 경로는 열려 있다). 이 호스트에서는 다른 서비스의 상태가 `/var/lib/private`(0700)에 있어 일회용 UID 로는 들어가지 못한다.
+  이 잔여 노출을 허용할지는 열린 운영자 질문이다(2026-11-09). 모듈은 바꾸지 않았다.
 - 장치·망: `PrivateDevices`(GPU 장치 노드 없음), `PrivateNetwork`, `RestrictAddressFamilies=none`(소켓을 만들 수 없음. 받은 연결은 그대로 쓴다).
 - 다른 프로세스: `PrivatePIDs`·`ProtectProc=invisible`·`ProcSubset=pid`·`PrivateIPC`·`PrivateTmp`. 겹쳐 도는 인스턴스끼리도 서로를 보지 못한다.
   템플릿의 모든 인스턴스는 같은 동적 UID 를 받으므로(인스턴스별 `User=` 는 이름 길이 한도로 쓸 수 없다. contracts/module.md §2.2) UID 가 아니라 이
@@ -89,7 +89,7 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
   녹음이 읽히지 않은 경우(`unreadable_audio`)와 달리, 읽기 단위를 못 띄운 것은 녹음 탓이 아니다.
 - **배포 메모**(`switch-to-configuration` 의 동작을 소스로 읽고 VM 시험으로 확인):
   - 워커는 `restartIfChanged=false` 라서, 스위치 때 도는 워커는 큐를 새 코드가 아닌 옛 코드로 계속 비운다. 2차 격리가 적용됐다고 부르기 전에
-    `systemctl show -p MainPID stt-worker.service` 의 값이 스위치 전과 달라졌는지 확인한다(같으면 옛 워커가 돈다).
+    `systemctl show -p MainPID stt-worker.service` 의 값이 스위치 전과 달라졌는지 확인한다(0 이 아닌 같은 값이면 옛 워커가 아직 돈다. 스위치 때 워커가 놀고 있었다면 전후 모두 0 이고, 다음 시작부터 새 코드다).
   - `systemctl restart stt-reader.socket` 을 하기 전에 `stt-intake.path` 와 `stt-worker.path` 를 멈추고 받기·워커가 놀 때까지(`ActiveState=inactive`)
     기다린 뒤, 소켓을 다시 띄우고 두 path 단위를 다시 시작한다. 그래야 그 사이 들어온 요청이 유실되지 않는다.
   - 읽기 단위 템플릿(`stt-reader@.service`)이나 패키지가 바뀌어도 도는 읽기는 끝까지 마치고, 받기·워커와 소켓은 멈추지 않는다(`restartIfChanged=false`,

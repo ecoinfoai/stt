@@ -466,7 +466,7 @@ def test_a_child_still_running_when_limit_s_passes_is_killed_and_the_verdict_is_
     supervisor.wait_for_exits(1)
 
 
-# ----------------------------------------------------- ruling 5: process group
+# ----------------------------------------------------- process group
 
 
 def test_killing_the_supervisors_process_group_also_kills_the_child(tmp_path: Path) -> None:
