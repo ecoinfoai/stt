@@ -74,7 +74,8 @@ close                                       자식을 거둔 뒤 끝남
 - 공통: 인자로 받은 녹음 기술자를 파일 객체로 열어 `av.open(..., metadata_errors="ignore", container_options={"format_whitelist": AUDIO_FORMATS})`
   한다. 경로는 쓰지 않는다. 예외는 모두 끝 코드 1 이다(문장은 어디에도 쓰지 않는다).
 - probe: 001 의 `probe_duration` 과 같은 뜻이다. 오디오 흐름이 없으면 실패. 컨테이너 길이가 있으면 그것, 없으면 첫 오디오 흐름의 패킷 길이 합(해독
-  없음). 출력 기술자에 `{"duration_s": …}` 를 쓰고 끝 코드 0.
+  없음). 출력 기술자에 `{"duration_s": …}` 를 쓰고 끝 코드 0. 길이를 고르는
+  부분은 열린 컨테이너를 받는 순수 함수로 두어, 시험이 프로세스 안에서 가짜 컨테이너로 볼 수 있게 한다.
 - decode: faster-whisper 1.2.1 `decode_audio` 와 같은 순서다 — `container.decode(audio=0)`, `InvalidDataError` 프레임 건너뛰기, `AudioFifo` 로
   50만 샘플씩 묶기(`pts=None`), `AudioResampler(format="s16", layout="mono", rate=16000)`, 끝에 `None` 으로 비우기. 나온 프레임의 바이트를
   차례로 출력 기술자에 쓴다(머리 없음). 끝 코드 0.

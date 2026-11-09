@@ -38,7 +38,9 @@ captest 4G 20m uv run python -m pytest -q
   - 실패 방식 넷 → `unreadable_audio`, 띄우지 못함 → `engine_error`, 그리고 다음 작업의 완료(SC-005).
   - 한 녹음에 작업 5개와 「다 지우기」(SC-006).
   - 다섯 경우의 남은 파일 0(SC-008).
-- 판 기록: `tests/test_server_security_doc.py` — `docs/server-security.md` §4 의 av 판과 nixpkgs 커밋이 `uv.lock`·`flake.lock` 과 같은지(US5-1·3).
+- 문서 대조: `tests/test_server_security_doc.py` — `docs/server-security.md` 의 영어 표식만 읽는다.
+  - §1 표와 `nix/module.nix` 의 필터·예외·좁힘·쓰기·실행 메모리 금지(US1-3·4).
+  - §4 의 av 판과 nixpkgs 커밋이 `uv.lock`·`flake.lock` 과 같은지, 정책 표식, 확인 기록의 빠진 달, 공지 뒤 7일, 기준 녹음 비교 날(US5-1~5).
 - CI 는 Python 3.10·3.12 둘 다 돈다. `socket.send_fds`·`recv_fds`(3.9+)는 둘 다에 있고, `tomllib`(3.11+)은 쓰지 않는다.
 
 ## B. VM 시험
@@ -67,16 +69,19 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
 3. **B-P2-3 텍스트 첨부**: `corrupt.mp3`(녹음 확장자를 붙인 텍스트)와 정상 녹음을 같은 묶음으로 맡긴다. 텍스트는 `unreadable_audio`, 정상은
    `queued` 가 되고, 받기·워커·청소 단위는 `failed` 가 아니다(US3-1, SC-004).
 4. **B-P2-4 권한 점검**: specialisation 으로 읽기 단위의 `ExecStart` 를 권한 점검 대역으로 바꾼다. 먼저 VM 에 `/dev/nvidia0`·`nvidiactl`·
-   `nvidia-uvm` 시험 노드를 만든다(장치 번호만 같은 가짜). 요청자가 다른 작업 A·B 와 A 의 재전사를 둔 뒤, A 의 읽기에서 대역이 다음을 시도하고
-   성공 수를 판정에 담는다. 기대는 모두 0 이다(US2-1·2·3·4, SC-002).
+   `nvidia-uvm` 시험 노드를 만든다(장치 번호만 같은 가짜). 요청자가 다른 작업 A·B 와 A 의 재전사를 둔 뒤, A 의 읽기와 재전사 A′ 의 읽기에서 각각
+   대역이 다음을 시도하고 성공 수를 판정에 담는다. 기대는 모두 0 이다(US2-1·2·3·4, SC-002). 반대로 자기가 받은 녹음 기술자는 읽혀야 한다
+   (US2-2 — 공유하는 녹음에는 기술자로만 닿는다).
    - B 의 녹음, A·B 의 작업 폴더(해독된 음성), 힌트가 든 기록, `requests/inbox`·`outbox` 의 파일, `state.lock`, `/run/stt/gpu.lock` 의 읽기·쓰기·지우기
    - `/dev/nvidia*` 열기
    - `socket(AF_INET)`·`socket(AF_UNIX)`
    - 자기 녹음 기술자에 쓰기
+   - 쓰기 가능한 자리(`/tmp`·`/var/tmp`·현재 폴더)에 자료 쓰기(`LimitFSIZE=0`)
    - 대역은 자기 UID 도 보고한다. 받기의 길이 재기와 워커의 해독을 겹쳐 돌려 두 UID 가 서로 다르고 `stt` 와도 다른지 본다(US2-6, 경계 사례 2).
+   - 읽기가 끝난 뒤 `systemctl list-units --all 'stt-reader@*'` 가 비어 있고, 호스트의 `/tmp`·`/var/tmp` 에 그 인스턴스의 사설 폴더가 없다(US2-7).
 5. **B-P2-5 실패 대역**: 판정 없이 끊기, 멈추기(상한까지), 메모리 넘기기(768M 초과 할당), `started: false`. 각각 받기에서는 그 요청만 거절되거나
    치워지고, 처리에서는 그 작업만 `unreadable_audio`(마지막 것은 `engine_error`)로 끝난다. 바로 뒤의 정상 작업이 `gpu_unavailable` 까지 가고,
-   `systemctl --failed` 에 stt 단위가 없다(US3-2·3·4·5·6·8, SC-005).
+   `systemctl --failed` 에 stt 단위가 없다(US3-2·3·4·5·6·8, SC-005). 각 실패 뒤 `stt-reader@*` 인스턴스가 남지 않는다(US2-7).
 6. **B-P2-6 읽는 중의 삭제**: 멈추는 대역으로 읽기를 붙잡아 둔 채 다음 셋을 한다.
    - 「다 지우기」 → 1분 안에 `stt-reader@*` 인스턴스가 없고 그 작업의 파일이 0개다(US4-4).
    - VM 시계를 23:58 로 옮겨 청소 → 같음(US4-5).

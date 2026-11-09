@@ -74,7 +74,7 @@
 | VI. 계약으로만 | 스키마 바이트·경로·지우기 의미·`from_request`·23:58 이 그대로다. 고치는 것은 내부 문서뿐이다(contracts/module.md §5). 회신 인계는 두 건이다. bhu-llm 과 코드를 나누지 않는다 | 통과 |
 | VII. 테스트 우선 | 과제마다 RED → GREEN 과 닫는 시나리오를 적는다. P1 은 VM 시험의 단언을 먼저 쓰고(RED) 모듈을 바꾼다(GREEN). 읽기 실패는 대역으로 만든다. 기본 시험은 GPU·망·모델·systemd 없이 돈다. 시험 이름은 `test_decoder_us<N>_<n>_...` 다 | 통과 |
 | 저작권·단어장·개인정보 | 단어장 흐름은 그대로다. 로그에는 작업 ID·상태·이유만 남고, 읽기 단위는 작업 ID 도 모른다. 셸 보간이 없다(인자 목록). 비밀을 다루지 않는다 | 통과 |
-| 개발 환경·언어 | Nix + uv, 새 의존성 없음, 무거운 실행은 `captest`, 최종 `project-audit`. 새 코드는 영어다. 손대는 `transcribe.py` 함수 안의 기존 한국어 문장은 아래 Complexity Tracking | 조건부 통과 |
+| 개발 환경·언어 | Nix + uv, 새 의존성 없음, 무거운 실행은 `captest`, 최종 `project-audit`. 새 코드는 영어다. 손대는 `transcribe.py` 함수 안의 기존 한국어 문장은 아래 Complexity Tracking(운영자 승인 2026-11-09). 문서 대조 시험은 `docs/server-security.md` 의 영어 표식만 읽는다 | 조건부 통과 |
 
 ## Project Structure
 
@@ -91,6 +91,7 @@ specs/002-decoder-isolation/
 │   ├── reader.md        #   읽기 프로토콜(내부 계약), 상수, 명령줄, 대역의 자리
 │   └── module.md        #   단위 설정의 바뀜과 확인 명령
 ├── checklists/requirements.md
+├── audit/               # T-Verify-Final(project-audit) 결과
 ├── handoff/             # 구현 뒤: p1-reply.md, p2-reply.md
 └── tasks.md             # /speckit-tasks 가 만든다
 ```
@@ -118,7 +119,7 @@ tests/
 │   ├── test_decoder_us3.py      # 새: US3 — 실패 지도
 │   ├── test_decoder_us4.py      # 새: US4 — 계약, 작업 5개, 삭제 다섯 경우, 명령줄
 │   └── test_engine.py · test_us1.py · test_us3.py · test_intake.py · test_us5.py   # 바뀜: 내부 경계가 바뀐 곳만(research R11)
-└── test_server_security_doc.py  # 새: docs/server-security.md §4 ↔ uv.lock·flake.lock (US5)
+└── test_server_security_doc.py  # 새: docs/server-security.md §1 ↔ module.nix (US1), §4 ↔ uv.lock·flake.lock·기록 검사 (US5)
 
 nix/
 ├── module.nix           # 바뀜: hardening 에 P1 세 설정(US1), stt-reader.socket·stt-reader@.service, intake·worker 의 requires·ExecStart(US2)
@@ -166,12 +167,12 @@ C-P1-2(워커의 쓰기·실행 메모리), C-P2-3(호스트의 해독 시간), 
 | 2. 읽기 단위 | `reader.py` 감독·자식, `reader_client.py`, `stt server read`, 흉내 소켓과 대역 | US3-2~5(대역), US2-6·7, FR-006·009·011·015·016·019 | — |
 | 3. 받기·워커·엔진 | 받기의 길이 재기 이전, 워커의 읽기 단계·작업 상한·`spec.json`, 엔진의 WAV 입력·분류, `transcribe.py` 안쪽 떼기 | US2-5·8·9, US3-1·6~9, US4-1~3·7, FR-010·012~014·017·018·021·022 | — |
 | 4. 모듈·VM | 소켓·템플릿 단위, 받기·워커 연결, B-P2-1~7 | US2-1~4·6, US4-4~6, SC-002~006·008, FR-007·008·013 | — |
-| 5. P3 | 판 기록 시험(RED) → `docs/server-security.md` §4(GREEN), 정책, 첫 매달 확인 줄 | US5-1~5, FR-024~026 | **P2·P3 배포**(bhu-llm FR-659 전): 같은 순서. C-P2-1~8, C-P3, 회신 `p2-reply.md` |
-| 6. 확인 | 001 계약 문서 고치기(contracts/module.md §5), README, `T-Verify-Final`(project-audit: qa-engineer + adversary — adversary 는 코드·설정만 읽는다) | SC-001~010, FR-020·027·028 | — |
+| 5. P3 | 판 기록 시험(RED) → `docs/server-security.md` §4(GREEN), 정책, 첫 매달 확인 줄 | US5-1~5, FR-024~026 | — |
+| 6. 확인 | 001 계약 문서 고치기(contracts/module.md §5), README, `T-Verify-Final`(project-audit: qa-engineer + adversary — adversary 는 코드·설정만 읽는다) | SC-001~010, FR-020·027·028 | **P2·P3 배포**(`T-Verify-Final` 통과 뒤, bhu-llm FR-659 전): 같은 순서. C-P2-1~8, C-P3, 회신 `p2-reply.md` |
 
 - 단계 1 은 단계 2~5 와 상관없이 배포할 수 있다 — `module.nix` 의 `hardening` 만 바꾸고 Python 코드를 바꾸지 않는다.
 - 단계 2~4 는 함께 배포한다. 받기·워커가 읽기 소켓을 `requires` 하므로, 모듈과 코드가 한 판에 있어야 한다.
-- 단계 5 는 문서와 시험이라 단계 4 와 같은 배포에 싣는다.
+- 단계 5 는 문서와 시험이라 단계 4 와 같은 배포에 싣는다. 배포는 단계 6 의 `T-Verify-Final` 뒤다 — 감사가 master 합치기를 막아야 하므로(tasks 단계에서 옮김).
 - 회신 두 건은 운영자가 bhu-llm 대장 A18 로 옮긴다.
 
 ## Complexity Tracking
@@ -179,3 +180,6 @@ C-P1-2(워커의 쓰기·실행 메모리), C-P2-3(호스트의 해독 시간), 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
 | `transcribe.py` 의 `transcribe_file`·`diarized_blocks` 를 고치는데, 그 안의 기존 한국어 오류 문장(빈 전사 결과, 빈 단어 시각)은 그대로 남는다(헌법 「언어」: 코드에 한글 없음) | 헌법이 기존 한국어의 이전을 별도 변경으로 정했다(1.0.0 언어 절과 Sync Impact Report, 001 plan 의 같은 예외). 이 기능은 떼어 낸 새 함수와 새 코드만 영어로 쓰고, 명령줄의 출력 문장은 바꾸지 않는다(FR-022) | 그 문장을 지금 영어로 바꾸면 명령줄 출력이 바뀌어 FR-022 와 기존 명령줄 시험이 깨진다. 함수를 고치지 않고 엔진에서 같은 설정을 따로 쓰면, 두 경로의 전사 설정이 따로 놀 수 있어 SC-007 이 위험해진다 |
+
+**승인**: 운영자 2026-11-09 — `/speckit-analyze` 지적 D3 을 포함한 「Resolve all issues」. 떼어 낸 새 함수로 기존 한국어 오류 문장(빈 전사
+결과)이 옮겨 갈 수 있고, 그 문장도 이 예외에 든다. 새로 쓰는 문장은 영어다.

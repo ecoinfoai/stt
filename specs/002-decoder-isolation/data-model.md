@@ -95,31 +95,38 @@ queued ──(GPU 잠금, start)──▶ running ─┬─ 읽기 단계: 읽�
 
 | 칸 | 뜻 |
 |---|---|
-| 단위 | `stt-intake`·`stt-worker`·`stt-sweep`·`stt-models`·`stt-reader@` |
-| 호출 필터 | 실제 설정(`@system-service`, 읽기 단위는 더 좁은 목록) |
-| 더한 예외 | 일반 서비스 범위를 넘어 허용한 호출·묶음. 없으면 「없음」 |
-| 이유·관측 근거 | 예외마다: 무엇이 그 호출을 쓰는가, 관측한 날, 커널 기록의 호출 번호(R2) |
-| 쓰기·실행 메모리 금지 | `켬` 또는 `켤 수 없음` + 거부된 지점(R3) |
+| 단위 (`unit`) | `stt-intake`·`stt-worker`·`stt-sweep`·`stt-models`·`stt-reader@` |
+| 호출 필터 (`filter`) | 실제 설정(`@system-service`, 읽기 단위는 더 좁은 목록) |
+| 더한 예외 (`added`) | 일반 서비스 범위를 넘어 허용한 호출·묶음. 없으면 `-` |
+| 좁힘 (`narrowed`) | `~` 로 뺀 호출·묶음(읽기 단위). 없으면 `-` |
+| 이유·관측 근거 (`reason`·`observed`) | 예외마다: 무엇이 그 호출을 쓰는가, 관측한 날, 커널 기록의 호출 번호(R2) |
+| 쓰기·실행 메모리 금지 (`mdwe`·`mdwe_evidence`) | `on` 또는 `off` + 거부된 지점(R3). 호스트 판정 전에는 `pending` |
 
-- 규칙: `nix/module.nix` 의 예외 줄마다 이 표의 같은 줄을 가리키는 주석이 있다. 표에 없는 예외는 두지 않는다(FR-002). VM 시험이 단위마다 설정된
-  필터를 이 표의 값과 비교한다.
+- 규칙: `nix/module.nix` 의 예외 줄마다 이 표의 같은 줄을 가리키는 주석이 있다. 표에 없는 예외는 두지 않는다(FR-002).
+  `tests/test_server_security_doc.py` 가 `nix/module.nix` 에서 `SystemCallFilter` 를 가진 모든 단위를 찾아 이 표(표식
+  `<!-- stt:syscall-table -->`)와 비교한다. 문서는 한국어지만 시험이 읽는 표식·칸 이름·상태값은 영어다(헌법 언어 규칙).
 
 ## 8. 구성 요소 판 기록 (spec 「구성 요소 판 기록」)
 
-`docs/server-security.md` §4.
+`docs/server-security.md` §4. 표식은 `<!-- stt:versions -->`, 칸 이름은 괄호 안의 영어다.
 
 | 칸 | 뜻 | 저장소에서 맞추는 곳 |
 |---|---|---|
-| 구성 요소 | 예: PyAV 휠(안의 FFmpeg libavcodec·libavformat), nixpkgs `ffmpeg` 명령, faster-whisper, CTranslate2, torch, pyannote.audio | — |
-| 서버 경로에서 하는 일 | 녹음 바이트 해석 / 명령줄만 / 해독된 음성만 다룸 | — |
-| 지금 판 | 예: av 18.0.0(Python 3.12)·17.1.0(Python 3.10) | `uv.lock`(시험이 대조) |
-| 고정한 곳 | `uv.lock` / `flake.lock` 의 nixpkgs 커밋 | `flake.lock`(시험이 대조) |
-| 들어온 날 | 그 판을 넣은 커밋과 날짜 | `git log` |
-| 마지막 갱신일 | 판을 바꾼 마지막 날 | `git log` |
+| 구성 요소 (`component`) | 예: PyAV 휠(안의 FFmpeg libavcodec·libavformat), nixpkgs `ffmpeg` 명령, faster-whisper, CTranslate2, torch, pyannote.audio | — |
+| 서버 경로에서 하는 일 (`role`) | 녹음 바이트 해석 `decodes-recordings` / 명령줄만 `cli-only` / 해독된 음성만 다룸 `decoded-audio-only` | — |
+| 지금 판 (`version`) | 예: av 18.0.0(Python 3.12)·17.1.0(Python 3.10) | `uv.lock`(시험이 대조) |
+| 고정한 곳 (`pinned_in`) | `uv.lock` / `flake.lock` 의 nixpkgs 커밋 | `flake.lock`(시험이 대조) |
+| 들어온 날 (`since`) | 그 판을 넣은 커밋과 날짜 | `git log` |
+| 마지막 갱신일 (`last_updated`) | 판을 바꾼 마지막 날 | `git log` |
+| 기준 녹음 비교 (`comparison`) | `decodes-recordings` 줄에서, 이 판으로 기준 녹음을 비교한 날 | 시험이 `last_updated` 와 같거나 뒤인지 본다(US5-3) |
 
 - 정책 절: 누가(운영자), 주기(매달), 볼 곳(FFmpeg 보안 공지·PyAV 새 판·nixpkgs 의 ffmpeg 갱신), 보안 공지 뒤 7일 안에 올리거나 이유를 적음,
-  올릴 때의 순서(잠금 파일 갱신 → 빌드·시험 → 배포 → 기준 녹음 비교 → 이 표 고치기).
-- 매달 확인 기록표: 확인한 날 · 본 곳 · 결과(새 판 없음 / 올린 커밋) · 보안 공지와 그 처리(올린 날 또는 올리지 않는 이유).
+  올릴 때의 순서(잠금 파일 갱신 → 빌드·시험 → 배포 → 기준 녹음 비교 → 이 표 고치기). 시험이 읽는 표식
+  `<!-- stt:policy owner=operator cadence=monthly advisory_days=7 sources=ffmpeg-security,pyav-releases,nixpkgs-ffmpeg -->` 을 함께 둔다.
+- 매달 확인 기록표(`stt:monthly-checks`): 확인한 날(`date`) · 본 곳(`sources`) · 결과(`result`: 새 판 없음 / 올린 커밋). 첫 달과 마지막 달
+  사이에 빠진 달이 없어야 한다(US5-4).
+- 보안 공지 기록표(`stt:advisories`): 공지(`advisory`) · 구성 요소(`component`) · 나온 날(`published`) · 올린 날(`updated`, 없으면 `-`) · 올리지
+  않는 이유(`reason`). 줄마다 `updated` 가 `published` + 7일 이하이거나 `reason` 이 차 있어야 한다(US5-5).
 
 ## 9. 회신 인계 문서 (spec 「회신 인계 문서」)
 

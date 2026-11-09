@@ -71,13 +71,16 @@ systemctl show stt-worker.service stt-intake.service stt-sweep.service stt-model
 # 템플릿은 인스턴스 이름으로 조회한다(띄우지 않는다).
 systemctl show stt-reader@check.service \
   -p DynamicUser -p PrivateDevices -p PrivateNetwork -p RestrictAddressFamilies -p InaccessiblePaths \
-  -p SystemCallFilter -p SystemCallArchitectures -p MemoryDenyWriteExecute -p MemoryMax -p LimitFSIZE -p RuntimeMaxUSec
+  -p SystemCallFilter -p SystemCallArchitectures -p MemoryDenyWriteExecute -p MemoryMax -p MemorySwapMax -p LimitFSIZE -p LimitCORE \
+  -p RuntimeMaxUSec -p KillSignal -p CollectMode -p PrivateTmp
 systemctl show stt-reader.socket -p Listen -p Accept -p SocketUser -p SocketMode -p MaxConnections
 ```
 
 - 🟢 이 호스트에서 확인한 형식: `SystemCallArchitectures=native` 는 그대로 `native` 로, 필터는 풀린 호출 목록으로 나온다. 필터가 없는 지금의
   워커는 `SystemCallFilter=~`·`SystemCallArchitectures=`·`MemoryDenyWriteExecute=no` 로 나온다. `systemctl show 'x@.service'` 는 오류이고,
   인스턴스 이름은 띄우지 않고 조회된다(2026-11-09).
+- 읽기 단위의 `MemorySwapMax`·`LimitCORE`·`KillSignal`·`CollectMode`·`PrivateTmp` 는 FR-012(스왑·덤프 없음)와 §2.2 를 보는 값이다. 출력 꼴은
+  VM 에서 처음 본다 `[VERIFY]` B-P2-1.
 
 ## 5. 001 의 계약 문서에 고칠 것 (구현 때)
 
