@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -10,11 +11,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 
 from stt import diarize, transcribe
 from stt.server import contract, engine
 from stt.server.models import PINNED
+
+from .conftest import make_wav
 
 REQUEST_ID = "0b0c7a2e-5d63-4c43-9a3e-6c1f0b7d9e11"
 ORIGINAL_NAME = "lecture one.m4a"
@@ -65,20 +69,16 @@ class Harness:
     def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         self.work_dir = tmp_path / "job"
         self.work_dir.mkdir()
-        self.audio = tmp_path / "audio.m4a"
-        self.audio.touch()
         self.model = FakeModel(PLAIN_SEGMENTS)
         self.load_calls: list[tuple[str, str]] = []
         self.pipeline_devices: list[str] = []
-        self.wav_destinations: list[Path] = []
+        self.diarized_wavs: list[Path] = []
         self.turns: list[diarize.Turn] = []
         monkeypatch.setattr(tempfile, "tempdir", None)
         monkeypatch.setattr(transcribe, "load_model", self._load_model)
         monkeypatch.setattr(diarize, "load_pipeline", self._load_pipeline)
-        monkeypatch.setattr(diarize, "to_wav", self._to_wav)
-        monkeypatch.setattr(
-            diarize, "diarize_wav", lambda *args, **kwargs: diarize.Diarization(list(self.turns), {})
-        )
+        monkeypatch.setattr(diarize, "to_wav", self._forbidden_to_wav)
+        monkeypatch.setattr(diarize, "diarize_wav", self._diarize_wav)
 
     def _load_model(self, name: str, device: str) -> FakeModel:
         self.load_calls.append((name, device))
@@ -88,9 +88,12 @@ class Harness:
         self.pipeline_devices.append(device)
         return object()
 
-    def _to_wav(self, src: Path, dst: Path) -> Path:
-        self.wav_destinations.append(dst)
-        return dst
+    def _forbidden_to_wav(self, src: Path, dst: Path) -> Path:
+        raise AssertionError("the engine must not convert the recording: the worker hands it decoded audio")
+
+    def _diarize_wav(self, pipeline: object, path: Path, *args: Any, **kwargs: Any) -> diarize.Diarization:
+        self.diarized_wavs.append(path)
+        return diarize.Diarization(list(self.turns), {})
 
     def run(
         self,
@@ -99,9 +102,9 @@ class Harness:
         hints: list[str] | None = None,
         language: str = "en",
     ) -> int:
+        os.chmod(make_wav(self.work_dir / "audio.wav", 12.0), 0o600)
         spec = {
             "request_id": REQUEST_ID,
-            "audio_path": str(self.audio),
             "original_name": ORIGINAL_NAME,
             "language": language,
             "diarize": diarize_speakers,
@@ -294,7 +297,9 @@ def test_engine_uses_cli_defaults_without_fallback(
     assert call["beam_size"] == 5
     assert call["word_timestamps"] is diarize_speakers
     assert call["language"] == "en"
-    assert call["audio"] == str(harness.audio)
+    assert isinstance(call["audio"], np.ndarray)
+    assert call["audio"].dtype == np.float32
+    assert call["audio"].shape == (12 * 16000,)
     assert harness.pipeline_devices == (["cuda"] if diarize_speakers else [])
 
 
@@ -323,10 +328,8 @@ def test_engine_temp_files_stay_in_work_dir(harness: Harness) -> None:
 
     assert harness.run(diarize_speakers=True) == 0
 
-    assert harness.wav_destinations
-    tmp_dir = harness.work_dir / "tmp"
-    assert all(tmp_dir in dst.resolve().parents for dst in harness.wav_destinations)
-    assert tempfile.tempdir == str(tmp_dir)
+    assert harness.diarized_wavs == [harness.work_dir / "audio.wav"]
+    assert tempfile.tempdir == str(harness.work_dir / "tmp")
 
 
 def test_engine_passes_only_applied_hints(harness: Harness) -> None:
@@ -495,7 +498,7 @@ def test_us5_7_silent_audio_completes_with_zero_paragraphs(
     )
     assert harness.transcript == header
     assert harness.pipeline_devices == []
-    assert harness.wav_destinations == []
+    assert harness.diarized_wavs == []
 
 
 def test_us5_8_unexpected_error_hides_internal_text(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import struct
 import time
@@ -14,8 +15,9 @@ from stt.server import contract, deadlines, intake
 from stt.server.layout import Layout
 from stt.server.records import load_job
 
-from .conftest import FakeClock, encode_tone, leftovers_besides_recordings, make_wav, new_id, run_worker
+from .conftest import FakeClock, ReaderSocket, encode_tone, leftovers_besides_recordings, make_wav, new_id, run_worker
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, put_bytes, read_response, transcribe_body
+from .test_decoder_us3 import child_command
 from .test_us2 import assert_group_gone, pid_engine
 
 
@@ -143,8 +145,13 @@ def _submit_wav(layout: Layout, wav: Path, clock: FakeClock) -> str:
     return request_id
 
 
-def test_us5_1_over_three_hours_refused(layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(intake, "probe_duration", lambda path: deadlines.MAX_AUDIO_S + 0.5)
+def measure_as(reader_socket: ReaderSocket, duration_s: float) -> None:
+    """Makes the reader measure every recording as `duration_s` long."""
+    reader_socket.use_supervisor(child_command("--mode", "write-raw", "--payload", json.dumps({"duration_s": duration_s})))
+
+
+def test_us5_1_over_three_hours_refused(layout: Layout, wav: Path, reader_socket: ReaderSocket) -> None:
+    measure_as(reader_socket, deadlines.MAX_AUDIO_S + 0.5)
     request_id = _submit_wav(layout, wav, FakeClock())
 
     response = read_response(layout, request_id)
@@ -159,12 +166,13 @@ def test_us5_1_over_three_hours_refused(layout: Layout, wav: Path, monkeypatch: 
     assert list(layout.queue.iterdir()) == []
 
 
-def test_us5_1_exactly_three_hours_accepted(layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(intake, "probe_duration", lambda path: deadlines.MAX_AUDIO_S)
+def test_us5_1_exactly_three_hours_accepted(layout: Layout, wav: Path, reader_socket: ReaderSocket) -> None:
+    measure_as(reader_socket, deadlines.MAX_AUDIO_S)
     request_id = _submit_wav(layout, wav, FakeClock())
 
     response = read_response(layout, request_id)
     assert response["state"] == "queued"
+    assert load_job(layout, request_id).duration_s == deadlines.MAX_AUDIO_S
     assert (layout.jobs / request_id / "job.json").exists()
 
 

@@ -202,7 +202,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   (h) 경계 사례 4 — 작업 상한이 읽기 상한보다 먼저 오면 `processing_timeout`, 반대면 `unreadable_audio`(시간 값 주입). (i) 경계 사례 5 — WAV 를
   쓰는 중 저장 오류(쓰기 함수에 `OSError` 주입) → `unreadable_audio`, 남은 파일 0. verify RED: 지금 경로는 읽기 단위를 쓰지 않는다.
   closes US3-1~9, 경계 사례 4·5, SC-004, SC-005(pytest)
-- [ ] T021 [P] [US4] `tests/server/test_decoder_us4.py`(새): (a) US4-1 — `src/stt/server/schemas/*.json` 이 `specs/001-server-transcription/contracts/`
+- [X] T021 [P] [US4] `tests/server/test_decoder_us4.py`(새): (a) US4-1 — `src/stt/server/schemas/*.json` 이 `specs/001-server-transcription/contracts/`
   와 바이트까지 같다(기존 `tests/server/test_contract.py` 가 이미 보면 그 시험을 가리키는 것으로 갈음하고 새로 쓰지 않는다). (b) US4-2 — 한 녹음에
   1차·자동 2차·재전사 3번, 작업 5개가 모두 `done` 이고 읽기 연결이 5개다(경계 사례 6: 작업마다 새로 해독). (c) US4-3 — 그 뒤 「다 지우기」 →
   `leftovers()` 가 0. (d) US4-4 — 멈춰 있는 읽기 대역을 붙잡아 둔 채 「다 지우기」 → 워커가 `stopped` 로 연결을 닫고, 대역 프로세스가 끝나며,
@@ -210,7 +210,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   (g) SC-008 — 정상·실패로 끝난 작업 뒤에도 `audio.wav` 가 0개. US4-7 은 기존 명령줄 시험(`tests/test_cli*.py`·`tests/test_transcribe.py`·
   `tests/test_diarize.py`)이 바뀌지 않고 통과하는 것으로 본다. verify RED: 읽기 연결 수 0, 대역이 띄워지지 않음.
   closes US4-1~6, 경계 사례 6, SC-006, SC-008(pytest)
-- [ ] T022 [US2] 기존 시험의 단언을 새 내부 경계로 고친다(research R11, 파일마다 까닭을 커밋 메시지에): `tests/server/test_engine.py:104`·
+- [X] T022 [US2] 기존 시험의 단언을 새 내부 경계로 고친다(research R11, 파일마다 까닭을 커밋 메시지에): `tests/server/test_engine.py:104`·
   `tests/server/test_us1.py:201` 은 spec 의 `audio_path` 대신 `audio.wav`, `tests/server/test_us3.py:80`·`:103` 은 2차가 1차의 녹음을 읽는지를 읽기
   연결이 받은 기술자의 inode 로, `tests/server/test_us5.py:147`·`:163` 은 길이를 주입하는 자리를 흉내 소켓의 대역으로. `tests/server/test_intake.py`
   의 길이 재기 시험은 T013(길이·형식)과 T020(b)(사본 없음)로 옮긴 뒤 지운다. `tests/server/conftest.py` 도우미의 `ReaderConfig` 연결은 이 과제에서

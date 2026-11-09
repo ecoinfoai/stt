@@ -1,4 +1,4 @@
-"""Intake acceptance tests: records, queue markers, responses, ordering, logs and PyAV probing."""
+"""Intake acceptance tests: records, queue markers, responses, ordering and logs."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from stt.server.deadlines import purge_time
 from stt.server.layout import Layout
 from stt.server.records import load_audio, load_job, load_jobs
 
-from .conftest import FakeClock, encode_tone, make_wav, new_id
+from .conftest import FakeClock, make_wav, new_id
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, read_response, transcribe_body
 
 
@@ -155,90 +155,3 @@ def test_edge_9_os_error_drops_only_that_request_without_an_answer(
     assert read_response(layout, good_id)["state"] == "queued"
     assert inbox_names(layout) == []
     assert capfd.readouterr().out.splitlines() == [f"{broken_id} intake error EMFILE", f"{good_id} queued"]
-
-
-def test_probe_failure_leaves_no_audio_copy_and_no_record(
-    layout: Layout, wav: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    request_id = submit(layout, wav)
-
-    def broken(path: Path) -> float:
-        raise RuntimeError("probe broke")
-
-    monkeypatch.setattr(intake, "probe_duration", broken)
-
-    assert intake.run_once(layout, FakeClock().now) == 1
-
-    assert list(layout.audio.iterdir()) == []
-    assert not (layout.jobs / request_id).exists()
-    assert inbox_names(layout) == []
-
-
-LISTED_FORMATS = [
-    ("m4a", "ipod", "aac", 16000),
-    ("mp3", "mp3", "libmp3lame", 16000),
-    ("flac", "flac", "flac", 16000),
-    ("ogg", "ogg", "libopus", 48000),
-    ("opus", "opus", "libopus", 48000),
-    ("aac", "adts", "aac", 16000),
-    ("wma", "asf", "wmav2", 16000),
-]
-
-
-@pytest.mark.parametrize(("extension", "muxer", "codec", "rate"), LISTED_FORMATS, ids=[case[0] for case in LISTED_FORMATS])
-def test_us5_10_formats_of_the_schema_extensions_are_measured(
-    tmp_path: Path, extension: str, muxer: str, codec: str, rate: int
-) -> None:
-    recording = encode_tone(tmp_path / f"tone.{extension}", muxer, codec, rate)
-    assert intake.probe_duration(recording) == pytest.approx(2.0, abs=0.2)
-
-
-@pytest.mark.parametrize(
-    ("extension", "muxer", "codec", "rate"),
-    [("aiff", "aiff", "pcm_s16be", 16000), ("au", "au", "pcm_s16be", 16000), ("webm", "webm", "libopus", 48000)],
-    ids=["aiff", "au", "webm"],
-)
-def test_us5_10_formats_outside_the_list_are_unreadable(
-    tmp_path: Path, extension: str, muxer: str, codec: str, rate: int
-) -> None:
-    recording = encode_tone(tmp_path / f"tone.{extension}", muxer, codec, rate)
-    with pytest.raises(intake.UnreadableAudioError):
-        intake.probe_duration(recording)
-
-
-def test_us5_10_format_outside_the_list_is_refused_even_with_a_listed_extension(tmp_path: Path) -> None:
-    recording = encode_tone(tmp_path / "tone.m4a", "aiff", "pcm_s16be")
-    with pytest.raises(intake.UnreadableAudioError):
-        intake.probe_duration(recording)
-
-
-def test_probe_duration_reads_container_duration(wav: Path) -> None:
-    assert intake.probe_duration(wav) == pytest.approx(2.0, abs=0.01)
-
-
-def test_probe_duration_sums_packet_durations_without_container_duration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import av
-
-    source = make_wav(tmp_path / "no_duration.wav", 3.0)
-    real_open = av.open
-
-    class NoDuration:
-        def __init__(self, container: object) -> None:
-            self._container = container
-
-        duration = None
-
-        def __getattr__(self, name: str) -> object:
-            return getattr(self._container, name)
-
-        def __enter__(self) -> "NoDuration":
-            return self
-
-        def __exit__(self, *exc: object) -> None:
-            self._container.close()
-
-    monkeypatch.setattr(av, "open", lambda *a, **k: NoDuration(real_open(*a, **k)))
-
-    assert intake.probe_duration(source) == pytest.approx(3.0, abs=0.05)

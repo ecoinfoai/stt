@@ -188,6 +188,8 @@ def test_running_job_has_spec_in_private_work_folder_and_no_marker(
     wait_for_file(work_dir / "out" / "partial.txt")
     spec = json.loads((work_dir / "spec.json").read_text(encoding="utf-8"))
     mode = stat.S_IMODE(work_dir.stat().st_mode)
+    decoded = work_dir / "audio.wav"
+    decoded_mode = stat.S_IMODE(decoded.stat().st_mode) if decoded.is_file() else None
     markers = [path.name for path in layout.queue.iterdir()]
     thread.join()
 
@@ -196,9 +198,9 @@ def test_running_job_has_spec_in_private_work_folder_and_no_marker(
     assert contract.validate_response(running) is None
     assert markers == []
     assert mode == 0o700
+    assert decoded_mode == 0o600
     assert spec == {
         "request_id": request_id,
-        "audio_path": str(layout.audio / request_id / "audio.wav"),
         "original_name": f"{request_id}.audio.wav",
         "language": "en",
         "diarize": False,

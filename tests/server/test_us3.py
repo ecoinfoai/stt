@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,8 +14,9 @@ from stt.server import contract, intake
 from stt.server.layout import Layout
 from stt.server.records import load_audio, load_job
 
-from .conftest import FAKE_ENGINE, FakeClock, leftovers, make_wav, new_id, run_sweep, run_worker, write_delete_request
+from .conftest import FAKE_ENGINE, FakeClock, ReaderSocket, leftovers, make_wav, new_id, run_sweep, run_worker, write_delete_request
 from .inbox_helpers import make_layout, put_attachment, put_body, read_response, transcribe_body
+from .test_decoder_us2 import decode_connections, recording_identity
 
 SOURCE_UNAVAILABLE = "The source recording is not available."
 TIME_KEYS = ("finished_at", "updated_at", "expires_at")
@@ -77,7 +79,7 @@ def spec_copying_engine(tmp_path: Path, destination: Path) -> list[str]:
         "import fake_engine\n"
         "work = Path(sys.argv[-1])\n"
         "spec = json.loads((work / 'spec.json').read_text())\n"
-        "spec['audio_file_existed'] = Path(spec['audio_path']).is_file()\n"
+        "spec['decoded_audio_existed'] = (work / 'audio.wav').is_file()\n"
         f"Path({str(destination)!r}).write_text(json.dumps(spec))\n"
         "sys.exit(fake_engine.main(['--mode', 'done', str(work)]))\n",
         encoding="utf-8",
@@ -85,7 +87,9 @@ def spec_copying_engine(tmp_path: Path, destination: Path) -> list[str]:
     return [sys.executable, str(script)]
 
 
-def test_us3_1_second_pass_reuses_first_audio(layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path) -> None:
+def test_us3_1_second_pass_reuses_first_audio(
+    layout: Layout, wav: Path, clock: FakeClock, tmp_path: Path, reader_socket: ReaderSocket
+) -> None:
     first = submit(layout, wav, clock)
     run_worker(layout, clock)
     assert (layout.outbox / first / "transcript.txt").read_bytes()
@@ -100,9 +104,11 @@ def test_us3_1_second_pass_reuses_first_audio(layout: Layout, wav: Path, clock: 
     assert (layout.outbox / second / "transcript.txt").is_file()
     spec = json.loads(seen.read_text(encoding="utf-8"))
     assert spec["request_id"] == second
-    assert spec["audio_path"] == str(layout.audio / first / "audio.wav")
     assert spec["original_name"] == f"{first}.audio.wav"
-    assert spec["audio_file_existed"] is True
+    assert spec["decoded_audio_existed"] is True
+    decodes = decode_connections(reader_socket)
+    assert len(decodes) == 2
+    assert [fd for fd in decodes[1] if fd.kind == stat.S_IFREG] == [recording_identity(layout, first)]
     assert spec["diarize"] is True
     assert not (layout.audio / second).exists()
     job = load_job(layout, second)
