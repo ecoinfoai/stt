@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -471,3 +472,49 @@ def test_the_reader_socket_option_is_documented_in_english(
 
 def test_sweep_does_not_take_the_reader_socket(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["server", "sweep", "--reader-socket", "/x"]) == 2
+
+
+# ------------------------------------------- stt server read, through the real command
+
+
+def _run_read_command(stdin: Any, *flags: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        [sys.executable, *flags, "-m", "stt", "server", "read"],
+        stdin=stdin, capture_output=True, timeout=20, check=False,
+    )
+
+
+def _imported_top_level_modules(importtime_output: bytes) -> set[str]:
+    names = set()
+    for line in importtime_output.decode("utf-8", "replace").splitlines():
+        if line.startswith("import time:") and "|" in line:
+            names.add(line.rsplit("|", 1)[1].strip().split(".")[0])
+    return names
+
+
+def test_the_read_command_ends_with_code_2_and_no_output_when_stdin_is_not_a_connected_socket() -> None:
+    run = _run_read_command(subprocess.DEVNULL)
+
+    assert run.returncode == 2
+    assert run.stdout == b""
+    assert run.stderr == b""
+
+
+def test_the_read_command_imports_nothing_outside_the_standard_library() -> None:
+    baseline = subprocess.run(
+        [sys.executable, "-X", "importtime", "-c", "pass"], capture_output=True, timeout=20, check=True
+    )
+    server_end, client = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    with server_end, client:
+        client.close()
+        run = _run_read_command(server_end, "-X", "importtime")
+
+    assert run.returncode == 1
+    foreign = (
+        _imported_top_level_modules(run.stderr)
+        - _imported_top_level_modules(baseline.stderr)
+        - sys.stdlib_module_names
+        - {"stt"}
+    )
+    assert foreign == set()
+    assert "stt.server.reader" in run.stderr.decode("utf-8", "replace")
