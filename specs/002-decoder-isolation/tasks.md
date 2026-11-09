@@ -230,7 +230,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   `spec.json` 에서 `audio_path` 를 뺀다. 작업 상한(`deadlines.processing_limit`)을 읽기 단계 시작부터 재고 GPU 단계에 남은 시간을 준다.
   `run()` 이 `ReaderConfig` 를 받는다. 같은 커밋에서 `tests/server/conftest.py` 의 `run_worker`·`run_worker_once` 가 흉내 소켓의 `ReaderConfig` 를
   저절로 넘기게 한다 — 다른 호출부는 고치지 않는다(R14). RED → GREEN: turns T019 의 워커 쪽, T021(b)~(g), T022 의 워커 쪽 GREEN.
-  closes US2-5, US2-6, US4-2~6
+  closes US2-5, US2-6, US4-2~6. 메모: US4-4~6 시험은 받기가 길이 재기 연결을 띄우는 T027 에서 GREEN 이 된다(시험이 연결 2개를 기대한다).
 - [ ] T026 [US3] `src/stt/server/worker.py`: data-model §5 의 처리 열 — `unavailable` → `engine_error`(고정 문장), `failed` → `unreadable_audio`,
   `timeout` → `processing_timeout`, `stopped` → 로그만. 엔진에서 받는 이유에서 `unreadable_audio` 를 빼고, 엔진이 그 이유를 내면 판정 없음으로
   보아 `engine_error`. RED → GREEN: turns T020(c)~(i) GREEN. closes US3-3~9, 경계 사례 4·5

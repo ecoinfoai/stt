@@ -274,17 +274,25 @@ def _run_job(
         work_dir, recording = _prepare(layout, job)
     _log(job.request_id, "running")
     try:
-        began = time.monotonic()
         limit_s = processing_limit(job.duration_s)
-        outcome = _read(layout, job.request_id, recording, work_dir, reader, limit_s)
+        began = time.monotonic()
+        try:
+            outcome = _read(layout, job.request_id, recording, work_dir, reader, limit_s)
+        except OSError:
+            # A delete or the daily purge removes the recording and the work folder while the read is in flight.
+            if _is_running(layout, job.request_id):
+                raise
+            outcome = "stopped"
         if outcome == "stopped":
             _log(job.request_id, "stopped")
             return
         if outcome != "ok":
             raise NotImplementedError(f"reader outcome {outcome} is not mapped to a failure yet")
-        ending = _run_engine(
-            layout, job.request_id, engine_cmd, work_dir, models_dir, poll_s, limit_s - (time.monotonic() - began)
-        )
+        remaining_s = limit_s - (time.monotonic() - began)
+        if remaining_s <= 0:
+            _settle(layout, job, work_dir, _TIMEOUT, now)
+            return
+        ending = _run_engine(layout, job.request_id, engine_cmd, work_dir, models_dir, poll_s, remaining_s)
         if ending == "ended":
             _settle(layout, job, work_dir, _verdict(work_dir), now)
         elif ending == "timeout":

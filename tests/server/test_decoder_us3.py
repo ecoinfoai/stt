@@ -18,13 +18,15 @@ import errno
 import os
 import re
 import sys
+import time
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, NamedTuple
 
 import pytest
 
-from stt.server import intake, reader, reader_client
+from stt.server import intake, reader, reader_client, worker
 from stt.server.layout import Layout
 
 from .conftest import (
@@ -385,6 +387,45 @@ def test_decoder_edge_4_the_reader_limit_coming_first_ends_the_job_as_unreadable
 
     assert_failed(layout, request_id, UNREADABLE)
     assert_no_result(layout, request_id)
+
+
+def test_decoder_edge_4_a_read_that_uses_up_the_job_limit_ends_the_job_without_starting_the_engine(
+    layout: Layout,
+    tone: Path,
+    clock: FakeClock,
+    reader_socket: ReaderSocket,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_id = submit(layout, tone, clock)
+    engine_launches: list[object] = []
+    lapse = [0.0]
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(
+        worker,
+        "time",
+        SimpleNamespace(monotonic=lambda: real_monotonic() + lapse[0], sleep=time.sleep),
+    )
+    real_read = worker._read
+
+    def read_then_run_out_of_time(*args: Any, **kwargs: Any) -> Any:
+        outcome = real_read(*args, **kwargs)
+        lapse[0] += 100_000.0
+        return outcome
+
+    monkeypatch.setattr(worker, "_read", read_then_run_out_of_time)
+    real_run_engine = worker._run_engine
+
+    def counting_run_engine(*args: Any, **kwargs: Any) -> Any:
+        engine_launches.append(args)
+        return real_run_engine(*args, **kwargs)
+
+    monkeypatch.setattr(worker, "_run_engine", counting_run_engine)
+
+    run_worker(layout, clock)
+
+    assert_failed(layout, request_id, TIMEOUT)
+    assert_no_result(layout, request_id)
+    assert engine_launches == []
 
 
 def failing_wave_open(real_open: Callable[..., Any]) -> Callable[..., Any]:

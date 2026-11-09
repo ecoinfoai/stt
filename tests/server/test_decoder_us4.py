@@ -24,7 +24,7 @@ from typing import Iterator, NamedTuple
 
 import pytest
 
-from stt.server import intake
+from stt.server import intake, worker
 from stt.server.layout import Layout
 
 from .conftest import (
@@ -56,6 +56,7 @@ from .test_decoder_us2 import (
 AFTER_PURGE = "2026-03-02T14:58:30Z"
 INTERRUPTED_DETAIL = "The worker stopped before the job finished."
 HELD_MAX_WAIT_S = 60.0
+LONG_POLL_S = 30.0
 
 WORKER_SCRIPT = (
     "import sys\n"
@@ -227,6 +228,74 @@ def test_decoder_us4_5_the_daily_purge_while_a_decode_is_held_stops_the_reader_a
     failure = read_response(layout, held.request_id)["failure"]
     assert failure["reason"] == "audio_deleted"
     assert f"{held.request_id} stopped" in capfd.readouterr().out.splitlines()
+    assert leftovers(layout.root) == []
+
+
+def test_decoder_us4_4_a_delete_that_lands_before_the_first_job_check_ends_the_job_as_stopped(
+    layout: Layout,
+    tone: Path,
+    clock: FakeClock,
+    reader_socket: ReaderSocket,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    reader_socket.use_limits(poll_s=LONG_POLL_S)
+    with decode_held_open(layout, tone, clock, reader_socket, tmp_path) as held:
+        write_delete_request(layout.inbox, request_id=new_id(), requested_by="professor-a", target=held.request_id)
+        intake.run_once(layout, clock.now)
+        held.release.touch()
+        held.worker.join(timeout=WAIT_S)
+        assert not held.worker.is_alive()
+
+    assert read_response(layout, held.request_id)["state"] == "deleted"
+    assert f"{held.request_id} stopped" in capfd.readouterr().out.splitlines()
+    assert leftovers(layout.root) == []
+
+
+def test_decoder_us4_5_a_purge_that_lands_before_the_first_job_check_ends_the_job_as_stopped(
+    layout: Layout,
+    tone: Path,
+    clock: FakeClock,
+    reader_socket: ReaderSocket,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    reader_socket.use_limits(poll_s=LONG_POLL_S)
+    with decode_held_open(layout, tone, clock, reader_socket, tmp_path) as held:
+        clock.set(AFTER_PURGE)
+        run_sweep(layout, clock)
+        held.release.touch()
+        held.worker.join(timeout=WAIT_S)
+        assert not held.worker.is_alive()
+
+    lines = capfd.readouterr().out.splitlines()
+    assert f"{held.request_id} failed audio_deleted" in lines
+    assert f"{held.request_id} stopped" in lines
+    assert leftovers(layout.root) == []
+
+
+def test_decoder_us4_4_a_delete_between_starting_the_job_and_opening_the_recording_ends_it_as_stopped(
+    layout: Layout,
+    tone: Path,
+    clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    request_id = submit(layout, tone, clock)
+    real_log = worker._log
+
+    def delete_when_running(logged_id: str, state: str) -> None:
+        real_log(logged_id, state)
+        if state == "running":
+            write_delete_request(layout.inbox, request_id=new_id(), requested_by="professor-a", target=request_id)
+            intake.run_once(layout, clock.now)
+
+    monkeypatch.setattr(worker, "_log", delete_when_running)
+
+    assert run_worker_once(layout, clock) is True
+
+    assert read_response(layout, request_id)["state"] == "deleted"
+    assert f"{request_id} stopped" in capfd.readouterr().out.splitlines()
     assert leftovers(layout.root) == []
 
 
