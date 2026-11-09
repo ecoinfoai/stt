@@ -6,6 +6,7 @@ only through its English markers, column names and status values.
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 MODULE = ROOT / "nix" / "module.nix"
 DOC = ROOT / "docs" / "server-security.md"
+UV_LOCK = ROOT / "uv.lock"
+FLAKE_LOCK = ROOT / "flake.lock"
 
 REQUIRED_UNITS = ("stt-intake", "stt-worker", "stt-sweep", "stt-models")
 BASE_GROUP = "@system-service"
@@ -244,3 +247,157 @@ def test_collector_reads_quoted_template_names_and_multi_token_filters():
         assert units[name] == {"added": set(), "narrowed": set(), "mdwe": True}, name
     assert units["stt-extra@"]["added"] == {"mount"}
     assert units["stt-extra@"]["mdwe"] is False
+
+
+ROLES = {"decodes-recordings", "cli-only", "decoded-audio-only"}
+POLICY_SOURCES = {"ffmpeg-security", "pyav-releases", "nixpkgs-ffmpeg"}
+ADVISORY_DAYS = 7
+AV_COMPONENT = re.compile(r"av \(Python (3\.\d+)\)")
+SINCE_CELL = re.compile(r"(\d{4}-\d{2}-\d{2}) \(([0-9a-f]{7,40})\)")
+NIXPKGS_COMPONENT = "nixpkgs ffmpeg"
+
+
+def _iso_date(cell: str) -> date:
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", cell), cell
+    return date.fromisoformat(cell)
+
+
+def _since_date(cell: str) -> date:
+    found = SINCE_CELL.fullmatch(cell)
+    assert found, cell
+    return date.fromisoformat(found.group(1))
+
+
+def _locked_av_versions(lock_text: str) -> dict[str, str]:
+    """Maps "3.10" / "3.12" to the av version locked for that interpreter.
+
+    The two `av` packages are told apart by their resolution markers, not by order: only the
+    older entry is restricted to Python below 3.11.
+    """
+    versions: dict[str, str] = {}
+    for block in lock_text.split("[[package]]")[1:]:
+        if not re.search(r'(?m)^name = "av"$', block):
+            continue
+        version = re.search(r'(?m)^version = "([^"]+)"$', block)
+        assert version, "uv.lock av entry has no version"
+        interpreter = "3.10" if "python_full_version < '3.11'" in block else "3.12"
+        assert interpreter not in versions, f"two av entries for Python {interpreter}"
+        versions[interpreter] = version.group(1)
+    return versions
+
+
+def _locked_nixpkgs_rev(lock_text: str) -> str:
+    found = re.search(r'"nixpkgs": \{\s*"locked": \{[^{}]*?"rev": "([0-9a-f]{40})"', lock_text)
+    assert found, "flake.lock has no locked nixpkgs revision"
+    return found.group(1)
+
+
+def _missing_months(dates: list[date]) -> list[str]:
+    """Returns the YYYY-MM months absent between the earliest and the latest date."""
+    present = {(day.year, day.month) for day in dates}
+    year, month = min(present)
+    last = max(present)
+    missing = []
+    while (year, month) < last:
+        month += 1
+        if month == 13:
+            year, month = year + 1, 1
+        if (year, month) not in present:
+            missing.append(f"{year:04d}-{month:02d}")
+    return missing
+
+
+def _advisory_gaps(rows: list[dict[str, str]]) -> list[str]:
+    """Returns the advisories updated later than 7 days after publication without a reason."""
+    gaps = []
+    for row in rows:
+        if row["reason"] not in ("", "-"):
+            continue
+        deadline = _iso_date(row["published"]) + timedelta(days=ADVISORY_DAYS)
+        if row["updated"] in ("", "-") or _iso_date(row["updated"]) > deadline:
+            gaps.append(row["advisory"])
+    return gaps
+
+
+def _policy_marker() -> dict[str, str]:
+    found = re.search(r"(?m)^<!-- stt:policy ([^>]*?) -->$", DOC.read_text())
+    assert found, "docs/server-security.md has no stt:policy marker"
+    pairs = [item.partition("=") for item in found.group(1).split()]
+    return {key: value for key, _, value in pairs}
+
+
+@pytest.fixture(scope="module")
+def version_rows() -> list[dict[str, str]]:
+    rows = _table("stt:versions")
+    assert rows, "stt:versions table has no rows"
+    return rows
+
+
+def test_av_versions_match_uv_lock_for_both_interpreters(version_rows):
+    locked = _locked_av_versions(UV_LOCK.read_text())
+    assert set(locked) == {"3.10", "3.12"}, locked
+    documented = {
+        found.group(1): row["version"]
+        for row in version_rows
+        if (found := AV_COMPONENT.fullmatch(row["component"]))
+    }
+    assert documented == locked
+
+
+def test_nixpkgs_row_matches_the_flake_lock_commit(version_rows):
+    rows = [row for row in version_rows if row["component"] == NIXPKGS_COMPONENT]
+    assert len(rows) == 1, rows
+    assert rows[0]["version"] == _locked_nixpkgs_rev(FLAKE_LOCK.read_text())
+    assert rows[0]["pinned_in"] == "flake.lock"
+
+
+def test_every_version_row_is_filled_and_dated_in_iso_form(version_rows):
+    for row in version_rows:
+        name = row["component"]
+        for column in ("version", "pinned_in", "since", "last_updated"):
+            assert row[column] not in ("", "-"), (name, column)
+        assert row["role"] in ROLES, (name, row["role"])
+        assert row["pinned_in"] in ("uv.lock", "flake.lock"), name
+        assert _since_date(row["since"]) <= _iso_date(row["last_updated"]), name
+
+
+def test_policy_marker_names_the_owner_cadence_deadline_and_sources():
+    policy = _policy_marker()
+    assert policy.get("owner") == "operator"
+    assert policy.get("cadence") == "monthly"
+    assert policy.get("advisory_days") == str(ADVISORY_DAYS)
+    assert set(policy.get("sources", "").split(",")) == POLICY_SOURCES
+
+
+def test_monthly_checks_have_a_row_and_no_missing_month():
+    rows = _table("stt:monthly-checks")
+    assert rows, "stt:monthly-checks table has no rows"
+    for row in rows:
+        assert row["sources"] not in ("", "-"), row["date"]
+        assert row["result"] not in ("", "-"), row["date"]
+    assert _missing_months([_iso_date(row["date"]) for row in rows]) == []
+
+
+def test_every_advisory_was_applied_within_seven_days_or_has_a_reason():
+    assert _advisory_gaps(_table("stt:advisories")) == []
+
+
+def test_recording_decoders_were_compared_on_or_after_their_last_update(version_rows):
+    decoders = [row for row in version_rows if row["role"] == "decodes-recordings"]
+    assert decoders, "no component with role decodes-recordings"
+    for row in decoders:
+        assert _iso_date(row["comparison"]) >= _iso_date(row["last_updated"]), row["component"]
+
+
+def test_missing_months_finds_gaps_across_a_year_boundary():
+    days = [date(2026, 11, 9), date(2027, 1, 3)]
+    assert _missing_months(days) == ["2026-12"]
+    assert _missing_months([date(2026, 11, 9), date(2026, 11, 30)]) == []
+
+
+def test_advisory_gaps_apply_the_seven_day_rule_and_the_reason_escape():
+    base = {"advisory": "A", "component": "c", "published": "2026-04-13"}
+    assert _advisory_gaps([{**base, "updated": "2026-04-20", "reason": "-"}]) == []
+    assert _advisory_gaps([{**base, "updated": "2026-04-21", "reason": "-"}]) == ["A"]
+    assert _advisory_gaps([{**base, "updated": "-", "reason": "-"}]) == ["A"]
+    assert _advisory_gaps([{**base, "updated": "-", "reason": "text"}]) == []

@@ -304,7 +304,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ### Tests for User Story 5 (write first) ⚠️
 
-- [ ] T036 [US5] `tests/test_server_security_doc.py` 에 더한다(영어 표식·칸 이름으로만 읽음): (a) `stt:versions` 의 `av` 줄(Python 3.12·3.10 둘)의
+- [X] T036 [US5] `tests/test_server_security_doc.py` 에 더한다(영어 표식·칸 이름으로만 읽음): (a) `stt:versions` 의 `av` 줄(Python 3.12·3.10 둘)의
   `version` 이 `uv.lock` 과 같다. (b) nixpkgs 줄의 `version`(고정 커밋)이 `flake.lock` 과 같다. (c) 줄마다 `version`·`pinned_in`·`since`·
   `last_updated` 가 차 있고 날짜는 ISO 꼴이다. (d) `stt:policy` 표식에 `owner=operator`·`cadence=monthly`·`advisory_days=7`·볼 곳 셋
   (`ffmpeg-security`·`pyav-releases`·`nixpkgs-ffmpeg`)이 있다. (e) `stt:monthly-checks` 에 줄이 하나 이상이고, 첫 달과 마지막 달 사이에 빠진 달이
@@ -315,7 +315,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ### Implementation for User Story 5 (turn T036 GREEN)
 
-- [ ] T037 [US5] `docs/server-security.md` §4: 구성 요소 표(data-model §8 의 칸, 서버 경로에서 녹음을 해석하는 것은 PyAV 휠의 FFmpeg 하나), 정책
+- [X] T037 [US5] `docs/server-security.md` §4: 구성 요소 표(data-model §8 의 칸, 서버 경로에서 녹음을 해석하는 것은 PyAV 휠의 FFmpeg 하나), 정책
   (FR-025 그대로 — 매달 확인, 새 판이 있을 때만 올림, 보안 공지 뒤 7일 안에 올리거나 이유를 적음, 휠이 아직 없을 때의 적는 법, 올리는 순서:
   잠금 파일 → 빌드·시험 → 배포 → 기준 녹음 비교 → 표 고치기)과 `stt:policy` 표식, 보안 공지 기록표(첫 확인에서 본 공지가 있으면 그 줄), 매달
   확인 기록표(첫 줄은 이 기능을 쓰는 날의 확인). 들어온 날·마지막 갱신일은 `git log -S` 로 찾은 커밋과 날짜이고, `av` 줄의 `comparison` 은 T009 의
