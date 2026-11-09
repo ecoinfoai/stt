@@ -28,6 +28,7 @@ from stt.server import intake
 from stt.server.layout import Layout
 
 from .conftest import (
+    FAKE_ENGINE,
     FakeClock,
     ReaderSocket,
     encode_tone,
@@ -60,10 +61,12 @@ WORKER_SCRIPT = (
     "import sys\n"
     "from datetime import datetime\n"
     "import stt.server.cli as server_cli\n"
+    "import stt.server.worker as server_worker\n"
     "from stt import cli\n"
     "moment = datetime.fromisoformat(sys.argv[1])\n"
     "server_cli._utc_now = lambda: moment\n"
-    "sys.exit(cli.main(sys.argv[2:]))\n"
+    "server_worker.DEFAULT_ENGINE_CMD = (sys.executable, sys.argv[2], '--mode', 'done')\n"
+    "sys.exit(cli.main(sys.argv[3:]))\n"
 )
 
 
@@ -238,7 +241,7 @@ def test_decoder_us4_6_a_worker_killed_during_a_decode_is_cleared_as_interrupted
     gpu_lock.touch()
     worker = subprocess.Popen(
         [
-            sys.executable, "-c", WORKER_SCRIPT, clock.now().isoformat(),
+            sys.executable, "-c", WORKER_SCRIPT, clock.now().isoformat(), str(FAKE_ENGINE),
             "server", "work",
             "--root", str(layout.root),
             "--models", str(models),

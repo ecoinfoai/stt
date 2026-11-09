@@ -1,8 +1,11 @@
-"""Worker stage: runs queued jobs one at a time through the engine subprocess.
+"""Worker stage: runs queued jobs one at a time, reading the recording through the reader, then through the engine.
 
 The caller holds ``worker.lock``. ``state.lock`` is taken here, briefly, to pick
 and start a job and to publish and finish it; it is never held while the engine runs.
 A job stays ``queued`` until the worker holds the GPU lock it shares with the command line.
+
+A job has two inner stages under one time limit that starts with the first: the read stage decodes the
+recording through the reader unit into ``work/<id>/audio.wav``, and the GPU stage runs the engine on that file.
 """
 
 from __future__ import annotations
@@ -14,13 +17,15 @@ import signal
 import subprocess
 import sys
 import time
+import wave
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Literal, Sequence
 
 from stt import gpu_lock as gpu_lock_module
-from stt.server import deadlines, lifecycle
+from stt.server import deadlines, lifecycle, reader_client
 from stt.server.layout import Layout, describe_error, hold
+from stt.server.reader_client import ReaderConfig
 from stt.server.records import Failure, Job, load_audio, load_job, load_jobs, queued_in_order
 
 DEFAULT_ENGINE_CMD: tuple[str, ...] = (sys.executable, "-m", "stt.server.engine")
@@ -29,6 +34,10 @@ _WORK_FOLDER_MODE = 0o700
 # The setgid bit comes from outbox at mkdir: RestrictSUIDSGID refuses a chmod that asks for it.
 _RESULT_FOLDER_MODE = 0o750
 _RESULT_FILE_MODE = 0o640
+_AUDIO_FILE_MODE = 0o600
+_AUDIO_FILE = "audio.wav"
+_SAMPLE_RATE_HZ = 16000
+_SAMPLE_WIDTH_BYTES = 2
 _RESULT_FILES = ("transcript.txt", "result.json")
 _ENGINE_REASONS = frozenset(
     {"unreadable_audio", "gpu_out_of_memory", "gpu_unavailable", "models_unavailable", "engine_error"}
@@ -43,13 +52,16 @@ def _log(request_id: str, state: str) -> None:
     print(f"{request_id} {state}", flush=True)
 
 
-def _prepare(layout: Layout, job: Job) -> Path:
-    """Creates ``work/<request_id>/`` with the job's ``spec.json`` and returns it."""
+def _prepare(layout: Layout, job: Job) -> tuple[Path, Path]:
+    """Creates ``work/<request_id>/`` with the job's ``spec.json``.
+
+    Returns:
+        The work folder and the path of the job's recording.
+    """
     audio = load_audio(layout, job.audio_id)
     recording = next((layout.audio / job.audio_id).glob("audio.*"))
     spec = {
         "request_id": job.request_id,
-        "audio_path": str(recording),
         "original_name": audio.original_name,
         "language": job.language,
         "diarize": job.diarize,
@@ -60,7 +72,33 @@ def _prepare(layout: Layout, job: Job) -> Path:
     work_dir.mkdir(mode=_WORK_FOLDER_MODE)
     os.chmod(work_dir, _WORK_FOLDER_MODE)
     (work_dir / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
-    return work_dir
+    return work_dir, recording
+
+
+def _write_audio(work_dir: Path, samples: bytes | bytearray) -> None:
+    """Writes 16 kHz mono s16le `samples` to ``audio.wav`` in `work_dir`, readable by the owner only."""
+    path = work_dir / _AUDIO_FILE
+    os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _AUDIO_FILE_MODE))
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(_SAMPLE_WIDTH_BYTES)
+        handle.setframerate(_SAMPLE_RATE_HZ)
+        handle.writeframes(samples)
+
+
+def _read(
+    layout: Layout, request_id: str, recording: Path, work_dir: Path, reader: ReaderConfig, limit_s: float
+) -> reader_client.Outcome:
+    """Decodes `recording` through the reader and writes the result to ``audio.wav`` when the read is ``ok``.
+
+    The decoded samples are released on return, before the GPU stage starts.
+    """
+    result = reader_client.decode(
+        reader, recording, job_running=lambda: _is_running(layout, request_id), job_limit_s=limit_s
+    )
+    if result.outcome == "ok":
+        _write_audio(work_dir, result.audio)
+    return result.outcome
 
 
 def _is_running(layout: Layout, request_id: str) -> bool:
@@ -226,17 +264,26 @@ def _run_job(
     poll_s: float,
     models_dir: Path,
     processing_limit: Callable[[float], float],
+    reader: ReaderConfig,
 ) -> None:
     """Starts `request_id` if it is still waiting and runs it; the caller holds the GPU lock."""
     with hold(layout.state_lock):
         if not _is_waiting(layout, request_id, now()):
             return
         job = lifecycle.start(layout, load_job(layout, request_id), now())
-        work_dir = _prepare(layout, job)
+        work_dir, recording = _prepare(layout, job)
     _log(job.request_id, "running")
     try:
+        began = time.monotonic()
+        limit_s = processing_limit(job.duration_s)
+        outcome = _read(layout, job.request_id, recording, work_dir, reader, limit_s)
+        if outcome == "stopped":
+            _log(job.request_id, "stopped")
+            return
+        if outcome != "ok":
+            raise NotImplementedError(f"reader outcome {outcome} is not mapped to a failure yet")
         ending = _run_engine(
-            layout, job.request_id, engine_cmd, work_dir, models_dir, poll_s, processing_limit(job.duration_s)
+            layout, job.request_id, engine_cmd, work_dir, models_dir, poll_s, limit_s - (time.monotonic() - began)
         )
         if ending == "ended":
             _settle(layout, job, work_dir, _verdict(work_dir), now)
@@ -267,6 +314,7 @@ def run_one(
     poll_s: float = 2.0,
     models_dir: Path,
     gpu_lock: Path,
+    reader: ReaderConfig,
     processing_limit: Callable[[float], float] = deadlines.processing_limit,
 ) -> bool:
     """Runs the oldest queued job to its end, once the GPU lock is held.
@@ -282,7 +330,9 @@ def run_one(
             ended or the job was taken away.
         models_dir: Model cache handed to the engine as ``HF_HOME``.
         gpu_lock: Existing lock file shared with the command line.
-        processing_limit: Maps a recording's length in seconds to the seconds the engine may run.
+        reader: The reader unit's socket and the waiting times.
+        processing_limit: Maps a recording's length in seconds to the seconds a job may take, from the start
+            of its read stage to the end of the engine.
 
     Returns:
         True if a job was picked, False if the queue was empty.
@@ -298,7 +348,7 @@ def run_one(
         held = gpu_lock_module.try_acquire(gpu_lock)
         if held is not None:
             with held:
-                _run_job(layout, job.request_id, engine_cmd, now, poll_s, models_dir, processing_limit)
+                _run_job(layout, job.request_id, engine_cmd, now, poll_s, models_dir, processing_limit, reader)
             return True
         time.sleep(poll_s)
         with hold(layout.state_lock):
@@ -314,6 +364,7 @@ def run(
     poll_s: float = 2.0,
     models_dir: Path,
     gpu_lock: Path,
+    reader: ReaderConfig,
     processing_limit: Callable[[float], float] = deadlines.processing_limit,
 ) -> int:
     """Runs queued jobs one at a time until the queue is empty.
@@ -329,7 +380,9 @@ def run(
             ended or the job was taken away.
         models_dir: Model cache handed to the engine as ``HF_HOME``.
         gpu_lock: Existing lock file shared with the command line.
-        processing_limit: Maps a recording's length in seconds to the seconds the engine may run.
+        reader: The reader unit's socket and the waiting times.
+        processing_limit: Maps a recording's length in seconds to the seconds a job may take, from the start
+            of its read stage to the end of the engine.
 
     Returns:
         0 once the queue is empty.
@@ -347,6 +400,7 @@ def run(
         poll_s=poll_s,
         models_dir=models_dir,
         gpu_lock=gpu_lock,
+        reader=reader,
         processing_limit=processing_limit,
     ):
         time.sleep(poll_s)

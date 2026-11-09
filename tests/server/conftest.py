@@ -293,6 +293,16 @@ def leftovers_besides_recordings(root: Path) -> list[Path]:
     return [path for path in leftovers(root) if audio not in path.parents]
 
 
+_active_reader_socket: ReaderSocket | None = None
+
+
+def _current_reader_config() -> ReaderConfig:
+    """Returns the active ``reader_socket`` fixture's config as it is now, so ``use_missing`` and ``use_limits`` apply."""
+    if _active_reader_socket is None:
+        raise RuntimeError("no reader_socket fixture is active")
+    return _active_reader_socket.config
+
+
 def _engine_cmd(mode: str) -> list[str]:
     return [sys.executable, str(FAKE_ENGINE), "--mode", mode]
 
@@ -309,6 +319,7 @@ def _worker_kwargs(layout: Any, clock: FakeClock, mode: str, kwargs: dict[str, A
         "poll_s": 0.05,
         "models_dir": models_dir,
         "gpu_lock": gpu_lock,
+        "reader": _current_reader_config(),
     }
     options.update(kwargs)
     return options
@@ -316,6 +327,8 @@ def _worker_kwargs(layout: Any, clock: FakeClock, mode: str, kwargs: dict[str, A
 
 def run_worker(layout: Any, clock: FakeClock, mode: str = "done", **kwargs: Any) -> int:
     """Runs ``worker.run`` with the fake engine, holding ``worker.lock`` like the CLI.
+
+    The reader is the active ``reader_socket`` fixture's config, read now; ``reader=`` in `kwargs` overrides it.
 
     Args:
         layout: A ``stt.server.layout.Layout``.
@@ -336,6 +349,8 @@ def run_worker(layout: Any, clock: FakeClock, mode: str = "done", **kwargs: Any)
 
 def run_worker_once(layout: Any, clock: FakeClock, mode: str = "done", **kwargs: Any) -> bool:
     """Runs ``worker.run_one`` with the fake engine, holding ``worker.lock`` like the CLI.
+
+    The reader is the active ``reader_socket`` fixture's config, read now; ``reader=`` in `kwargs` overrides it.
 
     Args:
         layout: A ``stt.server.layout.Layout``.
@@ -734,14 +749,19 @@ class ReaderSocket:
         )
 
 
-@pytest.fixture
-def reader_socket(emulated_reader_socket: Callable[..., EmulatedReaderSocket]) -> ReaderSocket:
+@pytest.fixture(autouse=True)
+def reader_socket(emulated_reader_socket: Callable[..., EmulatedReaderSocket]) -> Iterator[ReaderSocket]:
     """Starts an emulated reader socket whose default spawn command is the real supervisor.
 
-    Not autouse: a test asks for it. Its ``config`` is for the caller under test, and
-    ``use_command``, ``use_fake`` and ``use_supervisor`` swap the spawned program.
+    Autouse: every server test has one, and ``run_worker`` and ``run_worker_once`` hand its ``config``
+    to the worker. A test that wants to inspect or change it asks for it by name. Its ``config`` is for
+    the caller under test, and ``use_command``, ``use_fake`` and ``use_supervisor`` swap the spawned program.
     """
     from stt.server.reader_client import ReaderConfig
 
+    global _active_reader_socket
     emulated = emulated_reader_socket([sys.executable, "-m", "stt", "server", "read"])
-    return ReaderSocket(emulated, ReaderConfig(socket_path=str(emulated.path), poll_s=0.05))
+    socket_under_test = ReaderSocket(emulated, ReaderConfig(socket_path=str(emulated.path), poll_s=0.05))
+    _active_reader_socket = socket_under_test
+    yield socket_under_test
+    _active_reader_socket = None

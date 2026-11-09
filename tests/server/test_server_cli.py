@@ -264,9 +264,16 @@ def test_work_passes_the_engine_models_and_clock_to_the_worker_under_its_lock(
     seen: dict[str, Any] = {}
 
     def fake_run(
-        layout: Layout, engine_cmd: Any, now: Any, *, poll_s: float = 2.0, models_dir: Path, gpu_lock: Path
+        layout: Layout,
+        engine_cmd: Any,
+        now: Any,
+        *,
+        poll_s: float = 2.0,
+        models_dir: Path,
+        gpu_lock: Path,
+        reader: ReaderConfig,
     ) -> int:
-        seen.update(root=layout.root, engine=tuple(engine_cmd), models=models_dir)
+        seen.update(root=layout.root, engine=tuple(engine_cmd), models=models_dir, reader=reader)
         seen["clock"] = now()
         seen["lock"] = try_hold(layout.worker_lock)
         return 0
@@ -278,6 +285,7 @@ def test_work_passes_the_engine_models_and_clock_to_the_worker_under_its_lock(
     assert seen["root"] == root
     assert seen["engine"] == worker.DEFAULT_ENGINE_CMD
     assert seen["models"] == models
+    assert seen["reader"] == ReaderConfig(socket_path="/run/stt-reader.sock")
     assert isinstance(seen["clock"], datetime) and seen["clock"].utcoffset() == timedelta(0)
     assert seen["lock"] is None
 

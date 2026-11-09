@@ -226,7 +226,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   WAV 경로를 받는 함수로 떼어 내고, 지금 두 함수는 그 함수를 부르게 한다. 새 함수의 docstring 은 영어다. 기존 한국어 오류 문장은 바꾸지 않는다 — 새 함수로 옮겨 가도 같다(plan Complexity Tracking, 운영자
   승인 2026-11-09).
   RED → GREEN: turns T023 GREEN, 기존 명령줄 시험 그대로 통과. supports US4-7, FR-022
-- [ ] T025 [US2] `src/stt/server/worker.py`: 읽기 단계 — `reader_client.decode()` 로 받은 바이트를 `wave` 로 `work/<id>/audio.wav`(0600)에 쓴다.
+- [X] T025 [US2] `src/stt/server/worker.py`: 읽기 단계 — `reader_client.decode()` 로 받은 바이트를 `wave` 로 `work/<id>/audio.wav`(0600)에 쓴다.
   `spec.json` 에서 `audio_path` 를 뺀다. 작업 상한(`deadlines.processing_limit`)을 읽기 단계 시작부터 재고 GPU 단계에 남은 시간을 준다.
   `run()` 이 `ReaderConfig` 를 받는다. 같은 커밋에서 `tests/server/conftest.py` 의 `run_worker`·`run_worker_once` 가 흉내 소켓의 `ReaderConfig` 를
   저절로 넘기게 한다 — 다른 호출부는 고치지 않는다(R14). RED → GREEN: turns T019 의 워커 쪽, T021(b)~(g), T022 의 워커 쪽 GREEN.

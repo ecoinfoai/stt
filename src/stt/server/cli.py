@@ -120,7 +120,14 @@ def _work(args: argparse.Namespace, layout: Layout) -> int:
     from stt.server import worker
 
     try:
-        return worker.run(layout, worker.DEFAULT_ENGINE_CMD, _utc_now, models_dir=args.models, gpu_lock=args.gpu_lock)
+        return worker.run(
+            layout,
+            worker.DEFAULT_ENGINE_CMD,
+            _utc_now,
+            models_dir=args.models,
+            gpu_lock=args.gpu_lock,
+            reader=args.reader,
+        )
     except MissingGpuLockError:
         print(f"--gpu-lock points to a missing file: {args.gpu_lock}", file=sys.stderr)
         return EXIT_USAGE
