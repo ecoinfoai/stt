@@ -11,8 +11,9 @@ from typing import Any, Iterator
 import pytest
 
 from stt import cli
-from stt.server import intake, worker
+from stt.server import intake, reader, worker
 from stt.server.layout import Layout, try_hold
+from stt.server.reader_client import ReaderConfig
 
 _HOLDER = (
     "import fcntl, os, sys\n"
@@ -409,5 +410,64 @@ def test_fetch_models_help_exits_0_with_english_text(capsys: pytest.CaptureFixtu
 def test_top_level_usage_lists_every_server_subcommand() -> None:
     server_line = next(line for line in cli.usage().splitlines() if line.strip().startswith("server "))
 
-    for name in ("intake", "work", "sweep", "fetch-models"):
+    for name in ("intake", "work", "sweep", "fetch-models", "read"):
         assert name in server_line
+
+
+def test_read_runs_the_reader_supervisor_without_a_state_root_or_stage_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    untouched_root = tmp_path / "never-created"
+    monkeypatch.setattr("stt.server.cli.DEFAULT_ROOT", untouched_root)
+    calls: list[tuple[Any, ...]] = []
+
+    def fake_serve(*args: Any, **kwargs: Any) -> int:
+        calls.append((args, kwargs))
+        return 7
+
+    monkeypatch.setattr(reader, "serve", fake_serve)
+
+    assert cli.main(["server", "read"]) == 7
+
+    assert calls == [((), {})]
+    assert not untouched_root.exists()
+
+
+def test_read_help_exits_0_with_english_text(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["server", "read", "--help"]) == 0
+
+    assert capsys.readouterr().out.isascii()
+
+
+def test_read_takes_no_arguments(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["server", "read", "--root", "/x"]) == 2
+
+    assert "usage: stt server" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("stage", ["intake", "work"])
+def test_the_stages_take_the_reader_socket_with_the_production_path_as_default(stage: str) -> None:
+    from stt.server import cli as server_cli
+
+    parser = server_cli.build_parser()
+    extra = ["--gpu-lock", "gpu.lock"] if stage == "work" else []
+
+    assert parser.parse_args([stage, *extra]).reader == ReaderConfig(socket_path="/run/stt-reader.sock")
+    assert parser.parse_args([stage, *extra, "--reader-socket", "/tmp/x.sock"]).reader == ReaderConfig(
+        socket_path="/tmp/x.sock"
+    )
+
+
+@pytest.mark.parametrize("stage", ["intake", "work"])
+def test_the_reader_socket_option_is_documented_in_english(
+    stage: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["server", stage, "--help"]) == 0
+
+    out = capsys.readouterr().out
+    assert "--reader-socket" in out and "/run/stt-reader.sock" in out
+    assert out.isascii()
+
+
+def test_sweep_does_not_take_the_reader_socket(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["server", "sweep", "--reader-socket", "/x"]) == 2
