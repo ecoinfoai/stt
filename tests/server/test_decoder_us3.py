@@ -318,7 +318,10 @@ def test_decoder_us3_8_the_worker_fails_engine_error_when_the_reader_cannot_be_s
     assert reader_socket.spawn_count - spawned_before == (0 if how == "missing_socket" else 1)
     assert_failed(layout, request_id, NOT_STARTED)
     assert_no_result(layout, request_id)
-    assert capfd.readouterr().out.splitlines() == [f"{request_id} running", f"{request_id} failed engine_error"]
+    assert capfd.readouterr().out.splitlines() == [
+        f"{request_id} running",
+        f"{request_id} failed engine_error reader_unavailable",
+    ]
 
 
 @pytest.mark.parametrize("how", UNAVAILABLE_READERS)
@@ -544,7 +547,14 @@ def test_decoder_us4_4_a_job_deleted_during_the_read_is_never_settled_as_a_failu
     assert leftovers_besides_recordings(layout.root) == []
 
 
-@pytest.mark.parametrize("code", [errno.EACCES, errno.EMFILE])
+def refuse_pipes(*args: Any, **kwargs: Any) -> tuple[int, int]:
+    raise OSError(errno.EMFILE, os.strerror(errno.EMFILE))
+
+
+@pytest.mark.parametrize(
+    ("how", "cause"),
+    [("missing", "recording_unusable"), ("permission", "recording_unusable"), ("pipe2_emfile", "unexpected")],
+)
 def test_decoder_us3_8_an_os_error_before_anything_is_sent_to_the_reader_is_a_server_fault_not_unreadable_audio(
     layout: Layout,
     tone: Path,
@@ -552,20 +562,28 @@ def test_decoder_us3_8_an_os_error_before_anything_is_sent_to_the_reader_is_a_se
     reader_socket: ReaderSocket,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
-    code: int,
+    how: str,
+    cause: str,
 ) -> None:
+    if how == "permission" and os.geteuid() == 0:
+        pytest.skip("root opens a file whose mode is 000, so the permission case cannot fail")
     request_id = submit(layout, tone, clock)
+    (recording,) = (layout.audio / request_id).glob("audio.*")
     spawned_before = reader_socket.spawn_count
     capfd.readouterr()
-
-    def refuse_to_open(path: Any) -> int:
-        raise OSError(code, os.strerror(code))
-
-    monkeypatch.setattr(reader_client, "_open_recording", refuse_to_open)
+    if how == "missing":
+        recording.unlink()
+    elif how == "permission":
+        recording.chmod(0)
+    else:
+        monkeypatch.setattr(os, "pipe2", refuse_pipes)
 
     assert run_worker_once(layout, clock) is True
 
     assert reader_socket.spawn_count == spawned_before
     assert_failed(layout, request_id, NOT_STARTED)
     assert_no_result(layout, request_id)
-    assert capfd.readouterr().out.splitlines() == [f"{request_id} running", f"{request_id} failed engine_error"]
+    assert capfd.readouterr().out.splitlines() == [
+        f"{request_id} running",
+        f"{request_id} failed engine_error {cause}",
+    ]

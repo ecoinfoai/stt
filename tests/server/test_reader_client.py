@@ -7,6 +7,7 @@ the scripted fake (``scripted_reader.py``). No double reads or interprets record
 
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
@@ -161,7 +162,7 @@ def test_a_symlinked_recording_raises_before_connecting(
     link.symlink_to(recording)
     server = emulated_reader_socket(fake_reader_cmd("no-start"))
 
-    with pytest.raises(OSError) as raised:
+    with pytest.raises(reader_client.RecordingError) as raised:
         run(op, make_config(server.path), link)
 
     assert raised.value.errno == 40  # ELOOP
@@ -175,9 +176,10 @@ def test_a_missing_recording_raises_before_connecting(
 ) -> None:
     server = emulated_reader_socket(fake_reader_cmd("no-start"))
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(reader_client.RecordingError) as raised:
         run(op, make_config(server.path), tmp_path / "missing.mp3")
 
+    assert raised.value.errno == errno.ENOENT
     time.sleep(0.3)
     assert server.spawn_count == 0
 
@@ -188,9 +190,10 @@ def test_a_recording_that_is_not_a_regular_file_raises_before_connecting(
 ) -> None:
     server = emulated_reader_socket(fake_reader_cmd("no-start"))
 
-    with pytest.raises(ValueError, match="regular file"):
+    with pytest.raises(reader_client.RecordingError, match="regular file") as raised:
         run(op, make_config(server.path), tmp_path)
 
+    assert raised.value.errno is None
     time.sleep(0.3)
     assert server.spawn_count == 0
 
