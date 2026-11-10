@@ -132,13 +132,18 @@ def assert_reads_ok_like(reader_socket: ReaderSocket, recording: Path, plain: Pa
 
 
 def video_streams_unopened(recording: Path) -> None:
-    """Asserts the child's open leaves every video stream without a decoder and refuses to decode it."""
+    """Asserts the child's open leaves every video stream without a decoder and refuses to decode it.
+
+    ``format`` is the pixel format that ``avformat_find_stream_info`` fills in only when it opened the video
+    decoder, so ``None`` shows that the container-level allowlist kept the analysis from opening it.
+    ``pix_fmt`` says the same but crashes PyAV 17.1 on a context that was never opened.
+    """
     import av
 
     with open(recording, "rb") as handle, reader._open_container(handle) as container:
         videos = container.streams.video
         assert len(videos) >= 1
-        assert all(stream.codec_context.is_open is False for stream in videos)
+        assert all(stream.codec_context.format is None for stream in videos)
         with pytest.raises(av.error.ArgumentError):
             list(container.decode(video=0))
 
