@@ -212,11 +212,17 @@ in
           RestrictAddressFamilies = "none";
           # Every path carries `-`: under the empty /run and /var below the stt paths do not exist, and a
           # missing path must not fail the unit. /nix/var holds the Nix database, whose files are readable.
+          # /mnt, /srv, /opt and /media hold a host's data disks and add-on trees, whose readable files a
+          # compromised reader could otherwise return through its output (operator decision 2026-11-10).
           InaccessiblePaths = [
             "-${stateDir}"
             "-${modelsDir}"
             "-/run/stt"
             "-/nix/var"
+            "-/mnt"
+            "-/srv"
+            "-/opt"
+            "-/media"
           ];
           ProtectSystem = "strict";
           ProtectHome = true;
@@ -260,6 +266,11 @@ in
           LimitFSIZE = 0;
           TasksMax = 32;
           RuntimeMaxSec = 300;
+          # The memory cap kills the decode child, not the supervisor; with the default `stop` the manager
+          # would then kill the supervisor before it sent `failed` and wrote its line.
+          OOMPolicy = "continue";
+          # The supervisor's lines mean a reader that ended badly; `journalctl -p warning` should show them.
+          SyslogLevel = "warning";
           # The supervisor is PID 1 of its PID namespace and ignores SIGTERM; nothing to clean up.
           KillSignal = "SIGKILL";
         };

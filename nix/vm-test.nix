@@ -115,6 +115,24 @@ let
     reader-not-started = "not-started not-started";
     reader-hold-decode = "ok hold";
   };
+
+  # The real supervisor with a child that only uses memory: it never opens the recording, so no media is involved.
+  # The unit's memory cap kills the child, which is what the OOMPolicy setting is about.
+  memoryChild = pkgs.writeText "stt-vm-memory-child.py" ''
+    import time
+
+    held = []
+    while True:
+        held.append(bytearray(b"\x01" * (16 << 20)))
+        time.sleep(0.01)
+  '';
+  supervisedMemory = pkgs.writeText "stt-vm-supervised-memory.py" ''
+    import sys
+
+    from stt.server.reader import serve
+
+    sys.exit(serve(child_command=(sys.executable, "${memoryChild}")))
+  '';
 in
 pkgs.testers.runNixOSTest {
   name = "stt-server";
@@ -139,10 +157,15 @@ pkgs.testers.runNixOSTest {
       memorySize = 2048;
       cores = 2;
     };
-    specialisation = lib.mapAttrs (_: behaviours: {
-      configuration.systemd.services."stt-reader@".serviceConfig.ExecStart =
-        lib.mkForce "${package}/bin/python ${readerDouble} ${behaviours}";
-    }) readerDoubles;
+    specialisation =
+      lib.mapAttrs (_: behaviours: {
+        configuration.systemd.services."stt-reader@".serviceConfig.ExecStart =
+          lib.mkForce "${package}/bin/python ${readerDouble} ${behaviours}";
+      }) readerDoubles
+      // {
+        reader-supervised-memory.configuration.systemd.services."stt-reader@".serviceConfig.ExecStart =
+          lib.mkForce "${package}/bin/python ${supervisedMemory}";
+      };
   };
 
   nodes.fetcher = {
@@ -409,7 +432,13 @@ pkgs.testers.runNixOSTest {
         # `DynamicUser=yes` prints `yes` on this systemd; that private /tmp leaves no folder on the host.
         assert prop(reader, "PrivateTmp") == "yes", prop(reader, "PrivateTmp")
         # Every hidden path carries `-`: under the empty /run and /var the stt paths do not exist, and a missing path must not fail the unit.
-        assert set(prop(reader, "InaccessiblePaths").split()) == {"-/var/lib/stt", "-/var/lib/stt-models", "-/run/stt", "-/nix/var"}, prop(reader, "InaccessiblePaths")
+        # /mnt, /srv, /opt and /media hold a host's data disks and add-on trees (operator decision 2026-11-10).
+        assert set(prop(reader, "InaccessiblePaths").split()) == {
+            "-/var/lib/stt", "-/var/lib/stt-models", "-/run/stt", "-/nix/var", "-/mnt", "-/srv", "-/opt", "-/media",
+        }, prop(reader, "InaccessiblePaths")
+        # A child killed by the memory cap must not take the supervisor with it, and its lines are warnings.
+        assert prop(reader, "OOMPolicy") == "continue", prop(reader, "OOMPolicy")
+        server.succeed("grep -qx 'SyslogLevel=warning' /etc/systemd/system/stt-reader@.service")
         # The unit's /dev/shm is the host's even with PrivateDevices=yes, so an empty read-only tmpfs covers it;
         # /run and /var hold the host's readable lock files and are covered the same way.
         assert set(prop(reader, "TemporaryFileSystem").split()) == {"/dev/shm:ro", "/run:ro", "/var:ro"}, prop(reader, "TemporaryFileSystem")
@@ -445,6 +474,10 @@ pkgs.testers.runNixOSTest {
             assert abs(result["seconds"] - 2.0) < 0.35, (name, result)
             # A sine of amplitude 1/8 (lavfi's default); a silent or garbled decode would be far off.
             assert 0.08 < result["peak"] < 0.2, (name, result)
+        # The supervisor writes its line after the verdict and journald reads the streams asynchronously: wait for
+        # the last instance to end and flush the journal before looking for a line that must not be there.
+        server.wait_until_succeeds("test -z \"$(systemctl list-units --all --plain --no-legend 'stt-reader@*')\"", timeout=60)
+        server.succeed("journalctl --sync")
         # A call the filter denies kills the decode child with SIGSYS; the kernel logs it and the supervisor says so.
         assert "type=1326" not in server.succeed("journalctl -k --no-pager -o cat")
         assert "reader child" not in server.succeed("journalctl -u 'stt-reader@*' --no-pager -o cat")
@@ -667,6 +700,9 @@ pkgs.testers.runNixOSTest {
     NIX_DB_LOCK = f"{NIX_DB}/vm-double-lock"
     # A readable file of the host under /var that belongs to no stt path (US2-10).
     VAR_HOST_FILE = "/var/lib/vm-double-host-file"
+    # Readable files on the data disks and in the add-on trees of a host, which a reader must not reach either (reaudit RM2).
+    DATA_DIRS = ("/mnt", "/srv", "/opt", "/media")
+    DATA_FILES = [f"{directory}/vm-double-data" for directory in DATA_DIRS]
 
     def switch_to(specialisation=None):
         """Activates the base system or one of its specialisations without touching the boot entry."""
@@ -782,10 +818,12 @@ pkgs.testers.runNixOSTest {
         server.succeed(f"echo host-data > {SHM_MARKER} && chmod 0666 {SHM_MARKER}")
         # The host's own 0644 root lock files, as they are on a real host; made here when the VM lacks them.
         server.succeed(
-            "mkdir -p -m 0755 /run/nixos /nix/var/nix/db"
-            f" && touch {HOST_LOCK} {NIX_DB_LOCK} {VAR_HOST_FILE} && chmod 0644 {HOST_LOCK} {NIX_DB_LOCK} {VAR_HOST_FILE}"
+            f"mkdir -p -m 0755 /run/nixos /nix/var/nix/db {' '.join(DATA_DIRS)}"
+            f" && touch {HOST_LOCK} {NIX_DB_LOCK} {VAR_HOST_FILE} {' '.join(DATA_FILES)}"
+            f" && chmod 0644 {HOST_LOCK} {NIX_DB_LOCK} {VAR_HOST_FILE} {' '.join(DATA_FILES)}"
         )
-        assert server.succeed(f"stat -c '%a %U' {HOST_LOCK} {NIX_DB_LOCK} {VAR_HOST_FILE}").split("\n")[:3] == ["644 root"] * 3
+        planted = [HOST_LOCK, NIX_DB_LOCK, VAR_HOST_FILE, *DATA_FILES]
+        assert server.succeed(f"stat -c '%a %U' {' '.join(planted)}").split("\n")[: len(planted)] == ["644 root"] * len(planted)
         a, b, c, a2, p = (str(uuid.uuid4()) for _ in range(5))
 
         def audio_paths(i):
@@ -807,7 +845,7 @@ pkgs.testers.runNixOSTest {
             ("state-root", [STATE, f"{STATE}/state.lock", f"{STATE}/worker.lock", f"{STATE}/queue"]),
             ("gpu-lock", ["/run/stt", GPU_LOCK, "/var/lib/stt-models"]),
             ("devices", ["/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm"]),
-            ("host-files", [SHM_MARKER, HOST_LOCK, NIX_DB, NIX_DB_LOCK, VAR_HOST_FILE]),
+            ("host-files", [SHM_MARKER, HOST_LOCK, NIX_DB, NIX_DB_LOCK, VAR_HOST_FILE, *DATA_FILES]),
         ]
         GROUP_NAMES = [name for name, _ in TARGET_GROUPS] + list(FIXED_GROUPS)
         document = {"groups": [{"name": name, "paths": paths} for name, paths in TARGET_GROUPS]}
@@ -884,7 +922,7 @@ pkgs.testers.runNixOSTest {
             f"{STATE}/audio/{a}/audio.wav", f"{STATE}/audio/{b}/audio.wav", f"{STATE}/jobs/{a}/job.json",
             f"{STATE}/jobs/{b}/job.json", f"{OUTBOX}/{a}.json", f"{OUTBOX}/{b}.json", INBOX, f"{INBOX}/{p}.json.tmp", GPU_LOCK,
             f"{STATE}/state.lock", "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm", SHM_MARKER,
-            HOST_LOCK, NIX_DB_LOCK, VAR_HOST_FILE,
+            HOST_LOCK, NIX_DB_LOCK, VAR_HOST_FILE, *DATA_FILES,
         ]
 
         # A: job A (requester one, with hints) and job B (requester two) wait behind the operator's lock.
@@ -941,7 +979,7 @@ pkgs.testers.runNixOSTest {
         assert not failed_stt_units(), failed_stt_units()
 
         release_cuda()
-        server.succeed(f"rm {INBOX}/{p}.json.tmp {SHM_MARKER} {NIX_DB_LOCK} {VAR_HOST_FILE}")
+        server.succeed(f"rm {INBOX}/{p}.json.tmp {SHM_MARKER} {NIX_DB_LOCK} {VAR_HOST_FILE} {' '.join(DATA_FILES)}")
         for node_name in ("nvidia0", "nvidiactl", "nvidia-uvm"):
             server.succeed(f"rm /dev/{node_name}")
         server.succeed("systemctl start stt-worker.path stt-sweep.timer")
@@ -1012,6 +1050,27 @@ pkgs.testers.runNixOSTest {
             wait_response(following["request_id"], failed_with("gpu_unavailable"), timeout=60)
             no_reader_instance()
             assert not failed_stt_units(), failed_stt_units()
+
+    with subtest("a decode child killed by the memory cap leaves the real supervisor alive to answer and to write its line (OOMPolicy)"):
+        # The test VM panics on any out-of-memory kill; the unit's memory cap killing the child is what this expects.
+        panic_on_oom = server.succeed("sysctl -n vm.panic_on_oom").strip()
+        server.succeed("sysctl -w vm.panic_on_oom=0")
+        switch_to("reader-supervised-memory")
+        victim = transcribe()
+        submit(victim)
+        assert failed_with("unreadable_audio")(response(victim["request_id"], timeout=90)), response(victim["request_id"])
+        inbox_empty()
+        line = "reader child probe killed by signal 9"
+        server.wait_until_succeeds(f"journalctl -u 'stt-reader@*' --no-pager -o cat | grep -Fx '{line}'", timeout=30)
+        # The line is a warning, so that `journalctl -p warning` shows it (reaudit RL5).
+        server.succeed(f"journalctl -u 'stt-reader@*' -p warning --no-pager -o cat | grep -Fx '{line}'")
+        # systemd's own lines for the instance, whose wording the operator's check and the document rely on.
+        print(server.succeed("journalctl -u 'stt-reader@*' --no-pager -o short-monotonic"))
+        server.succeed("journalctl -u 'stt-reader@*' --no-pager -o cat | grep -i 'oom'")
+        no_reader_instance()
+        assert not failed_stt_units(), failed_stt_units()
+        server.succeed(f"sysctl -w vm.panic_on_oom={panic_on_oom}")
+        switch_to()
 
     with subtest("a deployment that changes the reader template leaves a held read, the socket and the stages alone (module section 3)"):
         switch_to("reader-hold-decode")
@@ -1104,5 +1163,7 @@ pkgs.testers.runNixOSTest {
         reader_log = server.succeed("journalctl --no-pager -o cat -u 'stt-reader@*'")
         assert reader_log.strip(), "the memory double left lines, so an empty log would mean the query is wrong"
         server.fail(f"journalctl --no-pager -o cat -u 'stt-reader@*' | grep -E '{UUID_PATTERN}'")
+        # Every line of the supervisor is a warning (reaudit RL5): the usual one of an unreadable upload is among them.
+        server.succeed("journalctl --no-pager -o cat -p warning -u 'stt-reader@*' | grep -Fx 'reader child probe exited with status 1'")
   '';
 }
