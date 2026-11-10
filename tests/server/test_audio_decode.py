@@ -24,6 +24,10 @@ from .conftest import (
 )
 
 
+def _ignore_early_stop(seconds: float) -> None:
+    """Stands in for the early-stop notice in tests that decode undamaged or unrelated recordings."""
+
+
 def test_the_decoder_and_the_reader_agree_on_the_sample_rate() -> None:
     assert audio_decode.SAMPLE_RATE == reader.SAMPLE_RATE == 16000
 
@@ -32,7 +36,7 @@ def test_a_16khz_mono_wav_decodes_to_exactly_its_own_samples(tmp_path: Path) -> 
     recording = make_wav(tmp_path / "tone.wav", 2.0, silent=False)
     stored = np.frombuffer(wav_samples(recording), dtype="<i2")
 
-    decoded = audio_decode.decode_samples(recording)
+    decoded = audio_decode.decode_samples(recording, on_early_stop=_ignore_early_stop)
 
     assert decoded.dtype == np.float32
     assert np.array_equal(decoded, stored.astype(np.float32) / 32768.0)
@@ -47,13 +51,13 @@ def test_decoded_samples_equal_faster_whisper_where_its_decoder_runs(tmp_path: P
     else:
         reference = np.frombuffer(wav_samples(recording), dtype="<i2").astype(np.float32) / 32768.0
 
-    assert np.array_equal(audio_decode.decode_samples(recording), reference)
+    assert np.array_equal(audio_decode.decode_samples(recording, on_early_stop=_ignore_early_stop), reference)
 
 
 def test_a_format_outside_the_reader_list_decodes_for_the_command_line(tmp_path: Path) -> None:
     recording = encode_tone(tmp_path / "tone.aiff", "aiff", "pcm_s16be")
 
-    decoded = audio_decode.decode_samples(recording)
+    decoded = audio_decode.decode_samples(recording, on_early_stop=_ignore_early_stop)
 
     assert decoded.dtype == np.float32 and decoded.ndim == 1
     assert len(decoded) == 2 * audio_decode.SAMPLE_RATE
@@ -63,7 +67,7 @@ def test_a_format_outside_the_reader_list_decodes_for_the_command_line(tmp_path:
 def test_other_sample_rates_are_resampled_to_16khz_mono(tmp_path: Path) -> None:
     recording = encode_tone(tmp_path / "tone.wav", "wav", "pcm_s16le", rate=48000)
 
-    decoded = audio_decode.decode_samples(recording)
+    decoded = audio_decode.decode_samples(recording, on_early_stop=_ignore_early_stop)
 
     assert abs(len(decoded) - 2 * audio_decode.SAMPLE_RATE) <= 16
     assert 0.25 < float(np.abs(decoded).max()) < 0.35
@@ -76,12 +80,12 @@ def test_a_text_file_with_a_recording_extension_fails_loudly(tmp_path: Path) -> 
     recording.write_text("this is not audio\n", encoding="utf-8")
 
     with pytest.raises(av.error.InvalidDataError):
-        audio_decode.decode_samples(recording)
+        audio_decode.decode_samples(recording, on_early_stop=_ignore_early_stop)
 
 
 def test_a_missing_file_fails_loudly(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
-        audio_decode.decode_samples(tmp_path / "absent.m4a")
+        audio_decode.decode_samples(tmp_path / "absent.m4a", on_early_stop=_ignore_early_stop)
 
 
 # ------------------------------------------------ a damaged frame ends the decode early
@@ -126,6 +130,11 @@ def test_decode_samples_tells_the_caller_how_far_a_damaged_recording_got(
     assert reported == [10 * FAKE_FRAME_SAMPLES / audio_decode.SAMPLE_RATE]
 
 
+def test_decode_samples_cannot_be_called_without_a_place_for_the_early_stop_notice(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match="on_early_stop"):
+        audio_decode.decode_samples(tmp_path / "any.m4a")  # type: ignore[call-arg]
+
+
 def test_decode_samples_reports_nothing_for_an_undamaged_recording(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -154,7 +163,7 @@ def test_the_command_line_warns_once_on_standard_error_when_the_decode_stopped_e
 
     captured = capsys.readouterr()
     assert captured.err == (
-        "warning: decoding stopped at invalid data after 2.0 s; the transcript covers only that part\n"
+        "warning: damaged.m4a: decoding stopped at invalid data after 2.0 s; the transcript covers only that part\n"
     )
     assert captured.out == ""
 

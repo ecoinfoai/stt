@@ -94,13 +94,13 @@ def write_s16(container: Any, output: BinaryIO) -> bool:
     return stopped_early
 
 
-def decode_samples(path: Path, *, on_early_stop: Callable[[float], None] | None = None) -> "np.ndarray":
+def decode_samples(path: Path, *, on_early_stop: Callable[[float], None]) -> "np.ndarray":
     """Decodes a media file to the samples faster-whisper's ``decode_audio`` returns.
 
     Args:
         path: The media file; any format FFmpeg can open.
-        on_early_stop: Called once with the seconds decoded so far when the decode stopped
-            at invalid data; the samples before that point are still returned.
+        on_early_stop: Required. Called once with the seconds decoded so far when the decode
+            stopped at invalid data; the samples before that point are still returned.
 
     Returns:
         Mono float32 samples at 16 kHz, in [-1, 1).
@@ -117,6 +117,6 @@ def decode_samples(path: Path, *, on_early_stop: Callable[[float], None] | None 
     # The resampler's native objects are only freed by a collection (faster-whisper issue 390).
     gc.collect()
     samples = np.frombuffer(buffer.getbuffer(), dtype="<i2").astype(np.float32) / 32768.0
-    if stopped_early and on_early_stop is not None:
+    if stopped_early:
         on_early_stop(len(samples) / SAMPLE_RATE)
     return samples

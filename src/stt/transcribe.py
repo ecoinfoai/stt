@@ -781,7 +781,7 @@ def transcribe_file(
 
     def warn_early_stop(seconds: float) -> None:
         print(
-            f"warning: decoding stopped at invalid data after {seconds:.1f} s; "
+            f"warning: {media.name}: decoding stopped at invalid data after {seconds:.1f} s; "
             "the transcript covers only that part",
             file=sys.stderr,
         )

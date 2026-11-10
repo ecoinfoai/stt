@@ -100,10 +100,10 @@ close                                       자식을 거둔 뒤 끝남
   50만 샘플씩 묶기(`pts=None`), `AudioResampler(format="s16", layout="mono", rate=16000)`, 끝에 `None` 으로 비우기. 나온 프레임의 바이트를
   차례로 출력 기술자에 쓴다(머리 없음). `write_s16` 은 멈췄는지를 돌려주고, 끝 코드는 온전히 끝났으면 0, 깨진 조각에서 멈췄으면 `EARLY_STOP_EXIT`
   다(그 앞까지의 출력은 모두 쓴 뒤다).
-- 같은 해독을 명령줄도 쓴다: `stt.audio_decode.decode_samples(path)` 는 `write_s16` 의 결과를 `int16 / 32768.0` 의 float32 로 돌려주며, 형식 허용
+- 같은 해독을 명령줄도 쓴다: `stt.audio_decode.decode_samples(path, on_early_stop=…)` 는 `write_s16` 의 결과를 `int16 / 32768.0` 의 float32 로 돌려주며, 형식 허용
   목록(`format_whitelist`)은 읽기 단위만 쓴다(명령줄은 `stt fetch` 가 받은 mp4·webm 등도 연다). faster-whisper 에 경로를 넘기지 않는다.
-  해독이 깨진 조각에서 멈췄으면 `decode_samples` 는 `on_early_stop(<그때까지의 초>)` 를 한 번 부르고, 명령줄(`transcribe_file`)은 그것으로 표준 오류에
-  영어 경고 한 줄을 낸다. 깨끗한 녹음의 출력은 바이트까지 그대로다.
+  해독이 깨진 조각에서 멈췄으면 `decode_samples` 는 `on_early_stop(<그때까지의 초>)` 를 한 번 부른다. 이 인자는 키워드 필수라 빠뜨릴 수 없다(빼면 `TypeError`). 명령줄(`transcribe_file`)은 그것으로
+  표준 오류에 파일 이름을 넣은 영어 경고 한 줄을 낸다. 깨끗한 녹음의 출력은 바이트까지 그대로다.
 - 같음의 시험: PyAV 18 이하에서는 사인파 파일 여러 형식에서 decode 출력이 `faster_whisper.audio.decode_audio(path)` 의 `int16` 값과 바이트까지
   같다. PyAV 19 이상에서는 그 함수가 `metadata_errors` 때문에 돌지 않으므로, 16 kHz 모노 s16 WAV(`make_wav`)가 자기 표본과 정확히 같게 나오는지를 본다
   (손실 형식은 길이·크기만 본다). 두 갈래 모두 단언한다.
