@@ -136,6 +136,23 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
   journalctl -u stt-worker -u stt-intake
   ```
 
+  `failure.reason` 이 `engine_error` 인 작업의 줄에는 늘 원인 이름이 하나 붙는다: `<request_id> failed engine_error <cause>`. 다른 이유의 줄은
+  `<request_id> failed <reason>` 그대로다. 줄에는 경로·파일 이름·오류 문구·errno 가 없고 분류 이름만 있다. 응답의 `failure.detail` 은 이름과 관계없이
+  고정 문장 그대로다(읽기 단계의 셋은 「The server could not start the audio reader.」, `engine_failed` 는 「The engine stopped because of an unexpected
+  error.」, `engine_no_verdict` 는 「The engine stopped without a verdict.」).
+
+<!-- stt:engine-error-causes -->
+
+| cause | stage | 뜻 | 볼 것 |
+|---|---|---|---|
+| `reader_unavailable` | read | 읽기 단위를 쓸 수 없었다: 소켓 없음, 접속 거부, 「시작」 전 끊김, 「시작」 기다림 넘김. 녹음 탓이 아니다. | `systemctl status stt-reader.socket`, `journalctl -u 'stt-reader@*'` |
+| `recording_unusable` | read | 워커가 그 작업의 녹음을 일반 파일로 열지 못했다(없음, 심볼릭 링크, 디렉터리·FIFO, 권한, 기술자 부족). 읽기 단위에는 아무것도 보내지 않았다. | 그 작업의 녹음 폴더(`/var/lib/stt/audio/<audio_id>/`)가 있는지, 일반 파일·`stt` 소유·0600 인지. 녹음을 열지는 않는다 |
+| `unexpected` | read | 읽기 단계의 그 밖의 입출력·값 오류(파이프·소켓 만들기, 「시작」 뒤의 입출력 오류, 작업 기록 읽기). | 같은 시각의 워커 저널(기술자·메모리), `/var/lib/stt` 의 기록 |
+| `engine_failed` | gpu | 엔진이 예상 못 한 오류(`engine_error`)로 멈췄다고 판정을 썼다. | 같은 시각의 GPU·모델 상태. 같은 녹음을 재전사해 되풀이되는지 |
+| `engine_no_verdict` | gpu | 엔진이 쓸 만한 판정 없이 끝났다(판정 파일 없음·깨짐, 결과 파일 빠짐, 목록 밖 이유). | `systemctl status stt-worker`, `journalctl -k`(엔진 프로세스가 죽었는지) |
+
+읽기 단계의 어떤 실패도 워커를 멈추지 않는다. 그 작업만 위 표대로 끝나고 워커는 다음 작업으로 간다.
+
 - **서버 단위의 비정상 종료**: 실패한 단위 목록과 종료 원인. 메모리 상한(OOM)이면 `Result=oom-kill`, 호출 필터에 걸렸으면 SIGSYS(31)이다. 읽기 인스턴스는
   예외다: 단위에 `OOMPolicy=continue` 가 있어 해독 자식만 메모리 상한에 죽으면 인스턴스는 정상으로 끝난다(아래 「읽기 인스턴스의 비정상 종료」).
   막힌 호출 번호는 커널 기록에 있다.
@@ -148,7 +165,7 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
 
 - **읽기 단위를 쓸 수 없을 때**: 읽기 소켓이 없거나 인스턴스가 뜨지 못하면 받기·워커는 녹음을 직접 해독하는 대체 길 없이 그 요청·작업만 실패로
   끝낸다. 보이는 것은 다음과 같다.
-  - 워커 로그의 `<request_id> failed engine_error`(응답의 `failure.reason` 도 `engine_error`).
+  - 워커 로그의 `<request_id> failed engine_error reader_unavailable`(응답의 `failure.reason` 도 `engine_error`).
   - 받기 로그의 그 요청 ID 와 이유. 받기는 그 요청을 응답 없이 inbox 에서 치운다(001 FR-032a). 이때 `stt-intake.service` 는 실패로 끝난다.
   - 소켓 단위의 상태.
 

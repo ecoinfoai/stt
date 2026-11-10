@@ -172,7 +172,7 @@ description: "Task list for 003-reader-hardening"
 
 ### Tests for User Story 3 (write first) ⚠️
 
-- [ ] T011 [US3] `tests/server/test_hardening_us3.py`(새), 흉내 읽기 소켓·대역·가짜 엔진으로: (a) `test_hardening_us3_1_*` — 소켓 없음·`not-started`
+- [X] T011 [US3] `tests/server/test_hardening_us3.py`(새), 흉내 읽기 소켓·대역·가짜 엔진으로: (a) `test_hardening_us3_1_*` — 소켓 없음·`not-started`
   대역·「시작」 전 끊김: 응답 `engine_error`·「The server could not start the audio reader.」, 줄 `<id> failed engine_error reader_unavailable`.
   (b) `test_hardening_us3_2_*` — 녹음 없음·디렉터리·FIFO·권한 000(root 로 돌면 건너뜀, 이유를 적음): 같은 응답, 줄 `… recording_unusable`, 읽기 연결
   0(인스턴스를 띄우지 않음). FIFO 경우는 워커를 스레드(또는 하위 프로세스)로 돌려 `join(timeout=5)` 으로 기다리고, `finally` 에서 FIFO 의 쓰는 쪽을
@@ -185,29 +185,29 @@ description: "Task list for 003-reader-hardening"
   (e) 받기에서 일반 파일이 아닌 녹음은 지금처럼 요청별 예외로 기록된다 — 줄이 `intake error RecordingError`(errno 없음) 또는 errno 이름(contracts/
   reader.md §5). verify RED: 줄 끝에 원인 없음, 녹음 없음에서 워커가 `StopIteration` 으로 멈춤, 디렉터리에서 `ValueError` 로 멈춤, FIFO 에서 시간 넘김.
   closes US3-1, US3-2, US3-3, US3-4, 경계 사례 6, SC-004(pytest), supports FR-008, FR-009
-- [ ] T012 [P] [US3] 기존 시험을 새 줄·예외 형으로 고친다(research R6, 파일마다 까닭을 커밋 메시지에): `tests/server/test_decoder_us3.py:321`·`:571`
+- [X] T012 [P] [US3] 기존 시험을 새 줄·예외 형으로 고친다(research R6, 파일마다 까닭을 커밋 메시지에): `tests/server/test_decoder_us3.py:321`·`:571`
   (줄 전체 비교 → 원인 이름 포함), `:548-571`(`_open_recording` 을 맨 `OSError` 로 바꿔 넣던 시험 → 녹음 쪽은 실제 없는 파일·권한으로, 그 밖은
   `os.pipe2` 의 EMFILE 로), `tests/server/test_reader_client.py:155-197`(열기 오류의 예외 형 `RecordingError`, errno 유지, 일반 파일 아님은 errno 없음).
   고쳐 쓴 시험마다 지금의 `assert_no_result` 단언을 그대로 둔다(헌법 III). `tests/server/test_logging.py:174` 는 부분 문자열 비교라 그대로 둔다. verify RED: 고친 단언이 지금 코드에서 실패한다(원인 없음, `RecordingError` 없음).
   supports US3-1, US3-2, FR-008
-- [ ] T013 [P] [US3] `tests/test_server_security_doc.py` 에 더한다: `<!-- stt:engine-error-causes -->` 표의 `cause` 칸 집합 ==
+- [X] T013 [P] [US3] `tests/test_server_security_doc.py` 에 더한다: `<!-- stt:engine-error-causes -->` 표의 `cause` 칸 집합 ==
   `worker.ENGINE_ERROR_CAUSES`, 그리고 문서에 `failed engine_error reader_unavailable` 이 있다(옛 줄 `failed engine_error` 만 쓴 자리가 없음).
   verify RED: 표식·상수 없음. supports US3-4, FR-016
 
 ### Implementation for User Story 3 (turn T011–T013 GREEN)
 
-- [ ] T014 [US3] `src/stt/server/reader_client.py`: `class RecordingError(OSError)`(영어 docstring), `_open_recording` 이 `O_RDONLY | O_NOFOLLOW |
+- [X] T014 [US3] `src/stt/server/reader_client.py`: `class RecordingError(OSError)`(영어 docstring), `_open_recording` 이 `O_RDONLY | O_NOFOLLOW |
   O_CLOEXEC | O_NONBLOCK` 로 열고, 열기 `OSError` → 같은 errno 의 `RecordingError`(`from error`), 일반 파일 아님 → 기술자를 닫고 errno 없는
   `RecordingError("the recording is not a regular file")`. `probe()`·`decode()` 의 `Raises:` 를 contracts/reader.md §5 대로. 다섯 결과는 그대로.
   받기 쪽 기록이 T011(e)대로인지 보고, 다르면 `src/stt/server/intake.py` 의 기록 함수만 고친다. RED → GREEN: turns T012 의 `test_reader_client.py`
   부분, T011(b)의 FIFO·(e) GREEN. supports US3-2, FR-009
-- [ ] T015 [US3] `src/stt/server/worker.py`: `ENGINE_ERROR_CAUSES`(frozenset 다섯), `_prepare` 의 녹음 경로를 `glob` 대신
+- [X] T015 [US3] `src/stt/server/worker.py`: `ENGINE_ERROR_CAUSES`(frozenset 다섯), `_prepare` 의 녹음 경로를 `glob` 대신
   `audio/<audio_id>/audio.<original_name.rsplit(".", 1)[1]>` 로(받기 `_copy_attachment` 와 같은 규칙), 읽기 단계의 예외 나누기(`RecordingError` →
   `recording_unusable`, 그 밖의 `OSError`·`ValueError` → `unexpected`, `unavailable` → `reader_unavailable`), GPU 단계의 두 길(`engine_failed`·
   `engine_no_verdict`), `_settle` 이 `engine_error` 일 때만 줄 끝에 원인 낱말을 붙인다. 응답의 `Failure` 는 바꾸지 않는다. 읽기 단계에서 잡는 것은 `OSError`
   (`RecordingError` 포함)와 `ValueError` 뿐이다 — 이 둘은 워커를 멈추지 않는다. 그 밖의 예외는 잡지 않고 002 처럼 올라간다(`except Exception`
   없음, 헌법 V, data-model §3). RED → GREEN: turns T011(a)~(d), T012 의 `test_decoder_us3.py` 부분 GREEN. closes US3-1, US3-2, US3-3, US3-4, 경계 사례 6, supports FR-008, FR-009
-- [ ] T016 [US3] `docs/server-security.md` §3 「작업 하나의 실패」에 `engine_error` 줄의 모양과 `<!-- stt:engine-error-causes -->` 표(칸 `cause`·`stage`·
+- [X] T016 [US3] `docs/server-security.md` §3 「작업 하나의 실패」에 `engine_error` 줄의 모양과 `<!-- stt:engine-error-causes -->` 표(칸 `cause`·`stage`·
   뜻·볼 것, contracts/operator-log.md §5.2), 「읽기 단위를 쓸 수 없을 때」 항목의 줄을 `… failed engine_error reader_unavailable` 로 고친다.
   `recording_unusable` 의 볼 것은 녹음을 열지 않고 폴더·소유·권한만 본다는 규칙을 적는다. RED → GREEN: turns T013 GREEN. closes US3-4(문서),
   supports FR-016
