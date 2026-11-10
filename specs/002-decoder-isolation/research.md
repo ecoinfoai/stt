@@ -162,7 +162,7 @@
 - **결정**: 읽기 자식은 PyAV(휠에 든 FFmpeg)로 길이를 재고 해독한다.
   - 길이 재기는 지금 `intake.probe_duration`(`src/stt/server/intake.py:79-113`) 그대로다. 형식 허용목록으로 열어, 컨테이너 길이가 있으면 그것을,
     없으면 패킷 길이의 합을 쓴다.
-  - 해독은 faster-whisper `decode_audio` 와 같은 순서다: 잘못된 프레임 건너뛰기, 50만 샘플 묶음,
+  - 해독은 faster-whisper `decode_audio` 와 같은 순서다: 첫 잘못된 프레임에서 멈춤(그 앞까지 씀), 50만 샘플 묶음,
     `AudioResampler(format="s16", layout="mono", rate=16000)`, 끝에 비우기.
   - 화자 구분도 이 해독 결과를 쓴다. 서버 경로는 nixpkgs `ffmpeg` 명령을 더는 부르지 않는다.
   - 명령줄(`stt transcribe --diarize`)은 지금처럼 `ffmpeg` 명령을 쓴다(FR-022).

@@ -37,7 +37,7 @@
 
 **무엇에 닿지 못하는가.**
 - 파일: `/var/lib/stt`(다른 작업의 녹음·기록·해독된 음성·응답·`state.lock`)와 `/var/lib/stt-models` 는 권한(일회용 UID 는 `stt` 가 아니다)과
-  `InaccessiblePaths` 의 두 겹으로 막힌다. `/run/stt`(0755)와 그 안의 `gpu.lock`(0644)은 권한으로는 읽을 수 있으므로 `InaccessiblePaths` 한 겹만이
+  `InaccessiblePaths` 의 두 겹으로 막힌다. `/run/stt`(0755)와 그 안의 `gpu.lock`(0644)은 권한으로는 읽을 수 있으므로 `InaccessiblePaths` 와 `/run` 을 덮은 빈 tmpfs(아래) 두 겹이
   막는다(research R12).
 - 쓰기: 이 단위에서 쓰기가 되는 자리는 인스턴스마다 따로인 사설 `/tmp`·`/var/tmp` 뿐이고, 거기에도 파일을 만들 수는 있어도 자료는 쓰지
   못한다(`LimitFSIZE=0`). 현재 폴더를 비롯한 그 밖은 `ProtectSystem=strict` 로 읽기 전용이다. `/dev/shm` 은 `PrivateDevices=yes` 에도 호스트의 것과 같아(같은 장치·아이노드, 1777,
@@ -65,7 +65,7 @@
 cgroup 은 영향이 없고 그 작업 하나만 실패한다.
 
 **끊김에 바로 멈춤.** 호출하는 쪽이 연결을 끊으면(다 지우기, 매일 23:58 정리, 워커 정지) 감독이 해독 자식을 SIGKILL 로 죽이고 인스턴스가 끝난다.
-`KillSignal=SIGKILL` 이라 단위 정지도 기다리지 않는다. 읽기 단위의 자식은 로그를 쓰지 않고, 감독은 아래 §3 의 고정된 영어 한 줄만 쓴다. 저널에 작업 ID·경로·
+`KillSignal=SIGKILL` 이라 단위 정지도 기다리지 않는다. 읽기 단위의 자식은 로그를 쓰지 않고, 감독은 아래 §3 의 고정된 영어 한 줄만 쓴다(감독 내부 예외의 트레이스백은 예외다. 코드 위치만 담고 녹음 경로는 담지 않는다). 저널에 작업 ID·경로·
 파일 이름·해독기 문구가 남지 않는다.
 
 ## 3. 작업 실패와 단위 비정상 종료 구별
@@ -125,16 +125,18 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
   journalctl -u 'stt-reader@*' -g 'reader child'
   ```
 
-  - `killed by signal 31` 은 시스템 호출 필터(SIGSYS), `killed by signal 9` 는 메모리 상한(OOM)이나 시간 상한의 SIGKILL 일 수 있다. 읽기 인스턴스는
+  - `killed by signal 31` 은 시스템 호출 필터(SIGSYS), `killed by signal 9` 는 메모리 상한(OOM)이거나 밖에서 죽인 것이다. 감독이 시간 상한에 죽인 자식은 `timed out` 이고, 단위의 `RuntimeMaxSec` 가 cgroup 전체(감독 포함)를 죽인 경우는 줄이 남지 않는다. 읽기 인스턴스는
     `CollectMode` 로 치워져 `systemctl --failed` 에 쌓이지 않으므로, 이 줄이 단위 수준의 유일한 흔적이다.
   - `timed out` 은 감독이 시간 상한(길이 재기 30초·해독 240초)에 자식을 죽였다는 뜻이다. `returned an invalid result` 는 길이 재기 자식이 정상으로 끝났지만 결과가
     규격에 맞지 않았다는 뜻이다. 호출하는 쪽이 먼저 끊은 경우(다 지우기 등)는 정상이라 줄이 없다.
   - `stopped early at invalid data` 는 오류가 아니다: 녹음 가운데의 깨진 조각에서 해독이 멈췄고, 그 앞까지 전사해 작업은 `done` 으로 끝난다(faster-whisper 와
     같은 동작, 운영자 결정 2026-11-10). 첫 조각부터 깨졌으면 전사록이 빈 채 `done` 이다. 명령줄은 같은 일에 표준 오류로 경고 한 줄을 낸다.
+  - 한 녹음에서만 `killed by signal 31`(또는 `type=1326`)이 나오고 같은 형식의 다른 녹음은 읽힌다면, 해독기를 노린 녹음을 필터가 막은 것일 수 있다. 그 녹음을
+    직접 열지 말고(아래 규칙) 시각으로 요청을 찾아 호출하는 쪽에 알린다. 이 줄과 `type=1326` 은 길이 재기(`probe`)에서도 같은 모양으로 나온다.
   - 이 줄에는 작업 ID 가 없다. 어느 작업인지는 줄의 시각을 받기·워커 기록(`journalctl -u stt-intake -u stt-worker`)의 시각과 맞춰 찾는다. 커널 기록
     `journalctl -k -g 'type=1326'` 의 시각도 같은 방법으로 맞춘다.
 - **한 형식이 늘 `unreadable_audio` 일 때**: 같은 확장자의 정상 녹음이 모두 `unreadable_audio` 로 끝나면 녹음 탓이 아니라 그 형식의 해독 경로가 시스템 호출 필터나
-  메모리 상한에 막힌 것일 수 있다. 위의 `journalctl -k -g 'type=1326'` 에 읽기 UID 의 줄이 있는지, `reader child decode killed by signal 31` 이 같은 시각에 있는지 본다.
+  메모리 상한에 막힌 것일 수 있다. 위의 `journalctl -k -g 'type=1326'` 에 읽기 UID 의 줄이 있는지, `reader child decode killed by signal 31`(길이 재기가 막혔으면 `reader child probe killed by signal 31`)이 같은 시각에 있는지 본다.
   VM 시험이 `AUDIO_FORMATS` 의 형식마다 사인파 녹음 하나를 실제 읽기 단위로 해독해 이 기록이 비어 있음을 확인하지만(FR-028), 실제 코덱 경로는 FFmpeg 판에
   따라 달라질 수 있다.
 - **서버 녹음을 직접 열지 않는다**: `/var/lib/stt/audio/` 의 녹음을 `stt transcribe`·`ffprobe`·`ffmpeg` 로 직접 열지 않는다. 명령줄은 격리되지 않아(FR-022) 모든

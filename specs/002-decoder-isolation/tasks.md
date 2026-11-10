@@ -43,7 +43,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   (`<!-- stt:syscall-table -->`·`stt:versions`·`stt:policy …`·`stt:advisories`·`stt:monthly-checks`), 영어 칸 이름, 영어 상태값(`on`·`off`·`pending`),
   ISO 날짜다(data-model §7·§8). 시험 코드에는 한글 문자열을 쓰지 않는다. 이유 칸 같은 자유 문장은 한국어로 쓰고, 시험은 비어 있는지만 본다.
 - **Python 3.10**: CI 가 3.10·3.12 를 돈다. `tomllib`·`datetime.UTC`·`enum.StrEnum` 을 쓰지 않는다.
-- **로그**: 받기·워커는 001 FR-037 범위(작업 ID·상태·이유·시각)만 쓴다. 읽기 단위의 감독과 자식은 로그를 쓰지 않는다(FR-019).
+- **로그**: 받기·워커는 001 FR-037 범위(작업 ID·상태·이유·시각)만 쓴다. 읽기 단위의 자식은 로그를 쓰지 않고, 감독은 FR-023 덧붙임의 고정된 영어 한 줄만 쓴다(FR-019).
 - **셸 없음**: 하위 프로세스는 인자 목록으로만 띄운다. 운영 코드에 시험용 분기를 두지 않는다 — 자식 명령·소켓 경로·시간 값은 인자로 받는다.
 - **실행**: 무거운 실행은 모두 `captest` 로 돌린다. pytest: `captest 4G 20m uv run python -m pytest -q`(xdist 없음, `-n` 없이).
   VM: `captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L`. 찍힌 최대값을 보고 상한을 맞춘다.
