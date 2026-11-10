@@ -110,13 +110,15 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
     `systemctl restart stt-reader.socket` 을 따로 한다. 그동안 들어온 요청과 작업은 위와 같이 끝난다(워커 `engine_error`, 받기는 001 FR-032a 대로
     응답 없음. 운영자 결정 2026-11-08).
 
-- **읽기 인스턴스의 비정상 종료와 일찍 멈춘 해독**: 읽기 단위의 감독은 해독 자식이 비정상으로 끝나면 단위 로그에 아래 고정된 영어 한 줄을 쓴다. 작업 ID·경로·
+- **읽기 인스턴스의 비정상 종료와 일찍 멈춘 해독**: 읽기 단위의 감독은 해독 자식이 비정상으로 끝나거나 시간 상한을 넘기거나 엉터리 결과를 내면 단위 로그에 아래 고정된 영어 한 줄을 쓴다. 작업 ID·경로·
   파일 이름·해독기 문구는 없다. 정상 판정에는 아무것도 쓰지 않는다. 장악된 자식은 이 줄을 속일 수 있으므로 운영자에게 알리는 신호일 뿐 보안 통제가 아니다.
 
   ```text
   reader child <probe|decode> exited with status <n>
   reader child <probe|decode> killed by signal <n>
   reader child decode stopped early at invalid data
+  reader child <probe|decode> timed out
+  reader child probe returned an invalid result
   ```
 
   ```sh
@@ -125,6 +127,8 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
 
   - `killed by signal 31` 은 시스템 호출 필터(SIGSYS), `killed by signal 9` 는 메모리 상한(OOM)이나 시간 상한의 SIGKILL 일 수 있다. 읽기 인스턴스는
     `CollectMode` 로 치워져 `systemctl --failed` 에 쌓이지 않으므로, 이 줄이 단위 수준의 유일한 흔적이다.
+  - `timed out` 은 감독이 시간 상한(길이 재기 30초·해독 240초)에 자식을 죽였다는 뜻이다. `returned an invalid result` 는 길이 재기 자식이 정상으로 끝났지만 결과가
+    규격에 맞지 않았다는 뜻이다. 호출하는 쪽이 먼저 끊은 경우(다 지우기 등)는 정상이라 줄이 없다.
   - `stopped early at invalid data` 는 오류가 아니다: 녹음 가운데의 깨진 조각에서 해독이 멈췄고, 그 앞까지 전사해 작업은 `done` 으로 끝난다(faster-whisper 와
     같은 동작, 운영자 결정 2026-11-10). 첫 조각부터 깨졌으면 전사록이 빈 채 `done` 이다. 명령줄은 같은 일에 표준 오류로 경고 한 줄을 낸다.
   - 이 줄에는 작업 ID 가 없다. 어느 작업인지는 줄의 시각을 받기·워커 기록(`journalctl -u stt-intake -u stt-worker`)의 시각과 맞춰 찾는다. 커널 기록

@@ -8,9 +8,9 @@ is the only code that imports PyAV; it reads the recording through the
 descriptor it was handed and never sees a path.
 
 The decode child writes nothing to standard output or error. The supervisor writes
-one fixed line to standard error (the unit's journal) when the child ends abnormally
-or its decode stopped early at invalid data; the line holds no job ID, path, file
-name or decoder text.
+one fixed line to standard error (the unit's journal) when the child ends abnormally,
+times out, returns an invalid result or its decode stopped early at invalid data; the
+line holds no job ID, path, file name or decoder text.
 """
 
 from __future__ import annotations
@@ -209,10 +209,17 @@ def _stopped_early(op: str, returncode: int) -> bool:
     return op == "decode" and returncode == EARLY_STOP_EXIT
 
 
-def _journal_line(op: str, returncode: int) -> str | None:
-    """Returns the fixed line for a child that ended abnormally or stopped early, None for a normal end."""
-    if returncode == 0:
+def _journal_line(op: str, outcome: str, returncode: int, verdict: dict[str, Any]) -> str | None:
+    """Returns the fixed line for a read that ended badly or stopped early, None for a normal end.
+
+    A caller that hung up is normal and gets no line.
+    """
+    if outcome == "timeout":
+        return f"reader child {op} timed out"
+    if outcome != "exited":
         return None
+    if returncode == 0:
+        return f"reader child {op} returned an invalid result" if verdict == _FAILED else None
     if _stopped_early(op, returncode):
         return "reader child decode stopped early at invalid data"
     if returncode < 0:
@@ -253,10 +260,11 @@ def _supervise(connection: socket.socket, child_command: Sequence[str], request_
         if outcome != "exited":
             child.kill()
         returncode = child.wait()
-        if outcome == "exited" and (line := _journal_line(op, returncode)) is not None:
+        verdict = _verdict(op, returncode, result_read) if outcome == "exited" else _FAILED
+        if (line := _journal_line(op, outcome, returncode, verdict)) is not None:
             print(line, file=sys.stderr, flush=True)
         if outcome != "hangup":
-            _send(connection, _verdict(op, returncode, result_read) if outcome == "exited" else _FAILED)
+            _send(connection, verdict)
     finally:
         if child.poll() is None:
             child.kill()

@@ -70,8 +70,8 @@ close                                       자식을 거둔 뒤 끝남
 5. 자식의 끝, 연결의 끊김(POLLHUP·EOF), `limit_s` 를 함께 기다린다. 끊김이나 `limit_s` 가 오면 자식을 SIGKILL 로 죽이고 거둔다.
 6. 판정 `ok` 의 조건: 자식이 끝 코드 0 으로 끝났고(decode 는 `EARLY_STOP_EXIT` 도 같다 — 아래 7), probe 는 결과 파이프의 `RESULT_LIMIT` 이하 JSON
    `{"duration_s": <유한한 수 ≥ 0>}` 이 맞아야 한다. 그 밖은 모두 `failed` 다. 연결이 끊긴 뒤에는 아무것도 보내지 않는다.
-7. 로그는 아래 세 문장뿐이다(표준 오류 → 단위 로그, `StandardError=journal`). 자식이 제 발로 끝난 경우에만 쓰고(끊김·`limit_s` 로 감독이 죽인 경우는 쓰지
-   않는다), 끝 코드 0 의 정상 판정에는 아무것도 쓰지 않는다. `<mode>` 는 `probe` 또는 `decode`, `<n>` 은 정수다. 작업 ID·경로·파일 이름·해독기 문구·녹음의
+7. 로그는 아래 다섯 문장뿐이다(표준 오류 → 단위 로그, `StandardError=journal`). 호출하는 쪽이 끊은 경우(정상)와 정상 판정(끝 코드 0 에 결과가 맞음)에는 아무것도
+   쓰지 않는다. `<mode>` 는 `probe` 또는 `decode`, `<n>` 은 정수다. 작업 ID·경로·파일 이름·해독기 문구·녹음의
    메타데이터는 감독이 알지 못하고 쓰지도 않는다.
 
    | 자식의 끝 | 한 줄 | 판정 |
@@ -79,6 +79,8 @@ close                                       자식을 거둔 뒤 끝남
    | 끝 코드 `<n>` ≠ 0 (decode 의 `EARLY_STOP_EXIT` 제외) | `reader child <mode> exited with status <n>` | `failed` |
    | 신호 `<n>` 으로 죽음(예: 시스템 호출 필터의 SIGSYS 31, 메모리 상한의 SIGKILL 9) | `reader child <mode> killed by signal <n>` | `failed` |
    | decode 가 끝 코드 `EARLY_STOP_EXIT` | `reader child decode stopped early at invalid data` | `ok` |
+   | 감독이 `limit_s` 에 자식을 죽임 | `reader child <mode> timed out` | `failed` |
+   | probe 가 끝 코드 0 인데 결과가 §5.6 의 검사를 못 넘음 | `reader child probe returned an invalid result` | `failed` |
 
    `EARLY_STOP_EXIT` 는 「해독이 첫 깨진 조각(`InvalidDataError`)에서 멈췄고 출력은 그 앞까지 온전하다」는 알림이다. 판정은 `ok` 로 그대로이고(경계 사례 10),
    호출하는 쪽에는 아무것도 달라지지 않는다. 장악된 자식은 이 알림도 정상 종료도 속일 수 있으므로 이 줄은 운영자 신호일 뿐 보안 통제가 아니다.

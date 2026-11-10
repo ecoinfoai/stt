@@ -615,13 +615,53 @@ def test_the_supervisor_writes_one_fixed_line_when_the_child_ends_abnormally_and
 
 
 @pytest.mark.parametrize("op", ["probe", "decode"])
-def test_a_child_the_supervisor_kills_leaves_no_line(descriptors: Descriptors, op: str) -> None:
+def test_a_child_that_outlives_the_time_limit_is_killed_and_one_fixed_line_says_so(descriptors: Descriptors, op: str) -> None:
     kinds = ("file",) if op == "probe" else ("file", "pipe")
     body = {"op": op, "limit_s": 0.4}
 
     run, messages = converse(supervisor_command(fake_child("hang")), descriptors, body, kinds)
 
     assert messages == [{"started": True}, {"status": "failed"}]
+    assert run.stderr == f"reader child {op} timed out\n".encode()
+
+
+@pytest.mark.parametrize(
+    "payload", ["not json", "[1.5]", "{}", '{"duration_s": -1}', '{"duration_s": "1.5"}', '{"duration_s": 1, "extra": 2}'],
+    ids=["not-json", "array", "no-key", "negative", "string", "extra-key"],
+)
+def test_a_probe_that_ends_cleanly_with_an_invalid_result_leaves_one_fixed_line(descriptors: Descriptors, payload: str) -> None:
+    run, messages = converse(
+        supervisor_command(fake_child("write-raw", payload=payload)), descriptors, PROBE_BODY, ("file",)
+    )
+
+    assert messages == [{"started": True}, {"status": "failed"}]
+    assert run.stderr == b"reader child probe returned an invalid result\n"
+
+
+def test_a_probe_with_a_valid_result_leaves_no_line(descriptors: Descriptors) -> None:
+    run, messages = converse(
+        supervisor_command(fake_child("write-raw", payload=VALID_PROBE_RESULT)), descriptors, PROBE_BODY, ("file",)
+    )
+
+    assert messages == [{"started": True}, {"status": "ok", "duration_s": 2.5}]
+    assert run.stderr == b""
+
+
+@pytest.mark.parametrize("op", ["probe", "decode"])
+def test_a_caller_that_hangs_up_leaves_no_line(descriptors: Descriptors, tmp_path: Path, op: str) -> None:
+    marker = tmp_path / "child-pid"
+    server_end, client = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    client.settimeout(10.0)
+    proc = run_supervisor(server_end, supervisor_command(fake_child("hang", marker=marker)))
+    server_end.close()
+    with client:
+        fds = [descriptors.recording()] + ([descriptors.pipe()[1]] if op == "decode" else [])
+        send_request(client, {"op": op, "limit_s": reader.PROBE_LIMIT_S}, fds)
+        assert receive_one(client) == {"started": True}
+        wait_for_child_pid(marker)
+    run = finish(proc)
+
+    assert run.code == 0
     assert run.stderr == b""
 
 
