@@ -83,6 +83,12 @@
           touch $out
         '';
 
+      checks.x86_64-linux.module-eval = import ./nix/module-eval.nix {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+        inherit nixpkgs;
+        module = self.nixosModules.default;
+      };
+
       checks.x86_64-linux.server-vm = import ./nix/vm-test.nix {
         pkgs = nixpkgs.legacyPackages.x86_64-linux;
         module = self.nixosModules.default;

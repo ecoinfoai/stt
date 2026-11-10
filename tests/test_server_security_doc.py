@@ -460,3 +460,9 @@ def test_the_document_shows_the_truncation_line_as_a_line_of_its_own():
     from stt.server import worker
 
     assert worker.TRUNCATION_LINE in DOC.read_text().splitlines()
+
+
+def test_the_document_shows_the_manual_run_line_as_a_line_of_its_own():
+    from stt.server import reader
+
+    assert reader.MANUAL_RUN_LINE in DOC.read_text().splitlines()

@@ -508,12 +508,12 @@ def _loaded_top_level_modules(dump: bytes) -> set[str]:
     return {name.split(".")[0] for name in json.loads(dump)}
 
 
-def test_the_read_command_ends_with_code_2_and_no_output_when_stdin_is_not_a_connected_socket() -> None:
+def test_hardening_us4_4_the_read_command_ends_with_code_2_and_one_line_when_stdin_is_not_a_connected_socket() -> None:
     run = _run_read_command(subprocess.DEVNULL)
 
     assert run.returncode == 2
     assert run.stdout == b""
-    assert run.stderr == b""
+    assert run.stderr == (reader.MANUAL_RUN_LINE + "\n").encode("utf-8")
 
 
 def test_the_read_command_imports_nothing_outside_the_standard_library() -> None:
