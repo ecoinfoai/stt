@@ -265,7 +265,7 @@ description: "Task list for 003-reader-hardening"
 
 ### Tests for User Story 4 (write first) ⚠️
 
-- [ ] T021 [US4] `tests/server/test_hardening_us4.py`(새): (a) `test_hardening_us4_1_*` — 하위 프로세스 감독(`tests/server/reader_harness.py`) + T002
+- [X] T021 [US4] `tests/server/test_hardening_us4.py`(새): (a) `test_hardening_us4_1_*` — 하위 프로세스 감독(`tests/server/reader_harness.py`) + T002
   의 `sigint-parent`: 판정 `ok`, 감독 끝 코드 0, 표준 오류에 트레이스백·`KeyboardInterrupt` 없음. 처분은 하위 프로세스에서만 바뀐다(pytest 자신의
   SIGINT 처분이 시험 전후 같음을 단언). (b) `test_hardening_us4_3_*` — `worker._write_audio` 가 파일을 만든 직후 경로를 지우는 가로채기(예:
   `os.fdopen`·`wave.open` 을 감싸 첫 호출 때 `os.unlink`)에서, 쓰기가 끝난 뒤 그 경로에 파일이 다시 생기지 않는다. 정상이면 0600·WAV 머리(1채널·
@@ -273,11 +273,11 @@ description: "Task list for 003-reader-hardening"
   심고 그 폴더를 현재 폴더로 `reader.DEFAULT_CHILD_COMMAND`·`worker.DEFAULT_ENGINE_CMD` 를 띄우면 심은 모듈이 읽히지 않는다(끝 코드 ≠ 99). 콘솔
   스크립트 `stt` 도 같은 폴더에서 읽지 않는다(이미 참 — 회귀 지킴). verify RED: (a) 판정 없음·`KeyboardInterrupt` 트레이스백, (b) 경로에 0640 파일이
   다시 생김, (c) 끝 코드 99. closes US4-1, US4-3, US4-5, SC-005(pytest 몫), supports FR-010, FR-012, FR-014
-- [ ] T022 [P] [US4] `tests/server/test_server_cli.py` 의 `test_the_read_command_ends_with_code_2_and_no_output_when_stdin_is_not_a_connected_socket`
+- [X] T022 [P] [US4] `tests/server/test_server_cli.py` 의 `test_the_read_command_ends_with_code_2_and_no_output_when_stdin_is_not_a_connected_socket`
   (`:511-516`)를 `test_hardening_us4_4_*` 의 뜻으로 고친다: 끝 코드 2, 표준 출력 없음, 표준 오류 == `reader.MANUAL_RUN_LINE + "\n"`. 그리고
   `tests/test_server_security_doc.py` 에 `reader.MANUAL_RUN_LINE` 이 문서에 그대로 있다는 단언. verify RED: 표준 오류가 비어 있음, 상수 없음.
   closes US4-4(pytest), supports FR-013
-- [ ] T023 [P] [US4] `nix/module-eval.nix`(새)와 `flake.nix` 의 `checks.x86_64-linux.module-eval`(contracts/module.md §2): `self.nixosModules.default`
+- [X] T023 [P] [US4] `nix/module-eval.nix`(새)와 `flake.nix` 의 `checks.x86_64-linux.module-eval`(contracts/module.md §2): `self.nixosModules.default`
   + `services.stt.enable = true; boot.isContainer = true;` 를 systemd `256.10`(`overrideAttrs` + `__intentionallyOverridingVersion = true`)·`257`·고정된
   nixpkgs 의 판으로 평가해 실패한 단언 문장을 모으고, 평가 시점 `assert` 셋(256.10 은 `services.stt needs systemd 257 or later` 로 시작하고 `256.10` 을
   담는 문장이 정확히 하나, 나머지 둘은 없음)이 통과하면 빈 결과물. `captest 8G 15m nix build .#checks.x86_64-linux.module-eval -L`. verify RED: 단언이
@@ -286,17 +286,17 @@ description: "Task list for 003-reader-hardening"
 
 ### Implementation for User Story 4 (turn T021–T023 GREEN)
 
-- [ ] T024 [US4] `src/stt/server/reader.py`: `serve()` 맨 앞 `signal.signal(signal.SIGINT, signal.SIG_IGN)`(`_supervise` 는 바꾸지 않음),
+- [X] T024 [US4] `src/stt/server/reader.py`: `serve()` 맨 앞 `signal.signal(signal.SIGINT, signal.SIG_IGN)`(`_supervise` 는 바꾸지 않음),
   `MANUAL_RUN_LINE` 상수와 표준 입력이 연결된 `AF_UNIX` `SOCK_SEQPACKET` 소켓이 아닐 때 표준 오류에 그 한 줄을 쓰고 2(표준 출력 없음),
   `DEFAULT_CHILD_COMMAND` 에 `-I`. 감독의 다른 줄은 그대로. RED → GREEN: turns T021(a), T021(c)의 자식 부분, T022 의 cli 부분 GREEN.
   closes US4-1, US4-4, US4-5(자식), supports FR-010, FR-013, FR-014
-- [ ] T025 [US4] `src/stt/server/worker.py`: `_write_audio` 가 `os.open(…, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)` 의 기술자를
+- [X] T025 [US4] `src/stt/server/worker.py`: `_write_audio` 가 `os.open(…, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)` 의 기술자를
   `with os.fdopen(fd, "wb")` 로 감싸 `wave.open(<파일 객체>, "wb")` 에 넘긴다(경로로 다시 열지 않음, `wave.open` 은 모듈로 불러 저장 오류 시험
   `test_decoder_us3.py:452` 의 바꿔치기가 그대로 닿음). `DEFAULT_ENGINE_CMD` 에 `-I`. RED → GREEN: turns T021(b), T021(c)의 엔진 부분 GREEN, 기존 저장
   오류 시험 그대로 GREEN. closes US4-3, US4-5(엔진), supports FR-012, FR-014
-- [ ] T026 [US4] `nix/module.nix` 의 `config = lib.mkIf cfg.enable { … }` 에 `assertions`(contracts/module.md §1 의 문장 그대로, 영어). 다른 설정은
+- [X] T026 [US4] `nix/module.nix` 의 `config = lib.mkIf cfg.enable { … }` 에 `assertions`(contracts/module.md §1 의 문장 그대로, 영어). 다른 설정은
   건드리지 않는다. RED → GREEN: turns T023 GREEN. closes US4-2, supports FR-011
-- [ ] T027 [US4] `docs/server-security.md` §2 감독의 줄 문단에 손 실행 줄(`MANUAL_RUN_LINE` 그대로)과 「해독 자식과 엔진은 `python -I` 로 떠서 현재
+- [X] T027 [US4] `docs/server-security.md` §2 감독의 줄 문단에 손 실행 줄(`MANUAL_RUN_LINE` 그대로)과 「해독 자식과 엔진은 `python -I` 로 떠서 현재
   폴더를 모듈 찾는 길에 넣지 않는다」 한 줄, §3 감독 줄 목록에 손 실행 줄(운영 중에는 나오지 않음). RED → GREEN: turns T022 의 문서 단언 GREEN.
   supports US4-4, US4-5, FR-016
 
