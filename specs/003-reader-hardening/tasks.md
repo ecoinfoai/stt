@@ -330,7 +330,7 @@ description: "Task list for 003-reader-hardening"
   가 비어 있음. 이 기능에서 만든 시험 녹음이 모두 사인파·무음·단색·잘린 것·텍스트 파일뿐인지 `tests/server/conftest.py`·`nix/vm-test.nix` 를 훑어
   확인한다(FR-017). 코드·시험·로그에 한글이 없음을 `grep -nP '[\x{AC00}-\x{D7A3}]' src tests nix` 로 본다(기존 `transcribe.py` 의 한국어 출력 문장은
   예외 — 002 plan Complexity Tracking). 찍힌 최대값을 커밋 메시지에. RED 해당 없음 — 확인. closes SC-005, SC-006(로컬 몫 — 3.10·3.11·3.12), supports FR-015, FR-017
-- [ ] T032 T-Verify-Final: `project-audit` 스킬로 최종 감사 — 범위 qa-engineer(7-Layer 모듈·통합·E2E) + adversary(20+ 페르소나 + silent-skip).
+- [X] T032 T-Verify-Final: `project-audit` 스킬로 최종 감사 — 범위 qa-engineer(7-Layer 모듈·통합·E2E) + adversary(20+ 페르소나 + silent-skip).
   adversary 는 코드와 설정만 읽고, 입력 파일을 만들거나 돌리지 않는다(FR-017, 001 T078 의 교훈). 특히 볼 곳: 두 겹 목록이 모든 열기 길에 걸리는지
   (`find_stream_info`·해독·재전사), 받기·워커가 PyAV 를 불러오지 않는지, 원인 이름 집합이 닫혀 있는지, 새 줄에 작업 ID·경로·숫자가 새지 않는지,
   VM 감시 라이브러리가 운영 모듈에 새지 않는지. BOUNDARY_MISMATCH / INTEGRATION_MISSING / SILENT_SKIP_NEW / PERSONA_ATTACK_SUCCESS 가 나오면 고칠
@@ -367,7 +367,7 @@ description: "Task list for 003-reader-hardening"
 - [X] T040 qa L4(배포 전 확인): 배포될 전체 `server` 묶음(화자 구분 포함)의 Python 으로 `-I` 아래 엔진과 해독 자식 모듈이 불러와지는지 본다 —
   `captest 8G 30m nix build .#<server 패키지> --no-link --print-out-paths` 뒤 그 `bin/python -I -c 'import stt.server.engine, stt.server.reader'`
   (끝 코드 0). 결과를 `research.md` R10 에 한 줄로 적는다. RED 해당 없음 — 확인. closes 감사 qa L4
-- [ ] T041 바뀐 곳만 다시 감사(`project-audit`, qa-engineer + adversary, T036~T040 의 바뀜만, adversary 는 코드·설정만 읽음). High 이상이
+- [X] T041 바뀐 곳만 다시 감사(`project-audit`, qa-engineer + adversary, T036~T040 의 바뀜만, adversary 는 코드·설정만 읽음). High 이상이
   없어야 T033 으로 간다. 결과를 `specs/003-reader-hardening/audit/reaudit-*.md` 에. RED 해당 없음 — 감사. supports SC-001~006
 
 ---
