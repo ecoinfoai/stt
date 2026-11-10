@@ -28,7 +28,8 @@ from stt.server.layout import Layout, describe_error, hold
 from stt.server.reader_client import ReaderConfig
 from stt.server.records import Failure, Job, load_audio, load_job, load_jobs, queued_in_order
 
-DEFAULT_ENGINE_CMD: tuple[str, ...] = (sys.executable, "-m", "stt.server.engine")
+# -I keeps the current folder out of the engine's module search path.
+DEFAULT_ENGINE_CMD: tuple[str, ...] = (sys.executable, "-I", "-m", "stt.server.engine")
 
 _WORK_FOLDER_MODE = 0o700
 # The setgid bit comes from outbox at mkdir: RestrictSUIDSGID refuses a chmod that asks for it.
@@ -102,10 +103,14 @@ def _prepare(layout: Layout, job: Job) -> tuple[Path, Path]:
 
 
 def _write_audio(work_dir: Path, samples: bytes | bytearray) -> None:
-    """Writes 16 kHz mono s16le `samples` to ``audio.wav`` in `work_dir`, readable by the owner only."""
+    """Writes 16 kHz mono s16le `samples` to ``audio.wav`` in `work_dir`, readable by the owner only.
+
+    The file is written through the descriptor that created it, never reopened by path: a path deleted in
+    between must not come back with the unit's wider default mode.
+    """
     path = work_dir / _AUDIO_FILE
-    os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _AUDIO_FILE_MODE))
-    with wave.open(str(path), "wb") as handle:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    with os.fdopen(os.open(path, flags, _AUDIO_FILE_MODE), "wb") as file, wave.open(file, "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(_SAMPLE_WIDTH_BYTES)
         handle.setframerate(_SAMPLE_RATE_HZ)
