@@ -41,6 +41,14 @@ MAX_DECODED_BYTES = 362_880_000
 # (m4a, mp3, wav, flac, ogg, opus, aac, wma). Opening any other format could
 # follow references to other files, such as a playlist's.
 AUDIO_FORMATS = "mov,mp3,wav,flac,ogg,aac,asf"
+# FFmpeg decoders (``AVCodec.name``) of the audio the server reads: the codecs of the formats above plus the
+# codecs of common recorders. No video, image or subtitle decoder is on it. Adding or removing a name also
+# changes the table in docs/server-security.md and the per-format test.
+AUDIO_DECODERS = (
+    "aac,alac,flac,mp3float,mp2,opus,vorbis,wmav1,wmav2,wmapro,wmavoice,wmalossless,ac3,eac3,amrnb,amrwb,"
+    "adpcm_ima_wav,adpcm_ms,pcm_alaw,pcm_f32be,pcm_f32le,pcm_f64be,pcm_f64le,pcm_mulaw,pcm_s16be,pcm_s16le,"
+    "pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_s8,pcm_u8"
+)
 # The decode child's exit status for "the output is complete up to the first invalid frame".
 EARLY_STOP_EXIT = 3
 
@@ -342,11 +350,29 @@ def container_duration_s(container: Any) -> float:
 def _open_container(recording: BinaryIO) -> Any:
     from stt.audio_decode import open_container
 
-    return open_container(recording, format_whitelist=AUDIO_FORMATS)
+    return open_container(recording, format_whitelist=AUDIO_FORMATS, codec_whitelist=AUDIO_DECODERS)
+
+
+def first_audio_decoder_allowed(container: Any) -> bool:
+    """Tells whether the first audio stream has a decoder that is on ``AUDIO_DECODERS``.
+
+    Args:
+        container: An open PyAV input container.
+
+    Returns:
+        False when the container has no audio stream, the stream has no codec context, or the decoder's
+        name is not on the list.
+    """
+    if not container.streams.audio:
+        return False
+    context = container.streams.audio[0].codec_context
+    return context is not None and context.codec.name in AUDIO_DECODERS.split(",")
 
 
 def _probe(recording_fd: int, output_fd: int) -> bool:
     with open(recording_fd, "rb") as recording, _open_container(recording) as container:
+        if not first_audio_decoder_allowed(container):
+            raise ValueError("the first audio stream has no allowed decoder")
         duration = container_duration_s(container)
     with open(output_fd, "wb") as output:
         output.write(json.dumps({"duration_s": duration}).encode("utf-8"))

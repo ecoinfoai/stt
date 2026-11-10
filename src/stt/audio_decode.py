@@ -28,13 +28,20 @@ _BYTES_PER_SAMPLE = 2
 _METADATA_ERRORS_REMOVED_IN = 19
 
 
-def open_container(source: BinaryIO | str, *, format_whitelist: str | None = None) -> Any:
+def open_container(
+    source: BinaryIO | str, *, format_whitelist: str | None = None, codec_whitelist: str | None = None
+) -> Any:
     """Opens a recording for reading.
 
     Args:
         source: A path or a binary file object.
         format_whitelist: FFmpeg demuxer names (comma separated) the container may use;
             None allows every format.
+        codec_whitelist: FFmpeg decoder names (comma separated) that may be opened; None allows every
+            decoder. The list is applied twice because FFmpeg opens decoders at two points: while the
+            container is analysed (``container_options``) and when a stream is decoded (the options
+            of the stream's codec context, which PyAV passes to ``avcodec_open2``). A decoder outside
+            the list is refused with ``av.error.ArgumentError`` when its stream is decoded.
 
     Returns:
         An open PyAV input container.
@@ -44,9 +51,19 @@ def open_container(source: BinaryIO | str, *, format_whitelist: str | None = Non
     options: dict[str, Any] = {}
     if int(av.__version__.split(".")[0]) < _METADATA_ERRORS_REMOVED_IN:
         options["metadata_errors"] = "ignore"
+    container_options: dict[str, str] = {}
     if format_whitelist is not None:
-        options["container_options"] = {"format_whitelist": format_whitelist}
-    return av.open(source, mode="r", **options)
+        container_options["format_whitelist"] = format_whitelist
+    if codec_whitelist is not None:
+        container_options["codec_whitelist"] = codec_whitelist
+    if container_options:
+        options["container_options"] = container_options
+    container = av.open(source, mode="r", **options)
+    if codec_whitelist is not None:
+        for stream in container.streams:
+            if stream.codec_context is not None:
+                stream.codec_context.options["codec_whitelist"] = codec_whitelist
+    return container
 
 
 def _write_resampled(resampler: Any, frame: Any, output: BinaryIO) -> None:
