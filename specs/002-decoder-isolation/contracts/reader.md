@@ -59,6 +59,8 @@ close                                       자식을 거둔 뒤 끝남
 | `AUDIO_FORMATS` | `mov,mp3,wav,flac,ogg,aac,asf` — `intake.py:49` 에서 옮김 | 001 FR-004a |
 | `EARLY_STOP_EXIT` | 3 — decode 자식의 끝 코드: 출력은 첫 깨진 조각 앞까지 온전하다 | 경계 사례 10, FR-023 |
 
+003 이 상수 `AUDIO_DECODERS`(해독기 이름 목록)·`MANUAL_RUN_LINE` 을 더하고 `DEFAULT_CHILD_COMMAND` 에 `-I` 를 더한다: [003 contracts/reader.md](../../003-reader-hardening/contracts/reader.md) §1.
+
 ## 5. 감독의 의무 (`stt server read`)
 
 1. 표준 라이브러리만 불러온다. 녹음 기술자와 파이프에서 읽지도 쓰지도 않는다.
@@ -86,6 +88,8 @@ close                                       자식을 거둔 뒤 끝남
    호출하는 쪽에는 아무것도 달라지지 않는다. 장악된 자식은 이 알림도 정상 종료도 속일 수 있으므로 이 줄은 운영자 신호일 뿐 보안 통제가 아니다.
    probe 가 `EARLY_STOP_EXIT` 로 끝나면 일반 끝 코드로 본다.
 
+003 이 감독의 SIGINT 무시와 손으로 띄웠을 때의 안내 줄을 더한다: [003 contracts/reader.md](../../003-reader-hardening/contracts/reader.md) §4.
+
 ## 6. 해독 자식의 의무 (`python -m stt.server.reader child probe|decode`)
 
 - 공통: 인자로 받은 녹음 기술자를 파일 객체로 열어 공유 해독 모듈 `stt.audio_decode.open_container(recording, format_whitelist=AUDIO_FORMATS)`
@@ -108,6 +112,8 @@ close                                       자식을 거둔 뒤 끝남
   같다. PyAV 19 이상에서는 그 함수가 `metadata_errors` 때문에 돌지 않으므로, 16 kHz 모노 s16 WAV(`make_wav`)가 자기 표본과 정확히 같게 나오는지를 본다
   (손실 형식은 길이·크기만 본다). 두 갈래 모두 단언한다.
 
+003 이 자식이 두 목록(`format_whitelist`·`codec_whitelist`)으로 열게 하고, probe 에 첫 음성 흐름의 해독기 이름 확인을 더하고, 자식을 `python -I` 로 띄운다: [003 contracts/reader.md](../../003-reader-hardening/contracts/reader.md) §2·§3.
+
 ## 7. 호출하는 쪽의 의무 (`src/stt/server/reader_client.py`)
 
 - 녹음은 내부 경로(`audio/<audio_id>/audio.<ext>`)를 `O_RDONLY | O_NOFOLLOW | O_CLOEXEC` 로 연다. 파이프는 `O_CLOEXEC` 로 만들고, 보낸 뒤 자기
@@ -121,6 +127,7 @@ close                                       자식을 거둔 뒤 끝남
   - `timeout` — 작업 상한.
 - decode 를 기다리는 동안 `poll_s`(2초)마다 job 이 아직 `running` 인지 본다. 아니면 연결과 파이프를 닫고 `stopped` 를 낸다.
 - 읽기 단위를 쓸 수 없을 때 받기나 워커 안에서 직접 해독하는 대체 길은 없다(헌법 V) — 그것은 격리를 말없이 끄는 일이다.
+- 003 이 녹음 열기를 `O_NONBLOCK` 으로 바꾸고 일반 파일이 아니면 `RecordingError` 를 낸다: [003 contracts/reader.md](../../003-reader-hardening/contracts/reader.md) §5.
 
 ## 8. 명령줄 (001 `contracts/cli.md` §1 에 더함)
 
@@ -129,6 +136,8 @@ close                                       자식을 거둔 뒤 끝남
 | `stt server read` | 새 명령. 읽기 단위의 `ExecStart`. 상태 폴더도 단계 잠금도 쓰지 않고, 상태 폴더 주인 검사(001 FR-038)도 하지 않는다 — 일회용 사용자로 돈다. 표준 입력이 연결 소켓이 아니면 끝 코드 2 |
 | ↳ 끝 코드 | 0 — 요청에 답했다(거절 `{"started": false}` 포함). 또는 호출하는 쪽이 끊었다. 1 — 요청이 오지 않았다(`START_TIMEOUT_S` 안에 없거나 요청 없이 닫힘). 감독 내부 예외도 1(트레이스백). 2 — 표준 입력이 연결된 `AF_UNIX` `SOCK_SEQPACKET` 소켓이 아니다 |
 | `stt server intake`, `stt server work` | `--reader-socket PATH`(기본 `/run/stt-reader.sock`) |
+
+003 이 끝 코드 2 일 때 표준 오류에 안내 한 줄(`MANUAL_RUN_LINE`)을 쓰게 한다: [003 contracts/reader.md](../../003-reader-hardening/contracts/reader.md) §4.
 
 ## 9. 시험용 대역의 자리 (FR-028)
 

@@ -128,7 +128,7 @@ stt server read only serves a connection that systemd passes from stt-reader.soc
 | `pcm_u8` | PCM 8-bit unsigned | wav, m4a |
 
 인코더가 없어 끝까지 읽어 보지 못한 이름은 `wmapro`·`wmavoice`·`wmalossless`·`amrwb` 넷이다(시험 파일을 밖에서 받지 않는다). 그런 녹음이 처음 올 때 운영 확인으로
-본다.
+본다: 응답이 `unreadable_audio` 가 아니고 `journalctl -u 'stt-reader@*' -g 'reader child'` 에 그 시각의 `reader child` 줄이 없으면 읽힌 것이다.
 
 **남는 범위.** 분석기(parser)와 형식(demuxer)은 목록이 막지 않는다. 길이 재기의 분석 중 영상 분석기가 영상 묶음 몇 개를 읽을 수 있고, 해독 중에도 영상 묶음이
 형식·분석기를 지난다(research R3 — 해독 단계에서 영상 묶음을 버리는 안은 운영자가 미뤘다, 2026-11-10). 공지가 분석기·형식에 관한 것이면 지금처럼 판정한다.
@@ -338,7 +338,7 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
 - `nixpkgs ffmpeg`: P2 뒤 서버의 GPU 단계는 `ffmpeg` 를 부르지 않는다. 운영자의 명령줄이 쓴다. 마지막 갱신일은 nixpkgs 커밋이 바뀐 날이다
   (`5afc555` 는 이 커밋을 바꾸지 않았다).
 - `uv.lock` 은 2026-10-22(`eea5374`)에 바뀌었으나 위 판은 하나도 바뀌지 않았다.
-- 후속 후보: 코덱 허용목록(쓸 수 있는 해독기 이름의 제한)은 넣지 않았다. 읽기 격리(P2)가 범위를 막는다(research R7).
+- 코덱 허용목록: 003(배포 커밋·날짜: `pending`)부터 서버 경로는 §2 「해독기 목록」의 음성 해독기만 연다. 영상·이미지·자막 해독기는 분석에서도 해독에서도 열리지 않는다. 분석기·형식은 남는다(§2).
 
 ### 4.2 갱신 정책
 
@@ -352,6 +352,8 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
   - `nixpkgs-ffmpeg` — nixpkgs 의 `ffmpeg` 갱신, 예: `nix eval --raw github:NixOS/nixpkgs/nixos-unstable#ffmpeg.version`
 - **보안 공지**: 서버의 판에 해당하는 공지가 나오면 7일 안에 올리거나, 올리지 않는 이유(이 서버의 판에 해당하지 않음 등)를 4.3 표의 `reason` 에
   적는다. 올렸으면 `updated` 에 날짜를 적는다.
+- **영상·이미지·자막 해독기만의 공지**: 서버 경로에서 열리지 않으므로(§2 해독기 목록) 4.3 의 `reason` 에 「서버 경로에서 열리지 않음(§2)」을 적을 수 있다. 분석기·형식·목록 안 음성
+  해독기의 공지는 지금처럼 7일 안에 올리거나 이유를 적는다.
 - **휠이 아직 없을 때**: FFmpeg 보안 수정이 나왔는데 고친 판을 담은 새 PyAV 휠이 아직 없으면, `reason` 에 「배포된 휠 없음 + 읽기 격리(P2)가
   범위를 막음」을 적고 다음 달 확인에서 다시 본다.
 - **올리는 순서**: (1) 잠금 파일 갱신(PyAV 는 `uv lock --upgrade-package av`, nixpkgs 는 `nix flake update nixpkgs`) → (2) 빌드·시험 →

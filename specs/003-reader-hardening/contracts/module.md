@@ -26,13 +26,14 @@ assertions = [
 
 - 위치: `flake.nix` 의 `checks.x86_64-linux` 에 `module-eval`(본문은 `nix/module-eval.nix` 로 두어도 된다).
 - 하는 일: `nixpkgs.lib.nixosSystem` 으로 `self.nixosModules.default` + `services.stt.enable = true; boot.isContainer = true;` 를 평가하고,
-  `config.assertions` 가운데 실패한 것의 문장을 모은다(빌드하지 않는다).
+  `config.assertions` 가운데 실패한 것의 문장을 모은다(빌드하지 않는다). 단언만 평가하므로 `services.stt.package` 는 `pkgs.hello` 로 바꿔 넣어
+  진짜 서버 환경을 평가하지 않고, 평가에 필요한 `system.stateVersion = "25.11"` 도 같이 둔다.
   - `systemd.package` 를 `pkgs.systemd.overrideAttrs (_: { version = "256.10"; __intentionallyOverridingVersion = true; })` 로 바꾼 평가: 실패한 문장 가운데
     `services.stt needs systemd 257 or later` 로 시작하는 것이 정확히 하나이고 `256.10` 을 담는다.
   - `version = "257"` 인 평가와 바꾸지 않은 평가(261.1): 그 문장이 없다.
   - 위 셋을 평가 시점의 `assert` 로 두고, 통과하면 빈 결과물(`runCommand … "touch $out"`)을 낸다. 그래서 CI 의 `nix flake check --no-build` 도 단언이 빠지면
     실패한다.
-- 비용: NixOS 평가 한 번의 최대 메모리가 약 4.2 GB 였다(research R7). 로컬은 `captest 8G 15m nix build .#checks.x86_64-linux.module-eval -L`.
+- 비용(잰 값): `module-eval` 빌드 6초·최대 728 MiB, `nix flake check --no-build` 14초·최대 2820 MiB. 로컬은 `captest 8G 15m nix build .#checks.x86_64-linux.module-eval -L`.
 - RED: 단언을 넣기 전에 이 검사를 먼저 넣으면 첫 `assert` 가 실패한다.
 
 ## 3. VM 시험 노드에만 있는 것 (`nix/vm-test.nix`, 운영 모듈에는 없음)

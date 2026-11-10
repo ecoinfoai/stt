@@ -308,22 +308,22 @@ description: "Task list for 003-reader-hardening"
 
 **Purpose**: VM GREEN, 남은 문서, 전체 회귀, 최종 감사. 감사는 기능 브랜치를 마치기 전 한 번(헌법 「최종 검증」).
 
-- [ ] T028 VM GREEN: `captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L` 가 통과한다 — B-003-1~4 와 **B-003-5**(기존 B-P1·B-P2 부분 시험이
+- [X] T028 VM GREEN: `captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L` 가 통과한다 — B-003-1~4 와 **B-003-5**(기존 B-P1·B-P2 부분 시험이
   감시 라이브러리가 실린 채로 모두 통과, B-P2-1 의 설정 단언 그대로). **해결 `[VERIFY]` B-003-2**: 빌드 안에서
   `head -c` 로 자른 넷이 이 세션의 측정처럼 읽혀(처음 잰 길이 10초 안팎, 해독 반쯤) 잘림 줄이 정확히 4 다. 어긋나면 원인을 research R12 에 적고
   파일 만드는 법을 고친다(기준값을 넓히지 않는다). 찍힌 최대 메모리를 커밋 메시지에. RED 해당 없음 — RED 는 T005 에서 봤다(이 과제는 같은 단언의
   GREEN 확인). closes US1-1~5(VM), US2-1·2·4(VM), US3-1·2·3(VM), US4-4(VM), SC-001(VM), SC-002(VM), SC-003(VM), SC-004(VM), `[VERIFY]` B-003-2,
   supports SC-006
-- [ ] T029 [P] `docs/server-security.md` §4(contracts/operator-log.md §5.3): `:238` 「후속 후보: 코덱 허용목록 … 넣지 않았다」 줄을 「코덱 허용목록:
+- [X] T029 [P] `docs/server-security.md` §4(contracts/operator-log.md §5.3): `:238` 「후속 후보: 코덱 허용목록 … 넣지 않았다」 줄을 「코덱 허용목록:
   003(배포 커밋·날짜)부터 서버 경로는 §2 『해독기 목록』의 음성 해독기만 연다 …」로 바꾸고(커밋·날짜 자리는 `pending` 으로 두었다가 T033 에서 채운다),
   4.2 정책에 「영상·이미지·자막 해독기만의 공지는 4.3 의 `reason` 에 『서버 경로에서 열리지 않음(§2)』을 적을 수 있다. 분석기·형식·목록 안 음성
   해독기의 공지는 지금처럼」 한 항목. `stt:policy` 표식·4.3 의 기존 다섯 줄은 바꾸지 않는다. WMA Pro·Voice·Lossless·AMR-WB 는 시험 파일 없이 목록에
   있다는 사실과 첫 실제 녹음 때의 확인 방법(응답과 `reader child` 줄)을 §2 해독기 목록 아래 한 줄로 적는다. RED 해당 없음 — 문서(기존
   `stt:policy` 대조 시험이 그대로 GREEN 인지 T031 에서 본다). supports FR-016, US1-6
-- [ ] T030 [P] `specs/002-decoder-isolation/contracts/reader.md` 의 §4(상수 `AUDIO_DECODERS`)·§5(SIGINT 무시, 손 실행 줄)·§6(두 목록, 길이 재기의
+- [X] T030 [P] `specs/002-decoder-isolation/contracts/reader.md` 의 §4(상수 `AUDIO_DECODERS`)·§5(SIGINT 무시, 손 실행 줄)·§6(두 목록, 길이 재기의
   이름 확인, `-I`)·§7(`RecordingError`·`O_NONBLOCK`)·§8(끝 코드 2 의 줄)에 이 기능의 `specs/003-reader-hardening/contracts/` 를 가리키는 한 줄씩
   (research R14). 스키마·001 계약 문서는 건드리지 않는다. RED 해당 없음 — 내부 계약 문서. supports FR-015
-- [ ] T031 전체 회귀(A 층): `captest 4G 20m uv run --locked python -m pytest -q`(3.12, av 19.0.2)와, push 전이라 CI 대신 로컬에서 uv 가 받은
+- [X] T031 전체 회귀(A 층): `captest 4G 20m uv run --locked python -m pytest -q`(3.12, av 19.0.2)와, push 전이라 CI 대신 로컬에서 uv 가 받은
   CPython 으로 3.10(av 17.1.0)·3.11(av 18.1.0) — `UV_PYTHON_PREFERENCE=managed UV_PYTHON_INSTALL_DIR=<scratch>/pythons
   UV_PROJECT_ENVIRONMENT=<scratch>/venv310 captest 4G 30m uv run --locked --python 3.10 --extra server --extra diarize python -m pytest -q -p no:cacheprovider`,
   3.11 도 같은 꼴(`venv311`), 끝나면 두 환경을 지운다(`<scratch>` 는 세션 scratchpad). AMR-NB 시험이 3.10·3.11 에서 도는지 확인 — 모두 통과, `captest 8G 15m nix build .#checks.x86_64-linux.module-eval -L` GREEN, `git diff --stat master -- src/stt/server/schemas`
