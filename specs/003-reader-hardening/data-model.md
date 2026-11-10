@@ -73,7 +73,7 @@
 | 읽기 준비 | 녹음 파일이 없음 | 워커가 `StopIteration` 으로 멈춤 → 다음 시작·청소에서 `failed(interrupted)` | `engine_error` · 「The server could not start the audio reader.」 · 줄 `… recording_unusable` |
 | 읽기 준비 | 녹음이 일반 파일이 아님(디렉터리 등) | 워커가 `ValueError` 로 멈춤 → `interrupted` | 같음(위) |
 | 읽기 준비 | 녹음이 FIFO | 열기에서 영원히 막힘 | 같음(위) |
-| 읽기 준비 | 녹음 열기 권한·기술자 부족 | `engine_error`, 줄 원인 없음 | `engine_error` · 같은 문장 · `recording_unusable` |
+| 읽기 준비 | 녹음 열기 권한·기술자 부족 | `engine_error`, 줄 원인 없음 | `engine_error` · 같은 문장 · `recording_unusable` (다시 확인에서도 기술자가 계속 모자라면 워커가 멈추고 줄이 없다 — operator-log.md §2) |
 | 읽기 | 띄우지 못함(`unavailable`) | `engine_error`, 줄 원인 없음 | 같은 응답 · `reader_unavailable` |
 | 읽기 | 그 밖의 `OSError`·`ValueError` | `OSError` 는 `engine_error`, `ValueError` 는 워커 멈춤 | `engine_error` · 같은 문장 · `unexpected` |
 | 읽기 | 길이 재기에서 목록 밖 음성 코덱(Speex·GSM 등) | (받아들여 전사) | 받기 `unreadable_audio` · 「The recording could not be read as audio.」 |

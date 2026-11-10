@@ -134,7 +134,7 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
     🟢 WAV 안 Yamaha·G.726, MOV(`.m4a`) 안 QuickTime IMA4 는 거절됐다(그 해독기 열리지 않음). 실제 녹음이 오면 이름 하나를 더하는 별도 변경으로 한다.
   - 그 밖의 음성 코덱: MPEG Layer I(`mp1`), TrueSpeech(`truespeech`) 등 목록에 없는 모든 것.
 - **판을 올릴 때**: FFmpeg 이 어떤 코덱의 기본 해독기 이름을 바꾸면(예: `mp3float` → 다른 이름) 그 형식이 모두 거절된다. 매달 갱신 순서의
-  「빌드·시험」(4.2)에서 A 층의 형식별 시험과 VM 의 B-P2-8 이 잡는다(인코더가 없는 넷은 잡지 못한다 — 위 `[VERIFY]`).
+  「빌드·시험」(4.2)에서 A 층의 형식별 시험과 VM 의 B-P2-8 이 잡는다(인코더가 없는 넷은 끝까지 읽는 시험이 없다 — 위 `[VERIFY]`. 32 이름이 설치된 음성 해독기인지는 `test_hardening_fr_1_…` 이 본다).
 - **대안**: 형식 8가지에 실제로 쓰인 7개만 — 24비트 WAV·ALAC 같은 정상 녹음이 회귀한다. 목록을 운영자 설정으로 — 판단 경로가 늘고(헌법 I),
   코드 한 곳·문서 한 곳의 규칙(FR-004)과 맞지 않는다. 처음 낸 22개(녹음기 코덱 없이) — 002 까지 전사되던 녹음기 녹음(ADPCM WAV, MP2, AC-3, AMR, WMA
   Pro·Voice)이 거절된다. 운영자가 더하기로 정했다(2026-11-10).
@@ -377,7 +377,8 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
   - §3 에 워커의 두 줄(잘림, 원인 종류)과 그때 볼 것, 표식 `<!-- stt:engine-error-causes -->` 표, `<!-- stt:truncation threshold_s=1.0 -->`, 손으로 띄운
     `stt server read` 의 줄. 「가장 흔한 줄」의 원인에 「목록 밖 코덱」을 더한다.
   - §4 의 「후속 후보: 코덱 허용목록 … 넣지 않았다」(`docs/server-security.md:238`)를 이 기능의 결과로 바꾸고, 4.2 정책에 「영상·이미지·자막 해독기만의
-    공지는 『서버 경로에서 열리지 않음』을 이유로 적을 수 있다」를 더한다.
+    공지는 『서버 경로에서 열리지 않음』을 이유로 적을 수 있다」를 더한다. (최종 감사 뒤 좁힘, T036: 이 판정은 취약한 코드를 해독기만 쓸 때에 한한다 — 현행 규칙은
+    `docs/server-security.md` §4.2 와 [contracts/operator-log.md](contracts/operator-log.md) §5.3.)
   - `tests/test_server_security_doc.py` 가 표식으로 읽어 `reader.AUDIO_DECODERS`·`worker.ENGINE_ERROR_CAUSES`·`worker.TRUNCATION_THRESHOLD_S`·
     `worker.TRUNCATION_LINE`·`reader.MANUAL_RUN_LINE` 과 같은지 본다(FR-004, US1-6). 문서는 한국어, 시험이 읽는 자리는 영어다(헌법 언어 규칙).
 - **근거**: FR-004·FR-016, 002 R16 의 「문서 ↔ 코드 시험」 방식.

@@ -77,7 +77,7 @@ class RecordingError(OSError):
 - `DEFAULT_ENGINE_CMD = (sys.executable, "-I", "-m", "stt.server.engine")` — `-I` 를 더함(R10).
 - `_prepare` 는 녹음 경로를 `audio/<audio_id>/audio.<ext>` 로 정한다. `<ext>` 는 녹음 기록의 `original_name.rsplit(".", 1)[1]` 이다(받기의
   `_copy_attachment` 와 같은 규칙). `glob` 하지 않으므로 녹음이 없어도 `StopIteration` 이 나지 않고, 열기에서 `RecordingError`(ENOENT)가 된다.
-- 읽기 단계의 예외는 [operator-log.md](operator-log.md) §2 의 원인 종류로 나뉜다. 녹음 열기 오류와 일시적 `OSError`·`ValueError` 는 워커를 멈추지 않는다(FR-009). 그 밖의 예외와, 다시 확인·마무리에서도 나는 같은 오류(작업 기록 읽기 불가, 기술자 부족 지속)는 워커를 멈추고 작업은 다음 시작 때 `interrupted` 가 된다(operator-log.md §2).
+- 읽기 단계의 예외는 [operator-log.md](operator-log.md) §2 의 원인 종류로 나뉜다. 녹음 열기 오류와 일시적 `OSError`·`ValueError` 는 워커를 멈추지 않는다(FR-009). 그 밖의 예외와, 다시 확인·마무리에서도 나는 같은 오류(작업 기록 읽기 불가, 기술자 부족 지속)는 워커를 멈춘다. 기술자 부족이면 작업은 다음 워커 시작이나 청소에서 `interrupted` 가 되고, 작업 기록이 계속 읽히지 않으면 `interrupted` 에 이르지 못한 채 시작마다 `clear_dead_worker` → `load_jobs` 가 실패해 대기열이 멈춘다(002 의 동작, 운영자가 그 기록을 고치거나 옮겨야 풀림. operator-log.md §2).
 - `_write_audio` 는 만든 기술자(`O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW`, `0o600`)를 `os.fdopen` 으로 감싸 `wave.open(<파일 객체>, "wb")`
   에 넘긴다. 경로로 다시 열지 않는다(R11). `wave.open` 은 모듈로 부른다(저장 오류 시험의 바꿔치기 자리).
 

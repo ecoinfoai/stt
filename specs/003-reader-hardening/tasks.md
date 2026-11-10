@@ -386,10 +386,10 @@ description: "Task list for 003-reader-hardening"
   than the probed length'` 와 `journalctl -k -g 'type=1326'` 이 빔. **C-003-3** 운영자가 호스트 `ffmpeg` 로 만든 사인파 + 단색 영상 `m4a` 와 사인파
   MP3 + 단색 PNG 표지를 보안 문서 §3 의 「안전한 재확인」 스니펫으로 배포된 읽기 소켓을 거쳐 읽어 `ok … ok`·맞는 길이, 같은 시각 `reader child` 줄과
   `type=1326` 없음((선택) 1차로 맡겨 `done`). 목록이 켜졌음을 가리는 단계: 호스트 `ffmpeg` 로 만든 사인파 Speex(`-c:a libspeex -f ogg`, VM 과 같은 꼴)를 같은 스니펫으로
-  읽으면 probe 가 `failed`(002 는 `ok`)이고 그 시각에 `reader child probe exited with status 1` 이 있음. **C-003-4**(선택) 사인파 10초 MP3 를 반으로 잘라 1차로 → `done` 과 잘림 줄 하나. **C-003-5** 셸에서
+  읽으면(`stt` 가 읽도록 `chmod 0644`) probe 와 decode 가 모두 `failed`(002 는 `ok`)이고 그 시각에 `reader child probe exited with status 1` 과 `reader child decode exited with status 1` 이 하나씩 있음(`libspeex` 가 없으면 파일 만들기에서 막히며 통과가 아님). **C-003-4**(선택) 사인파 10초 MP3 를 반으로 잘라 1차로 → `done` 과 잘림 줄 하나. **C-003-5** 셸에서
   `stt server read` → 안내 한 줄, `echo $?` 가 2. **운영 확인 `[VERIFY]` R2**(WMA Pro·Voice·Lossless·AMR-WB): 시험 파일 없이, 배포된 해석기로
   `python -I -c` 를 돌려 `wmapro`·`wmavoice`·`wmalossless`·`amrwb` 가 모두 `av.codec.Codec(name, "r")` 로 열리고 `type == "audio"` 임을 본다(해독기
-  이름이 배포된 FFmpeg 에 있다). 끝까지 읽는 확인은 그런 녹음이 처음 들어올 때 한다(통과 기준: 비어 있지 않은 전사록이고 그 시각에 일찍 멈춤·잘림·실패 줄이 없음. 운영자가 그 녹음을 아는 길은 호출하는 쪽의 알림뿐이라 그 전까지 네 이름은 「알려질 때까지 확인 안 됨」) — 이 남은 확인을 회신과 `docs/server-security.md` §4
+  이름이 배포된 FFmpeg 에 있다). 끝까지 읽는 확인은 그런 녹음이 처음 들어올 때 한다(통과 기준: 비어 있지 않은 전사록이고 그 시각에 일찍 멈춤·잘림·실패 줄이 없음. 운영자가 그 녹음을 아는 길은 호출하는 쪽의 알림뿐이고 그 알림은 코덱 이름을 대야 한다 — `.wma`·`.m4a` 확장자만으로는 넷 중 아무것도 확인한 것이 아니다. 그 전까지 네 이름은 「알려질 때까지 확인 안 됨」) — 이 남은 확인을 회신과 `docs/server-security.md` §4
   매달 확인 기록의 다음 확인 항목에 적고, 그 표를 고친 뒤 `captest 4G 10m uv run --locked python -m pytest -q tests/test_server_security_doc.py` 가
   GREEN 인지 본다. 결과를 `handoff/reply.md` 에. RED 해당 없음 — 호스트 확인. closes SC-001(호스트), SC-002, SC-003(호스트),
   US4-4(호스트), supports US1-1~3, US2-2, `[VERIFY]` R2(이름 몫)

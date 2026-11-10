@@ -124,8 +124,10 @@ VM 의 읽기 단위에는 해독기 감시 라이브러리가 실려 있다([co
    「안전한 재확인」 스니펫으로 배포된 읽기 소켓을 거쳐 읽는다: `ok … ok` 와 맞는 길이, 같은 시각에 `reader child` 줄과 `type=1326` 없음. (선택) 같은 파일을
    1차 작업으로 맡겨 `done` 을 본다. 이 두 파일은 002 코드(목록 없음)도 같은 `ok … ok` 로 읽으므로 목록이 켜졌다는 증거는 못 된다. 그 증거는 다음 단계다:
    운영자가 호스트 `ffmpeg` 로 사인파 Speex(`ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=440:duration=2" -ac 1 -ar 16000 -c:a libspeex -f ogg /tmp/known-speex.ogg`,
-   `nix/vm-test.nix` 의 `tone-speex.ogg` 와 같은 꼴)를 만들어 같은 「안전한 재확인」 스니펫으로 읽는다. 목록이 켜져 있으면 길이 재기 결과가 `failed` 이고
-   (002 는 `ok`), 그 시각의 `journalctl -u 'stt-reader@*' -g 'reader child'` 에 `reader child probe exited with status 1` 이 있다. 파일은 시험 뒤 지운다.
+   `nix/vm-test.nix` 의 `tone-speex.ogg` 와 같은 꼴)를 만들고, 스니펫의 `chmod 0644` 처럼 `stt` 가 읽을 수 있게 한 뒤 같은 「안전한 재확인」 스니펫으로 읽는다. 목록이 켜져 있으면
+   길이 재기와 해독이 모두 `failed` 이고(002 는 `ok`), 그 시각의 `journalctl -u 'stt-reader@*' -g 'reader child'` 에 `reader child probe exited with status 1` 과
+   `reader child decode exited with status 1` 이 하나씩 있다(VM 의 B-003-1(3) 과 같은 판정). 호스트 `ffmpeg` 에 `libspeex` 가 없으면 파일 만들기에서 오류가 난다 — 이 단계를
+   못 하는 것이고 통과가 아니다. 파일은 시험 뒤 지운다.
 4. **C-003-4 (선택) 잘린 녹음**: 사인파 10초 MP3 를 반으로 잘라 1차로 맡긴다 → `done` 이고 그 시각에 잘림 줄 하나.
 5. **C-003-5 손 실행**: 셸에서 `stt server read` 를 띄우면 안내 한 줄이 나오고 끝 코드가 2 다(`echo $?`).
 6. **C-003-6 회신**(운영자 결정 2026-11-10): `specs/003-reader-hardening/handoff/reply.md` 를 쓰고 운영자가 bhu-llm 대장으로 옮긴다. 내용:

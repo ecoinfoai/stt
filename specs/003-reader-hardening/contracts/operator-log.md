@@ -35,8 +35,11 @@
 
 - 상수: `worker.ENGINE_ERROR_CAUSES = frozenset({"reader_unavailable", "recording_unusable", "unexpected", "engine_failed", "engine_no_verdict"})`.
 - 녹음 열기 오류(`RecordingError`)와 읽기 단계의 일시적 `OSError`·`ValueError` 는 그 작업만 위 표대로 끝내고 다음 작업으로 간다(US3-3). 그 밖의 예외는 잡지 않는다.
-  작업 기록을 읽을 수 없거나 기술자가 계속 모자라는 등 다시 확인(`_is_running`)·마무리(`_settle`)에서도 같은 오류가 나면 워커가 멈추고(002 와 같다) 그 작업은
-  다음 시작 때 `failed interrupted` 가 된다. 이때 위 표의 줄은 남지 않는다(`data-model.md` §3).
+  다시 확인(`_is_running`)·마무리(`_settle`)에서도 같은 오류(작업 기록 읽기 불가, 기술자 부족 지속)가 나면 워커가 멈추고(002 와 같다) 이때 위 표의 줄은 남지 않는다.
+  기술자 부족이면 그 작업은 다음 워커 시작이나 청소에서 `failed interrupted` 가 된다. 작업 기록이 계속 읽히지 않으면 `interrupted` 에 이르지 못한다:
+  워커는 시작마다 `lifecycle.clear_dead_worker` → `records.load_jobs`(`worker.py:482-484`, `records.py:173-178`)에서 모든 기록을 읽다가 같은 기록에서 실패해
+  대기열 전체가 멈추고, 청소는 `dead worker cleanup failed …` 를 남기고 그 작업을 `running` 으로 둔다. 운영자가 그 기록을 고치거나 옮겨야 풀린다(001·002 부터의 동작,
+  003 이 바꾸지 않음. `docs/server-security.md` §3).
 - 줄에는 경로·파일 이름·녹음 내용·오류 문구·errno 가 없다. 분류 이름만 있다(US3-4).
 - 「다 지우기」·23:58 정리로 작업을 빼앗긴 경우는 지금처럼 `<request_id> stopped` 다(원인 이름 없음).
 
@@ -97,8 +100,8 @@ decoded audio is shorter than the probed length          ← 새 줄(작업 ID �
   |---|---|---|---|
   | `reader_unavailable` | read | … | `systemctl status stt-reader.socket`, `journalctl -u 'stt-reader@*'` |
   | `recording_unusable` | read | … | 그 작업의 녹음 폴더(`/var/lib/stt/audio/<audio_id>/`, 2차 작업은 `jobs/<request_id>/job.json` 의 `audio_id`)가 있는지, 일반 파일·`stt` 소유·0600 인지. 녹음을 열지는 않는다 |
-  | `unexpected` | read | … | 같은 시각의 워커 저널(기술자·메모리), `/var/lib/stt` 의 기록 |
-  | `engine_failed` | gpu | … | 같은 시각의 GPU·모델 상태. 호출하는 쪽에 다시 맡기게 하거나 운영자가 만든 알려진 정상 파일만 안전한 재확인으로 |
+  | `unexpected` | read | … | 워커 저널에는 이 원인의 세부가 없다(예외의 종류를 적지 않는다). 기술자·메모리는 같은 시각의 `systemctl status stt-worker`·`journalctl -k` 로, 그리고 `/var/lib/stt` 의 기록 |
+  | `engine_failed` | gpu | … | 같은 시각의 GPU·모델 상태. 호출하는 쪽에 다시 맡기게 하거나 운영자가 만든 알려진 정상 파일을 1차 작업으로 맡겨 엔진까지 돌려 본다(안전한 재확인은 읽기 단위까지만 본다) |
   | `engine_no_verdict` | gpu | … | `systemctl status stt-worker`, `journalctl -k`(엔진 프로세스가 죽었는지) |
   ```
 
@@ -132,7 +135,7 @@ decoded audio is shorter than the probed length          ← 새 줄(작업 ID �
 
 - `docs/server-security.md:238` 「후속 후보: 코덱 허용목록(쓸 수 있는 해독기 이름의 제한)은 넣지 않았다. 읽기 격리(P2)가 범위를 막는다(research R7).」를
   다음 뜻으로 바꾼다: 「코덱 허용목록: 003(배포 커밋·날짜)부터 서버 경로는 §2 『해독기 목록』의 음성 해독기만 연다. 영상·이미지·자막 해독기는 분석에서도
-  해독에서도 열리지 않는다. 분석기·형식은 남는다(§2).」 배포 커밋과 날짜는 배포 때 채운다.
+  해독에서도 열리지 않는다. 분석기·형식, 분석기가 해독기와 나눠 쓰는 코드, 비트스트림 필터와 형식·태그 코드는 남는다(§2.1).」 배포 커밋과 날짜는 배포 때 채운다.
 - 4.2 정책에 한 항목: 「영상·이미지·자막 해독기만의 공지는 서버 경로에서 열리지 않으므로(§2 해독기 목록) 4.3 의 `reason` 에 그 이유를 적을 수 있다. 분석기·
   형식·목록 안 음성 해독기의 공지는 지금처럼 7일 안에 올리거나 이유를 적는다.」 — 최종 감사 뒤 좁힘: 그 판정은 취약한 코드를 해독기만 쓸 때에 한하고,
   분석기가 도는 코덱(H.264 등)의 매개변수 집합·SEI·머리·CBS 코드 공지는 분석기 공지로 본다. 표식(`stt:policy`)과 기존 표의 칸은 바꾸지 않는다.
