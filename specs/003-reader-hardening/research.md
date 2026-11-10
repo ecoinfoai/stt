@@ -327,6 +327,7 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
 - **근거**: 현재 폴더를 넣는 것은 이 둘뿐이다(세 단위의 주 프로세스는 스크립트). `-I` 는 Python 3.4 부터 있어 3.10 시험에서도 돈다. 두 자식은
   `PYTHON*` 환경 변수를 쓰지 않는다(단위 환경은 `LOCALE_ARCHIVE`·`PATH`·`TZDIR`, 워커가 엔진에 더하는 것은 `TMPDIR`·`HF_HOME`·`HF_HUB_OFFLINE`).
   pytest 가 「현재 폴더에 심은 모듈」로 두 명령을 RED → GREEN 으로 본다.
+- **배포 전 확인** 🟢 (2026-11-11, 감사 qa L4): `captest 8G 30m nix build .#server --no-link --print-out-paths` → `/nix/store/5h0xq1qilwrsfckjn60af171xj6qz994-stt-server-env-wrapped`(화자 구분 포함 `server` 묶음, `services.stt.package` 의 기본값, 빌드 최대 245 MiB), `<그 경로>/bin/python -I -c 'import stt.server.engine, stt.server.reader'` → 끝 코드 0(최대 14 MiB. 같은 해석기에 `pyannote.audio`·`faster_whisper` 도 있고 `av 19.0.2`, Python 3.12.13).
 - **대안**: `-P` — Python 3.11+ 라 3.10 시험에서 `Unknown option` 으로 깨진다. 단위에 `Environment=PYTHONSAFEPATH=1` — 자식이 환경을 물려받을 때만
   성립하는 암묵 규칙이고 pytest 로 볼 수 없으며 3.10 은 무시한다. 기각.
 

@@ -343,15 +343,15 @@ description: "Task list for 003-reader-hardening"
 감사 보고: `specs/003-reader-hardening/audit/{adversary,qa-engineer}.md`. 모든 지적이 문서·확인 절차의 진실성에 관한 것이라 운영 코드는 바꾸지
 않는다(운영자 2026-11-11 「권장안대로」). 각 문서 과제 뒤 `tests/test_server_security_doc.py` 가 GREEN 이어야 한다.
 
-- [ ] T036 adversary H1: `docs/server-security.md` §4.2 의 「영상·이미지·자막 해독기만의 공지는 『서버 경로에서 열리지 않음(§2)』」 규칙을 좁힌다 —
+- [X] T036 adversary H1: `docs/server-security.md` §4.2 의 「영상·이미지·자막 해독기만의 공지는 『서버 경로에서 열리지 않음(§2)』」 규칙을 좁힌다 —
   그 판정은 취약한 코드를 **해독기만** 쓸 때만 쓸 수 있다. 서버 경로에서 분석기가 도는 코덱(측정: H.264. 후보: MPEG-4 Part 2, VC-1, AV1, HEVC,
   VP8/VP9, MPEG-1/2)의 매개변수 집합·SEI·머리·CBS 코드에 관한 공지는 분석기 공지로 보고 지금처럼(7일 안에 올리거나 이유) 판정한다는 것과 그 코덱
   이름을 적는다. §2.1 「남는 범위」와 §4.1 의 같은 취지 문장(research R3 의 「분석기는 훨씬 작은 코드」)을 이에 맞춘다. RED 해당 없음 — 문서.
   closes 감사 adversary H1, supports FR-016
-- [ ] T037 adversary M1: §2.1 「남는 범위」에 목록이 막지 않는 두 길을 더한다 — `find_stream_info` 가 쓰는 비트스트림 필터(`extract_extradata`,
+- [X] T037 adversary M1: §2.1 「남는 범위」에 목록이 막지 않는 두 길을 더한다 — `find_stream_info` 가 쓰는 비트스트림 필터(`extract_extradata`,
   H.264·HEVC·AV1 등)와, 허용한 형식이 부르는 다른 형식·태그 코드(WAV 의 S/PDIF, MP3·AAC·WAV 의 ID3v2·APE 태그, Ogg 의 코덱별 머리). FFmpeg 9.0.2
   에서 재지 않았음을 적는다. RED 해당 없음 — 문서. closes 감사 adversary M1
-- [ ] T038 문서 정확성 묶음: (a) adversary M2 — §2 의 WMA Pro·Voice·Lossless·AMR-WB 「첫 실제 녹음」 확인의 통과 기준을 「비어 있지 않은 전사록이고
+- [X] T038 문서 정확성 묶음: (a) adversary M2 — §2 의 WMA Pro·Voice·Lossless·AMR-WB 「첫 실제 녹음」 확인의 통과 기준을 「비어 있지 않은 전사록이고
   그 시각에 일찍 멈춤 줄·잘림 줄이 없음」으로 고치고, 운영자가 그런 녹음이 온 것을 아는 길은 호출하는 쪽의 알림뿐임을 적는다(그 전까지 네 이름은
   「알려질 때까지 확인 안 됨」). (b) adversary M4 — `engine_failed` 행의 「같은 녹음을 재전사해」를 「호출하는 쪽에 다시 맡기게 하거나, GPU·모델
   상태를 보고 운영자가 만든 알려진 정상 파일만 §3 안전한 재확인으로」로. (c) adversary M3·qa L1 — §3 과 `contracts/operator-log.md` §2 의 「읽기
@@ -361,10 +361,10 @@ description: "Task list for 003-reader-hardening"
   이미 맞음). (d) adversary L7·qa L5 — `recording_unusable` 의 「볼 것」에 「2차 작업은 `jobs/<request_id>/job.json` 의 `audio_id`」 한 구절.
   (e) 최종 검토 지적 — §4.2 의 「형식별 시험이 이름 바뀜을 잡는다」에 인코더 없는 네 이름은 예외(research R2·:136)를 적는다.
   RED 해당 없음 — 문서. closes 감사 adversary M2·M3·M4·L7, qa Low 1·2
-- [ ] T039 adversary M5: `quickstart.md` C-003-3 과 T034 에 목록이 실제로 켜졌음을 가리는 호스트 단계를 더한다 — 운영자가 호스트 `ffmpeg` 로 만든
+- [X] T039 adversary M5: `quickstart.md` C-003-3 과 T034 에 목록이 실제로 켜졌음을 가리는 호스트 단계를 더한다 — 운영자가 호스트 `ffmpeg` 로 만든
   사인파 Speex(`-c:a libspeex -f ogg`, VM 과 같은 꼴)를 같은 「안전한 재확인」 스니펫으로 읽으면 probe 가 `failed`(002 는 `ok`)이고 그 시각에
   `reader child probe exited with status 1` 이 있다. RED 해당 없음 — 확인 절차. closes 감사 adversary M5, supports SC-001
-- [ ] T040 qa L4(배포 전 확인): 배포될 전체 `server` 묶음(화자 구분 포함)의 Python 으로 `-I` 아래 엔진과 해독 자식 모듈이 불러와지는지 본다 —
+- [X] T040 qa L4(배포 전 확인): 배포될 전체 `server` 묶음(화자 구분 포함)의 Python 으로 `-I` 아래 엔진과 해독 자식 모듈이 불러와지는지 본다 —
   `captest 8G 30m nix build .#<server 패키지> --no-link --print-out-paths` 뒤 그 `bin/python -I -c 'import stt.server.engine, stt.server.reader'`
   (끝 코드 0). 결과를 `research.md` R10 에 한 줄로 적는다. RED 해당 없음 — 확인. closes 감사 qa L4
 - [ ] T041 바뀐 곳만 다시 감사(`project-audit`, qa-engineer + adversary, T036~T040 의 바뀜만, adversary 는 코드·설정만 읽음). High 이상이
