@@ -34,6 +34,86 @@ let
     tone -ar 48000 -c:a libopus -f ogg $out/tone-opus.opus
     tone -ar 44100 -c:a aac -f adts $out/tone.aac
     tone -ar 44100 -c:a wmav2 -f asf $out/tone.wma
+
+    # Added by 003 (contracts/module.md section 4): recorder codecs of the reader's list, still nothing but tones.
+    tone -ar 16000 -c:a adpcm_ima_wav $out/tone-adpcm-ima.wav
+    tone -ar 16000 -c:a adpcm_ms $out/tone-adpcm-ms.wav
+    tone -ar 44100 -c:a mp2 -f mp2 $out/tone-mp2.mp3
+    tone -ar 48000 -c:a ac3 -f mp4 $out/tone-ac3.m4a
+    tone -ar 48000 -c:a eac3 -f mp4 $out/tone-eac3.m4a
+    # A speech codec outside the list.
+    tone -ar 16000 -c:a libspeex -f ogg $out/tone-speex.ogg
+
+    # A video track or a cover picture next to the sound: solid colours only.
+    ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=2" \
+      -f lavfi -i "color=c=blue:size=64x64:rate=10:duration=2" \
+      -ac 1 -ar 44100 -c:a aac -c:v libx264 -pix_fmt yuv420p -shortest -f mp4 $out/tone-video.m4a
+    ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=2" \
+      -f lavfi -i "color=c=blue:size=64x64:rate=10:duration=2" \
+      -ac 1 -ar 44100 -c:a wmav2 -c:v wmv2 -shortest -f asf $out/tone-video.wma
+    ffmpeg -hide_banner -loglevel error -f lavfi -i "color=c=red:size=32x32" -frames:v 1 cover.png
+    ffmpeg -hide_banner -loglevel error -i $out/tone.mp3 -i cover.png -map 0 -map 1 -c copy \
+      -id3v2_version 3 -disposition:v attached_pic -f mp3 $out/tone-cover.mp3
+    ffmpeg -hide_banner -loglevel error -f lavfi -i "color=c=blue:size=64x64:rate=10:duration=2" \
+      -c:v libx264 -pix_fmt yuv420p -an -f mp4 $out/video-only.m4a
+
+    # Ten-second tones, whole and cut in half: the cut ones end inside the data.
+    tone10() { ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=10" -ac 1 "$@"; }
+    tone10 -ar 44100 -c:a libmp3lame -f mp3 $out/tone10.mp3
+    tone10 -ar 44100 -c:a libmp3lame -f mp3 whole.mp3
+    tone10 -ar 44100 -c:a flac whole.flac
+    tone10 -ar 44100 -c:a aac -movflags +faststart -f ipod whole.m4a
+    cut_in_half() { head -c $(( $(stat -c %s "$1") / 2 )) "$1" > "$2"; }
+    cut_in_half whole.mp3 $out/cut-tone.mp3
+    cut_in_half whole.flac $out/cut-tone.flac
+    cut_in_half whole.m4a $out/cut-faststart.m4a
+    # The index comes first: cut right after the 8-byte header (size and name) of the media data box.
+    mdat=$(grep -abo mdat whole.m4a | head -n 1 | cut -d: -f1)
+    head -c $(( mdat + 4 )) whole.m4a > $out/nopackets-faststart.m4a
+  '';
+
+  # Watches the decoders the reader child opens (contracts/module.md section 3). Only the reader instances of
+  # the test node load it (LD_PRELOAD); the production module does not. When the real avcodec_open2 succeeds
+  # for a context that is not audio, the process aborts, and the real supervisor writes
+  # `reader child <probe|decode> killed by signal 6`. It never looks at a recording.
+  decoderWatch = pkgs.runCommandCC "stt-vm-decoder-watch" { } ''
+    mkdir -p $out/lib
+    cat > watch.c <<'EOF'
+    #define _GNU_SOURCE
+    #include <dlfcn.h>
+    #include <link.h>
+    #include <stdlib.h>
+    #include <string.h>
+
+    /* The first fields of AVCodecContext (libavcodec/avcodec.h): av_class, log_level_offset, codec_type. */
+    struct codec_head { const void *av_class; int log_level_offset; int codec_type; };
+    enum { MEDIA_TYPE_AUDIO = 1 };
+
+    typedef int (*open_function)(void *context, const void *codec, void **options);
+
+    /* PyAV loads libavcodec privately, so RTLD_NEXT cannot see it: find the loaded object by name instead. */
+    static int find_libavcodec(struct dl_phdr_info *info, size_t size, void *data) {
+        const char *base = strrchr(info->dlpi_name, '/');
+        base = base ? base + 1 : info->dlpi_name;
+        if (strncmp(base, "libavcodec", strlen("libavcodec")) != 0) return 0;
+        *(const char **)data = info->dlpi_name;
+        return 1;
+    }
+
+    int avcodec_open2(void *context, const void *codec, void **options) {
+        const char *path = NULL;
+        dl_iterate_phdr(find_libavcodec, &path);
+        if (path == NULL) abort();
+        void *library = dlopen(path, RTLD_LAZY | RTLD_NOLOAD);
+        if (library == NULL) abort();
+        open_function real = (open_function)dlsym(library, "avcodec_open2");
+        if (real == NULL || real == avcodec_open2) abort();
+        int result = real(context, codec, options);
+        if (result == 0 && ((struct codec_head *)context)->codec_type != MEDIA_TYPE_AUDIO) abort();
+        return result;
+    }
+    EOF
+    $CC -shared -fPIC -o $out/lib/stt-decoder-watch.so watch.c -ldl
   '';
 
   # Sends each recording given on the command line through the real reader socket, as `stt` does,
@@ -134,7 +214,11 @@ let
     sys.exit(serve(child_command=(sys.executable, "${memoryChild}")))
   '';
 in
-pkgs.testers.runNixOSTest {
+# `audio` and `decoderWatch` are exposed so that they can be built alone (`nix build .#checks.x86_64-linux.server-vm.audio`).
+{
+  inherit audio decoderWatch;
+}
+// pkgs.testers.runNixOSTest {
   name = "stt-server";
 
   nodes.server = {
@@ -153,6 +237,8 @@ pkgs.testers.runNixOSTest {
     };
     users.users.operator.isNormalUser = true;
     environment.systemPackages = [ pkgs.acl ];
+    # Test node only: every real read, in the base system and in the specialisations, runs under the decoder watch.
+    systemd.services."stt-reader@".environment.LD_PRELOAD = "${decoderWatch}/lib/stt-decoder-watch.so";
     virtualisation = {
       memorySize = 2048;
       cores = 2;
@@ -772,6 +858,237 @@ pkgs.testers.runNixOSTest {
 
     def wait_queued(request_id):
         return wait_response(request_id, lambda doc: doc["state"] == "queued")
+
+    # ---- 003: decoder list, truncation line, error causes, manual-run line (quickstart B-003-1 .. B-003-4) ----------
+    # Every check here is collected and asserted once after B-003-4, so that a single run shows all failures of this part.
+    # The strings are the exact lines of the contracts: the code that writes them comes with later units.
+    # specs/003-reader-hardening/contracts/operator-log.md section 1 (the worker's truncation line).
+    TRUNCATION_LINE = "decoded audio is shorter than the probed length"
+    # contracts/operator-log.md section 2 (the worker's cause names) and 001's fixed response sentence for the read stage.
+    READER_DETAIL = "The server could not start the audio reader."
+    # contracts/reader.md section 1 (reader.MANUAL_RUN_LINE).
+    MANUAL_RUN_LINE = "stt server read only serves a connection that systemd passes from stt-reader.socket on standard input"
+    # docs/server-security.md section 3 (the documented truncation check).
+    TRUNCATION_CHECK = "journalctl -u stt-worker -g ' running$|shorter than the probed length'"
+    READER_JOURNAL = "journalctl -u 'stt-reader@*' --no-pager -o cat"
+    # contracts/module.md section 4: the recorder codecs added to the list, and the recordings with a video track or a cover picture.
+    RECORDER_CODECS = ("tone-adpcm-ima.wav", "tone-adpcm-ms.wav", "tone-mp2.mp3", "tone-ac3.m4a", "tone-eac3.m4a")
+    WITH_VIDEO = ("tone-video.m4a", "tone-video.wma", "tone-cover.mp3")
+    REFUSED_WITHOUT_OPENING = ("video-only.m4a", "tone-speex.ogg")
+    B003_FAILURES = []
+
+    def b003(label, check):
+        """Runs one check of this part; a failure is kept and printed, and the part goes on."""
+        try:
+            check()
+        except Exception as error:
+            message = f"{label}: {type(error).__name__}: {error}"
+            print(f"B-003 FAILED {message}")
+            B003_FAILURES.append(message)
+
+    def read_report(names):
+        """Reads the recordings through the real reader as `stt` does; a hung read ends at 300 s."""
+        listing = " ".join(f"{AUDIO}/{name}" for name in names)
+        output = server.succeed("timeout 300 " + as_user("stt", f"{PYTHON} {READ_FORMATS} {listing}"))
+        return json.loads(output.strip().splitlines()[-1])
+
+    def reader_lines_after(cursor):
+        """The reader units' lines after `cursor`, once the last instance has ended and the journal is flushed."""
+        server.wait_until_succeeds(f"test -z \"$({READER_INSTANCES})\"", timeout=60)
+        server.succeed("journalctl --sync")
+        return server.succeed(f"{READER_JOURNAL} --after-cursor={shlex.quote(cursor)}").splitlines()
+
+    def kernel_log_after(cursor):
+        return server.succeed(f"journalctl -k --no-pager -o cat --after-cursor={shlex.quote(cursor)}")
+
+    def tone_problems(report, names):
+        """What is wrong with the report of recordings that must read as the 2 s tone (as in B-P2-8)."""
+        problems = [] if set(report) == set(names) else [("names", sorted(report))]
+        for name, result in report.items():
+            if not (result["probe"] == "ok" and result["decode"] == "ok"):
+                problems.append((name, result))
+            elif not (abs(result["duration_s"] - 2.0) < 0.35 and abs(result["seconds"] - 2.0) < 0.35 and 0.08 < result["peak"] < 0.2):
+                problems.append((name, result))
+        return problems
+
+    # B-003-1: the real reader unit, under the decoder watch, opens audio decoders only.
+    def check_recorder_codecs():
+        cursor = journal_cursor()
+        problems = tone_problems(read_report(RECORDER_CODECS), RECORDER_CODECS)
+        lines = reader_lines_after(cursor)
+        assert not problems, problems
+        assert "type=1326" not in kernel_log_after(cursor)
+        assert not [line for line in lines if "reader child" in line], lines
+
+    b003("B-003-1(1) recorder codecs read ok under the watch", check_recorder_codecs)
+
+    def check_video_and_cover():
+        cursor = journal_cursor()
+        problems = tone_problems(read_report(WITH_VIDEO), WITH_VIDEO)
+        lines = reader_lines_after(cursor)
+        print("B-003-1(2) reader lines after the cursor:", lines)
+        assert not problems, problems
+        assert "type=1326" not in kernel_log_after(cursor)
+        assert not [line for line in lines if "reader child" in line], lines
+
+    b003("B-003-1(2) video track and cover picture: read ok, no decoder opened", check_video_and_cover)
+
+    def check_refused_without_opening():
+        cursor = journal_cursor()
+        report = read_report(REFUSED_WITHOUT_OPENING)
+        lines = reader_lines_after(cursor)
+        print("B-003-1(3) reader lines after the cursor:", lines)
+        problems = [(name, result) for name, result in report.items() if result["probe"] != "failed" or result["decode"] != "failed"]
+        assert set(report) == set(REFUSED_WITHOUT_OPENING) and not problems, (report, problems)
+        for mode in ("probe", "decode"):
+            exited = [line for line in lines if line == f"reader child {mode} exited with status 1"]
+            assert len(exited) == len(REFUSED_WITHOUT_OPENING), (mode, lines)
+        assert not [line for line in lines if "killed by signal" in line], lines
+
+    b003("B-003-1(3) a video-only and a Speex recording fail without opening a decoder", check_refused_without_opening)
+
+    # B-003-2: the truncation line of the worker. The jobs end gpu_unavailable (no GPU); the line comes before the GPU stage.
+    TRUNCATED = ("cut-tone.mp3", "cut-tone.flac", "cut-faststart.m4a", "nopackets-faststart.m4a")
+    WHOLE = "tone10.mp3"
+    truncation_jobs = {}
+
+    def check_truncation_batch():
+        server.succeed("systemctl stop stt-intake.path")
+        hold_gpu("gpu-hold-b003-2", 900)
+        for name in (*TRUNCATED, WHOLE):
+            extension = name.rsplit(".", 1)[1]
+            truncation_jobs[name] = submit(transcribe(extension=extension), source=f"{AUDIO}/{name}", extension=extension)
+        # One intake run takes the whole batch.
+        server.succeed("systemctl start stt-intake.service")
+        assert prop("stt-intake.service", "Result") == "success"
+        states = {name: response(request_id, timeout=30)["state"] for name, request_id in truncation_jobs.items()}
+        assert set(states.values()) == {"queued"}, states
+
+    def finish_truncation_batch():
+        server.execute("systemctl start stt-intake.path")
+        cursor = journal_cursor()
+        server.execute("systemctl stop gpu-hold-b003-2.service")
+        for request_id in truncation_jobs.values():
+            wait_response(request_id, failed_with("gpu_unavailable"), timeout=120)
+        server.wait_until_succeeds(
+            f"journalctl -u stt-worker --no-pager -o cat --after-cursor={shlex.quote(cursor)} | grep -F '{truncation_jobs[WHOLE]} failed'",
+            timeout=60,
+        )
+        server.succeed("journalctl --sync")
+        return server.succeed(f"{TRUNCATION_CHECK} --no-pager -o cat --after-cursor={shlex.quote(cursor)}").splitlines()
+
+    b003("B-003-2 five recordings in one batch are queued", check_truncation_batch)
+    truncation_lines = []
+    b003("B-003-2 the jobs run to the GPU check", lambda: truncation_lines.extend(finish_truncation_batch()))
+    print("B-003-2 truncation check output:", truncation_lines)
+
+    def check_truncation_line(name):
+        position = truncation_lines.index(f"{truncation_jobs[name]} running")
+        assert truncation_lines[position + 1 : position + 2] == [TRUNCATION_LINE], truncation_lines
+
+    for name in TRUNCATED:
+        b003(f"B-003-2 {name}: the truncation line follows its running line", lambda name=name: check_truncation_line(name))
+
+    def check_whole_has_no_line():
+        position = truncation_lines.index(f"{truncation_jobs[WHOLE]} running")
+        assert truncation_lines[position + 1 : position + 2] != [TRUNCATION_LINE], truncation_lines
+
+    b003(f"B-003-2 {WHOLE}: no truncation line", check_whole_has_no_line)
+    def check_four_lines():
+        assert truncation_lines.count(TRUNCATION_LINE) == 4, truncation_lines
+
+    b003("B-003-2 exactly four truncation lines", check_four_lines)
+
+    # B-003-3: the cause that ends a `engine_error` line.
+    def check_reader_unavailable():
+        lock = "gpu-hold-b003-3a"
+        try:
+            hold_gpu(lock, 900)
+            victim = transcribe()
+            submit(victim)
+            wait_queued(victim["request_id"])
+            switch_to("reader-not-started")
+            cursor = journal_cursor()
+            server.succeed(f"systemctl stop {lock}.service")
+            done = wait_response(victim["request_id"], failed_with("engine_error"), timeout=90)
+            assert done["failure"]["detail"] == READER_DETAIL, done
+            server.succeed("journalctl --sync")
+            lines = server.succeed(
+                f"journalctl -u stt-worker -g 'failed engine_error' --no-pager -o cat --after-cursor={shlex.quote(cursor)}"
+            ).splitlines()
+            assert f"{victim['request_id']} failed engine_error reader_unavailable" in lines, lines
+        finally:
+            server.execute(f"systemctl stop {lock}.service")
+            switch_to()
+            server.succeed("systemctl reset-failed 'stt-*'")
+            no_reader_instance()
+
+    b003("B-003-3(1) a reader that never starts: the line ends reader_unavailable", check_reader_unavailable)
+
+    def check_recording_unusable():
+        lock = "gpu-hold-b003-3b"
+        hold_gpu(lock, 900)
+        broken = transcribe()
+        submit(broken)
+        wait_queued(broken["request_id"])
+        following = transcribe()
+        submit(following)
+        wait_queued(following["request_id"])
+        # The recording is replaced by a FIFO of the same name while the job waits: opening it for reading would block.
+        recording = f"{STATE}/audio/{broken['request_id']}/audio.wav"
+        server.succeed(f"rm {recording} && mkfifo -m 0600 {recording} && chown stt:stt {recording}")
+        cursor = journal_cursor()
+        server.succeed(f"systemctl stop {lock}.service")
+
+        def response_check():
+            done = wait_response(broken["request_id"], failed_with("engine_error"), timeout=60)
+            assert done["failure"]["detail"] == READER_DETAIL, done
+
+        def line_check():
+            server.succeed("journalctl --sync")
+            lines = server.succeed(
+                f"journalctl -u stt-worker -g 'failed engine_error' --no-pager -o cat --after-cursor={shlex.quote(cursor)}"
+            ).splitlines()
+            assert f"{broken['request_id']} failed engine_error recording_unusable" in lines, lines
+
+        b003("B-003-3(2) the unusable recording ends engine_error with the reader sentence", response_check)
+        b003("B-003-3(2) the line ends recording_unusable", line_check)
+        b003(
+            "B-003-3(2) the job right behind it reaches the GPU check",
+            lambda: wait_response(following["request_id"], failed_with("gpu_unavailable"), timeout=90),
+        )
+
+        def failed_units_check():
+            assert not failed_stt_units(), failed_stt_units()
+
+        b003("B-003-3(2) no stt unit is failed", failed_units_check)
+        # Without the fix the worker is stuck opening the FIFO: end that job the way a stopped worker does, so that the rest can run.
+        if response(broken["request_id"])["state"] == "running":
+            server.succeed("systemctl stop stt-worker.path")
+            stop_worker()
+            server.succeed(f"rm -f {recording}")
+            sweep()
+            server.succeed("systemctl start stt-worker.path")
+            b003(
+                "B-003-3(2) cleanup: the job behind the stuck one runs",
+                lambda: wait_response(following["request_id"], failed_with("gpu_unavailable"), timeout=120),
+            )
+
+    b003("B-003-3(2) setup and cleanup of the FIFO case", check_recording_unusable)
+
+    # B-003-4: the manual-run line.
+    def check_manual_run():
+        status = server.execute("timeout 30 ${package}/bin/stt server read </dev/null >/tmp/b003-4.out 2>/tmp/b003-4.err")[0]
+        stderr = server.succeed("cat /tmp/b003-4.err")
+        stdout = server.succeed("cat /tmp/b003-4.out")
+        print("B-003-4 status, stderr, stdout:", status, repr(stderr), repr(stdout))
+        assert status == 2, status
+        assert stderr == MANUAL_RUN_LINE + "\n", stderr
+        assert stdout == "", stdout
+
+    b003("B-003-4 a hand-started reader exits 2 and writes the manual-run line", check_manual_run)
+
+    assert not B003_FAILURES, "B-003 failures:\n" + "\n".join(B003_FAILURES)
 
     with subtest("a 2 s job passes the read stage: audio.wav is there and spec.json names no recording (B-P2-1, B-P2-2)"):
         hang_cuda()
