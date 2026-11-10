@@ -34,7 +34,8 @@ def open_container(source: BinaryIO | str, *, format_whitelist: str | None = Non
 - 공통: 녹음 기술자를 `open_container(recording, format_whitelist=AUDIO_FORMATS, codec_whitelist=AUDIO_DECODERS)` 로 연다.
 - probe: 길이를 재기 전에 **첫 음성 흐름의 해독기**를 확인한다. 음성 흐름이 없거나(지금과 같다), 그 흐름에 해독기가 없거나(`codec_context is None`),
   해독기 이름(`codec_context.codec.name`)이 `AUDIO_DECODERS` 에 없으면 끝 코드 1 이다. 그다음은 002 와 같다(컨테이너 길이, 없으면 묶음 길이 합).
-  이 확인은 열린 컨테이너를 받는 순수 함수로 두어 시험이 가짜 컨테이너로 프로세스 안에서 본다.
+  이 확인은 열린 컨테이너를 받는 순수 함수 `first_audio_decoder_allowed(container) -> bool`(`src/stt/server/reader.py`)로 두어 시험이 가짜
+  컨테이너로 프로세스 안에서 본다. 거짓이면 probe 는 끝 코드 1 이다.
 - decode: 002 와 같다(`write_s16`). 첫 음성 흐름의 해독기가 목록 밖이면 PyAV 가 그 해독기를 열 때 `ArgumentError` 가 나고 끝 코드 1 이다.
 - 감독 쪽에서 보면 두 경우 모두 `reader child <probe|decode> exited with status 1` 한 줄과 판정 `failed` 다 — 텍스트 파일과 같은 줄이다. 받기는
   `unreadable_audio`, 처리는 `unreadable_audio` 로 끝낸다(002 실패 지도 그대로).
@@ -44,7 +45,7 @@ def open_container(source: BinaryIO | str, *, format_whitelist: str | None = Non
 | 형식 8가지·ALAC·PCM 변형·더한 녹음기 코덱(목록 안 코덱) | `ok`(값 그대로) | `ok`(바이트 그대로) | 없음 |
 | 목록 안 음성 + 영상 트랙 / 표지 그림 | `ok`(값 그대로) | `ok`(음성만, 바이트 그대로) | 없음(`find_stream_info` 에서 거절) |
 | 영상 트랙만 | `failed`(음성 흐름 없음) | — | 없음 |
-| 목록 밖 음성 코덱만(Speex, GSM, MPEG Layer I, IMA·Microsoft 밖의 ADPCM …) | `failed`(이름 확인) | `failed`(`ArgumentError`) | 없음 |
+| 목록 밖 음성 코덱만(Speex, GSM, MPEG Layer I, IMA·Microsoft 밖의 ADPCM …) | `failed`(이름 확인). 단 MP3 라고 적힌 상자(`.mp3` 안 MPEG Layer I)는 이름이 `mp3float` 로 보여 `ok` — 받기를 지나 처리에서 거절 | `failed`(`ArgumentError`) | 없음 |
 | 녹음 확장자를 붙인 텍스트 | `failed`(`InvalidDataError`, 지금과 같다) | — | 없음 |
 
 ## 4. 감독 (`stt server read`, 002 §5·§8 에 더함)

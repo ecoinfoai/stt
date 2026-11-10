@@ -49,8 +49,8 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
   - **결정한 두 겹 + 이름 확인**: 46개 파일 모두에서 비음성 해독기가 한 번도 열리지 않았다(`h264`·`mpeg4`·`mjpeg`·`png`·`wmv2` 는 모두 거절).
     목록 안 코덱의 파일은 길이 재기 값이 같고, 해독 출력이 SHA-256 까지 같았다(형식 8가지의 2초·60초, ALAC, PCM 변형 8, WMA 1, Ogg 안 FLAC,
     48 kHz 스테레오 AAC, 영상·표지 그림이 든 파일 10, 음성 흐름 둘). 기준 녹음도 같다: `clip60.m4a` 1,920,342 B, `hour.m4a` 115,201,800 B 로 바이트까지
-    같았다. 이때의 목록(22개)에서 목록 밖 코덱(`ac3`·`adpcm_ima_qt`·`mp2`)은 길이 재기에서 이름 확인으로, 해독에서는 `ArgumentError` 로 거절됐다(32개
-    목록에서는 `ac3`·`mp2` 가 읽히고 `adpcm_ima_qt` 는 그대로 거절된다 — R2). 영상만 든 파일은 지금처럼
+    같았다. 이때의 목록(22개)에서 목록 밖 코덱은 길이 재기의 이름 확인(`ac3`·`adpcm_ima_qt`, WAV 안 `mp2`)이나 해독의 `ArgumentError`(`.mp3` 안 `mp2` —
+    길이 재기에서는 `mp3float` 로 보인다, R2 표)로 거절됐다(32개 목록에서는 `ac3`·`mp2` 가 읽히고 `adpcm_ima_qt` 는 그대로 거절된다 — R2). 영상만 든 파일은 지금처럼
     「음성 흐름 없음」으로 거절된다(US1-4). 녹음 확장자를 붙인 텍스트는 지금처럼 `InvalidDataError` 다.
   - **PyAV 17.1.0·18.1.0**(Python 3.10·3.11 의 명령줄 판, uv 캐시의 cp311-abi3 휠을 Python 3.11.15 로): 같은 코드가 같은 해독기를 열고 같게
     거절했다(`aac`·`mp3float`·`wmav2` 열림, `h264`·`png` 거절, 22개 목록에서 `ac3`·`mp2` 거절 — 32개 목록의 결과도 같다, R2). 두 판 모두 `CodecContext.options` 가 `avcodec_open2` 로 넘어간다(소스
@@ -260,7 +260,9 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
   분류 이름만 허락한다. 기술자 부족(EMFILE)으로 녹음을 못 연 것도 `recording_unusable` 로 보이는 것은 받아들인다(같은 녹음을 다시 맡겨 보면 가린다).
 - **바꿔야 하는 기존 시험**(줄 끝이 바뀌어서): `tests/server/test_decoder_us3.py:321`·`:571`(줄 전체 비교), `:548-571`(`_open_recording` 을 맨
   `OSError` 로 바꿔 넣는 시험 — 녹음 쪽은 실제 없는 파일·권한으로, 그 밖은 `os.pipe2` 의 EMFILE 로 넣는다), `tests/server/test_reader_client.py:155-197`
-  (열기 오류의 예외 형: `RecordingError`, errno 유지). `tests/server/test_logging.py:174` 는 부분 문자열 비교라 그대로 통과한다.
+  (열기 오류의 예외 형: `RecordingError`, errno 유지). `tests/server/test_logging.py:174` 는 부분 문자열 비교라 그대로 통과한다. 그리고 US2 의 잘림 줄 때문에
+  `tests/server/test_decoder_us3.py:514`(`test_decoder_edge_10_a_recording_damaged_from_its_first_frame_…`, 2초로 잰 녹음이 0바이트로 해독됨)의 표준
+  출력 기대를 `[running, TRUNCATION_LINE, done]` 으로 고친다(경계 사례 4). `:492` 시험은 길이가 같아 그대로다.
 - **대안**: 작업 줄에 errno 이름(`describe_error`)을 붙이기 — 이름 집합이 열려 있고(스펙 Key Entities 의 「작은 집합」과 다름) 같은 errno 가 여러
   단계에서 나와 원인을 가리지 못한다. 워커가 읽기 전에 녹음을 `lstat` 해 보기 — 클라이언트의 확인과 겹치는 방어 분기다. 열기를 호출하는 쪽으로
   옮기고 `probe`·`decode` 가 기술자를 받기 — 받기·VM 스크립트·문서의 스니펫·시험 수십 곳이 바뀐다.
@@ -305,7 +307,7 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
 - **결정**: `serve()` 가 표준 입력을 연결된 `AF_UNIX` `SOCK_SEQPACKET` 소켓으로 받지 못하면(`_adopt_stdin()` 이 `None`) 표준 오류에 고정 문장
   `stt server read only serves a connection that systemd passes from stt-reader.socket on standard input` 한 줄을 쓰고 지금처럼 2 를 돌려준다.
 - **근거**: 터미널에서 띄우면 표준 입력이 TTY 라 `socket.socket(fileno=0)` 이 실패하고 지금은 아무 말 없이 2 로 끝난다(002 감사 L8,
-  `tests/server/test_server_cli.py:509-514` 가 「출력 없음」을 단언한다). 읽기 단위 안에서는 표준 입력이 늘 연결이라 이 줄은 운영 중에 나오지 않는다.
+  `tests/server/test_server_cli.py:511-516` 가 「출력 없음」을 단언한다). 읽기 단위 안에서는 표준 입력이 늘 연결이라 이 줄은 운영 중에 나오지 않는다.
   나오더라도 단위 로그로 가고, 작업 ID·경로가 없다.
 - **대안**: 끝 코드를 바꾸기 — 스펙이 막는다(「끝 코드는 지금과 같다」). 감독의 다섯 줄과 같은 `reader child …` 꼴 — 자식과 무관한 줄이라 쓰지 않는다.
 
@@ -385,7 +387,7 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
   프로토콜의 메시지·상수(새 상수 `AUDIO_DECODERS` 는 자식 안에서만 쓴다), 단위 설정(모듈은 단언 하나만 더한다).
 - **호출하는 쪽에 보이는 바뀜**: 목록 밖 음성 코덱의 녹음이 `unreadable_audio` 가 된다(R2). 실패 이유와 문장은 이미 있는 것이라 계약 위반은 아니다
   (헌법 VI 은 호환되지 않는 변경만 핸드오프를 요구한다). 운영자 결정(2026-11-10): 003 배포 회신에 거절되는 코덱을 적은 한 단락을 싣는다 — Speex, GSM,
-  그 밖의 목록 밖 음성 코덱(R2 의 「여전히 거절되는 것」)과 그때의 응답(`unreadable_audio`, 받을 때 바로). 회신은
+  그 밖의 목록 밖 음성 코덱(R2 의 「여전히 거절되는 것」)과 그때의 응답(`unreadable_audio` — 받을 때 바로, MP3 라고 적힌 상자 안 MPEG Layer I 는 처리 때). 회신은
   `specs/003-reader-hardening/handoff/reply.md` 에 쓰고 운영자가 bhu-llm 대장으로 옮긴다(quickstart C-003-6).
 - **고칠 내부 문서**(구현 때): `specs/002-decoder-isolation/contracts/reader.md` §4(상수 `AUDIO_DECODERS`), §5(SIGINT 무시, 손으로 띄운 줄),
   §6(자식이 두 목록으로 연다, 길이 재기의 해독기 이름 확인, `-I`), §7(`RecordingError`·`O_NONBLOCK`), §8(끝 코드 2 의 줄). 각 자리에 이 기능의

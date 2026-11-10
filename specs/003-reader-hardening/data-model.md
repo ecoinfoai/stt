@@ -21,7 +21,7 @@
 | 녹음의 트랙 | 길이 재기 | 해독 | 작업 |
 |---|---|---|---|
 | 목록 안 음성 하나 이상(첫 음성 트랙이 목록 안) + 영상·그림 트랙 있거나 없거나 | `ok`, 처음 잰 길이 = 컨테이너 길이(없으면 첫 음성 트랙의 묶음 길이 합) | `ok`, 첫 음성 트랙만 | 지금처럼 진행 |
-| 첫 음성 트랙의 코덱이 목록 밖(Speex, GSM, MPEG Layer I, IMA·Microsoft 밖의 ADPCM 등) | `failed` | (오지 않음. 배포 전에 받아 둔 녹음의 재전사는 `failed`) | 받기 `unreadable_audio` |
+| 첫 음성 트랙의 코덱이 목록 밖(Speex, GSM, MPEG Layer I, IMA·Microsoft 밖의 ADPCM 등) | `failed`(MP3 라고 적힌 상자 안 MPEG Layer I 는 이름이 `mp3float` 로 보여 `ok`) | `failed`(목록 밖 해독기를 열 때 `ArgumentError` — 위 MP1 과 배포 전에 받아 둔 녹음의 재전사) | 받기 `unreadable_audio`, MP3 라고 적힌 상자의 MP1 은 처리 `unreadable_audio` |
 | 음성 트랙 없음(영상만) | `failed` | — | 받기 `unreadable_audio` (지금과 같다) |
 
 ## 2. 잘림 판정 (spec 「잘림 기준」)
@@ -52,7 +52,8 @@
 | `engine_failed` | GPU 단계 | `outcome.json` 이 `{"status": "failed", "reason": "engine_error", …}` |
 | `engine_no_verdict` | GPU 단계 | 판정이 쓸 만하지 않음(`_NO_VERDICT`) |
 
-- 집합은 닫혀 있다. 새 길이 생기면 이 표·상수·문서 표(`<!-- stt:engine-error-causes -->`)를 함께 고친다. 모르는 오류는 `unexpected` 로 묶는다(경계 사례 6).
+- 집합은 닫혀 있다. 새 길이 생기면 이 표·상수·문서 표(`<!-- stt:engine-error-causes -->`)를 함께 고친다. 읽기 단계에서 잡는 것은 `OSError`(`RecordingError` 포함)와 `ValueError` 뿐이고, 둘 가운데 따로 이름이 없는 것을 `unexpected` 로 묶는다(경계 사례 6).
+  그 밖의 예외는 잡지 않고 002 처럼 올라간다(모두 잡는 `except Exception` 은 두지 않는다 — 헌법 V).
 - 원인 이름은 기록에만 있다. `Failure`(응답에 들어가는 이유·문장)에는 더하지 않는다.
 
 ## 4. 녹음 열기 오류 `RecordingError` (내부)

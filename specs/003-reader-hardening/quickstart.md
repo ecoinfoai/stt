@@ -23,8 +23,10 @@ captest 4G 20m uv run python -m pytest -q
 UV_PROJECT_ENVIRONMENT="$HOME/.cache/stt-py311" captest 4G 25m uv run --locked --python 3.11 --extra server python -m pytest -q
 ```
 
-- Python 3.10(av 17.1.0)과 3.12 는 CI 가 돈다. 3.11 은 로컬에서 위 명령으로 돈다(인터프리터가 PATH 에 있어야 한다, 예: `nix shell nixpkgs#python311`).
-- 기대: 001·002 시험을 포함해 모두 통과(SC-006). 바꾼 기존 시험은 [research.md](research.md) R6·R9 의 목록뿐이다.
+- Python 3.10(av 17.1.0)·3.11(av 18.1.0)은 배포 전 로컬에서 uv 가 받은 CPython 으로 돈다(push 는 운영자 승인 뒤라 CI 는 배포 때 처음 돈다):
+  `UV_PYTHON_PREFERENCE=managed UV_PYTHON_INSTALL_DIR=<scratch>/pythons UV_PROJECT_ENVIRONMENT=<scratch>/venv310 captest 4G 30m uv run --locked --python 3.10 --extra server --extra diarize python -m pytest -q -p no:cacheprovider`
+  (3.11 도 같은 꼴, 끝나면 두 환경을 지운다). CI(3.10·3.12)는 운영자 승인 뒤 push 에서 다시 본다.
+- 기대: 001·002 시험을 포함해 모두 통과(SC-006). 바꾼 기존 시험은 [research.md](research.md) R6(잘림 줄 때문의 `test_decoder_us3.py:514` 포함)·R9 의 목록뿐이다.
 
 | 시나리오·요구 | 시험(파일 · 무엇을 보나) |
 |---|---|
@@ -36,7 +38,7 @@ UV_PROJECT_ENVIRONMENT="$HOME/.cache/stt-py311" captest 4G 25m uv run --locked -
 | 경계 2 | 같은 파일 · 음성 흐름 둘: 첫 흐름만, 바이트 그대로 |
 | R2 더한 녹음기 코덱 | 같은 파일 · WAV 안 IMA·Microsoft ADPCM, MP2(`.mp3`·`.wav`), MP4 안 AC-3·E-AC-3(PyAV 19 인코더)과, 설치된 PyAV 에 `libopencore_amrnb` 인코더가 있으면(17·18 — Python 3.10·3.11) 3GP 안 AMR-NB(`.m4a`): 진짜 감독·자식으로 probe·decode `ok`, 사인파 길이. 인코더가 없는 판은 이유를 적고 건너뛴다. WMA Pro·Voice·Lossless·AMR-WB 는 인코더가 없어 A 층 시험이 없다(research R2 의 `[VERIFY]`) |
 | FR-005 | 같은 파일 · `stt.audio_decode.decode_samples` 는 목록 없이 Yamaha ADPCM 도 해독한다(명령줄 그대로) |
-| US1-6, FR-004 | `tests/test_server_security_doc.py` · `<!-- stt:audio-decoders -->` 의 `decoder` 집합 == `reader.AUDIO_DECODERS`. 그리고 `open_container(..., codec_whitelist=…)` 가 형식 옵션과 모든 흐름의 코덱 문맥 옵션에 그 값을 둔다(가로챈 `av.open` 과 열린 컨테이너로) |
+| US1-6, FR-004 | `tests/test_server_security_doc.py` · `<!-- stt:audio-decoders -->` 의 `decoder` 집합 == `reader.AUDIO_DECODERS`. `tests/server/test_audio_decode.py` · `open_container(..., codec_whitelist=…)` 가 형식 옵션과 모든 흐름의 코덱 문맥 옵션에 그 값을 둔다(가로챈 `av.open` 과 열린 컨테이너로) |
 | US2-1, SC-003(앞) | `test_hardening_us2.py` · 사인파 10초 MP3·FLAC·색인이 앞인 M4A 를 반으로 자른 것: 받기 → 워커(가짜 엔진) → `done`, 표준 출력에 `<id> running`, 잘림 줄, `<id> done` 이 이 순서로 한 번 |
 | US2-2·3, SC-003(뒤) | 같은 파일 · 형식 8가지 정상 녹음은 줄 0개. 비교 함수: 차이 정확히 1.0 → 참, 0.999… → 거짓, 해독이 더 김 → 거짓, 0.046(WMA 끝)·0.0065(Opus)·−0.056(기준 1시간) → 거짓 |
 | US2-4 | 같은 파일 · 색인이 앞인 M4A 를 음성 자료 시작에서 자른 것: `done`(빈 전사록), 줄 하나 |
@@ -59,11 +61,15 @@ captest 8G 15m nix build .#checks.x86_64-linux.module-eval -L
 captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
 ```
 
+- B-003 부분 시험은 `nix/vm-test.nix:711` 의 `journal_cursor()` 정의 뒤에 둔다(B-P2-8 은 커서 없이 읽기 단위 저널 전체에 `reader child` 줄이 없음을
+  보므로 그 앞에 두면 B-003-1(3)의 줄이 B-P2-8 을 깨뜨린다). B-003 단언은 실패를 모았다가 마지막에 한 번에 단언해, 한 번의 RED 실행이 모든 B-003
+  RED 를 보인다.
+
 ### B-003-6 — systemd 판 단언 (US4-2, FR-011)
 
 - `module-eval` 이 평가된다(빌드 산출물 없음): systemd `256.10` → 실패한 단언 문장이 `services.stt needs systemd 257 or later` 로 시작하고 `256.10` 을
   담는다. `257` 과 고정된 nixpkgs 의 판(261.1)은 그 문장이 없다([contracts/module.md](contracts/module.md) §2).
-- CI 의 `nix flake check --no-build` 도 이 검사를 평가한다. `[VERIFY]` 그 평가 시간·메모리.
+- CI 의 `nix flake check --no-build` 도 이 검사를 평가한다. `[VERIFY]` 그 평가 시간·메모리 — 로컬은 `captest` 로 재고, CI 몫은 운영자 승인 뒤 push 에서 본다.
 
 ### B-003-1 — 진짜 읽기 단위가 음성 해독기만 연다 (US1-1~5, SC-001·SC-002, 경계 1)
 
@@ -123,5 +129,5 @@ VM 의 읽기 단위에는 해독기 감시 라이브러리가 실려 있다([co
    - 계약(스키마·실패 이유·고정 문장·지우기·재전사·23:58)은 바뀌지 않았다.
    - 한 단락: 서버가 여는 해독기는 이제 음성 해독기 목록(research R2, 보안 문서 §2)뿐이다. 받는 녹음 형식은 그대로이고 영상 트랙이 든 녹음은 음성만 읽는다.
      첫 음성 트랙이 Speex, GSM, 그 밖의 목록 밖 음성 코덱(예: MPEG Layer I, TrueSpeech, IMA·Microsoft 밖의 ADPCM — G.726·G.722·Yamaha·QuickTime IMA4)이면
-     받을 때 바로 `unreadable_audio`(「The recording could not be read as audio.」)로 거절된다. 002 까지는 이런 녹음도 전사됐다.
+     받을 때 바로 — MP3 라고 적힌 상자(예: `.mp3` 안 MPEG Layer I)는 길이 재기가 `mp3float` 로 보아 받아들이므로 처리 때 — `unreadable_audio`(「The recording could not be read as audio.」)로 거절된다. 002 까지는 이런 녹음도 전사됐다.
    - 배포 커밋·날짜와 C-003-2·C-003-3 의 결과.
