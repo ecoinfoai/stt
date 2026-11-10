@@ -45,8 +45,8 @@ assertions = [
 | 시험 녹음 | 아래 §4 | |
 
 - B-P2-1 의 설정 단언은 읽기 단위의 `Environment` 를 보지 않으므로 그대로 통과한다. 운영 단위의 설정 값과 다른 것은 이 한 줄뿐이다.
-- `[VERIFY]` (B-003-1): 감시 라이브러리가 읽기 단위의 제한(동적 사용자, `MemoryDenyWriteExecute`, 호출 필터, `TemporaryFileSystem`) 안에서 실린다 —
-  지금 코드로 먼저 돌려 `killed by signal 6` 이 나오는 것(RED)으로 확인한다.
+- `[VERIFY]` (B-003-1) — 닫힘(T005): 감시 라이브러리가 읽기 단위의 제한(동적 사용자, `MemoryDenyWriteExecute`, 호출 필터, `TemporaryFileSystem`) 안에서 실린다.
+  VM RED(2026-11-11)에서 읽기 단위 안에 `reader child probe killed by signal 6` 이 나와 확인했다.
 
 ## 4. VM 시험 녹음 (`audio` 파생물에 더함, nixpkgs `ffmpeg` 8.1.2)
 

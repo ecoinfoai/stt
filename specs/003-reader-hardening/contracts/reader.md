@@ -51,7 +51,7 @@ def open_container(source: BinaryIO | str, *, format_whitelist: str | None = Non
 ## 4. 감독 (`stt server read`, 002 §5·§8 에 더함)
 
 - `serve()` 는 맨 처음 SIGINT 를 무시한다(`signal.signal(signal.SIGINT, signal.SIG_IGN)`). 해독 자식이 감독에게 SIGINT 를 보내도 감독은 자식의
-  끝을 기다려 평소의 판정과 줄을 낸다(US4-1). 처분은 `serve()` 에서만 바꾼다 — 프로세스 안의 시험이 부르는 `_supervise` 는 바꾸지 않는다.
+  끝을 기다려 평소의 판정과 줄을 낸다(US4-1). 처분은 `serve()` 에서만 바꾼다 — 프로세스 안의 시험이 부르는 `_supervise` 는 바꾸지 않는다. 무시 처분은 exec 를 지나 상속되므로 해독 자식도 SIGINT 를 무시한 채 뜬다. 해롭지 않다 — 자식은 SIGINT 에 기대지 않고, 감독이 자식을 끝낼 때는 SIGKILL 을 쓴다.
 - 표준 입력이 연결된 `AF_UNIX` `SOCK_SEQPACKET` 소켓이 아니면 표준 오류에 `MANUAL_RUN_LINE` 한 줄(끝에 줄바꿈)을 쓰고 끝 코드 2 로 끝난다(US4-4).
   표준 출력에는 아무것도 쓰지 않는다. 끝 코드 0·1 의 경우는 지금처럼 아무것도 쓰지 않는다.
 - 감독이 단위 로그에 쓰는 줄은 002 의 다섯 줄과 이 한 줄이다. 이 줄에도 작업 ID·경로·파일 이름이 없다.

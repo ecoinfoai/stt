@@ -88,7 +88,7 @@ stt server read only serves a connection that systemd passes from stt-reader.soc
 
 서버 경로(받을 때의 길이 재기와 처리 때의 해독)는 아래 음성 해독기만 연다. 영상·이미지·자막 해독기는 녹음 상자에 그 트랙이 있어도 열리지 않는다 — 분석
 (`find_stream_info`)과 해독 모두 FFmpeg 의 `codec_whitelist` 로 거절된다. 영상 트랙이 든 녹음(영상 강의의 MP4, 표지 그림이 든 MP3)은 음성만 읽는다(운영자 결정
-2026-11-10). 영상 트랙만 든 녹음과, 목록 밖 음성 코덱의 녹음은 받을 때 `unreadable_audio` 다. 명령줄(`stt`)의 해독은 이 목록을 쓰지 않는다.
+2026-11-10). 영상 트랙만 든 녹음과, 목록 밖 음성 코덱의 녹음은 받을 때 `unreadable_audio` 다. 단 MP3 라고 적힌 상자(`.mp3` 안 MPEG Layer I 등)는 길이 재기가 `mp3float` 로 보고 받기를 지나고, 처리 때 해독이 거절해 `unreadable_audio` 로 끝난다(`specs/003-reader-hardening/contracts/reader.md` §3). 명령줄(`stt`)의 해독은 이 목록을 쓰지 않는다.
 
 <!-- stt:audio-decoders -->
 
@@ -358,6 +358,7 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
   범위를 막음」을 적고 다음 달 확인에서 다시 본다.
 - **올리는 순서**: (1) 잠금 파일 갱신(PyAV 는 `uv lock --upgrade-package av`, nixpkgs 는 `nix flake update nixpkgs`) → (2) 빌드·시험 →
   (3) 배포 → (4) 기준 녹음 비교(`cmp` 로 s16 비교, 전사록·문단 목록 비교) → (5) 4.1 표 고치기(`version`·`last_updated`·`comparison`).
+  (2) 에서 PyAV·FFmpeg 를 올릴 때는 받아들이는 형식의 기본 해독기 이름이 `AUDIO_DECODERS` 에 아직 있는지 확인한다 — FFmpeg 이 기본 해독기 이름을 바꾸면 그 형식 전체가 `unreadable_audio` 가 된다. 형식별 시험이 이를 잡는다.
   CI 시험이 지키는 것은 `av` 세 줄의 `version`(`uv.lock` 과 대조)과 `nixpkgs ffmpeg` 줄의 `version`(`flake.lock` 과 대조)뿐이다.
   `last_updated`·`comparison` 과 나머지 줄은 CI 가 아니라 운영자가 직접 고친다.
 - 서버 경로의 해독기는 PyAV 휠의 FFmpeg 하나이므로 매달의 갱신은 보통 `av` 하나로 끝나고 nixpkgs 전체를 올릴 필요가 없다. `nixpkgs ffmpeg`
