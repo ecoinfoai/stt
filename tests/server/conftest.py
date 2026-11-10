@@ -141,6 +141,379 @@ def encode_tone(path: Path, container: str, codec: str, rate: int = 16000, secon
     return path
 
 
+# ------------------------------------------------ test recordings made with PyAV
+# Every recording is a sine tone, silence or a solid colour (and truncated copies of those);
+# nothing here builds or keeps a file meant to exploit a decoder.
+
+RECORDING_SECONDS = 2.0
+_PICTURE_SIZE = 64
+_SOLID_COLOUR = (0, 128, 255)
+
+
+def _require_encoder(name: str) -> None:
+    """Skips the calling test when the installed PyAV has no encoder called `name`."""
+    import av
+
+    try:
+        av.Codec(name, "w")
+    except ValueError:
+        pytest.skip(f"the installed PyAV has no {name} encoder")
+
+
+class _Track(NamedTuple):
+    """A stream added to an output container and the packets encoded for it so far."""
+
+    stream: Any
+    packets: list[Any]
+
+
+def _add_tone_stream(output: Any, codec: str, rate: int, freq: float, seconds: float) -> _Track:
+    """Adds a mono audio stream to `output` and encodes a `freq` Hz tone for it (nothing is muxed yet)."""
+    import av
+    import numpy as np
+
+    stream = output.add_stream(codec, rate=rate, layout="mono")
+    if codec in ("aac", "libmp3lame", "mp2", "ac3", "eac3"):
+        stream.bit_rate = 64000
+    samples = int(rate * seconds)
+    tone = (0.3 * np.sin(2 * np.pi * freq * np.arange(samples) / rate)).astype(np.float32)
+    frame = av.AudioFrame.from_ndarray(tone.reshape(1, -1), format="flt", layout="mono")
+    frame.sample_rate = rate
+    return _Track(stream, list(stream.encode(frame)))
+
+
+def _add_solid_video_stream(output: Any, codec: str, seconds: float, fps: int = 10) -> _Track:
+    """Adds a solid-colour video stream to `output` and encodes its frames (nothing is muxed yet)."""
+    import av
+    import numpy as np
+
+    stream = output.add_stream(codec, rate=fps)
+    stream.width = _PICTURE_SIZE
+    stream.height = _PICTURE_SIZE
+    stream.pix_fmt = "yuv420p"
+    image = np.full((_PICTURE_SIZE, _PICTURE_SIZE, 3), _SOLID_COLOUR, dtype=np.uint8)
+    packets: list[Any] = []
+    for index in range(int(seconds * fps)):
+        frame = av.VideoFrame.from_ndarray(image, format="rgb24")
+        frame.pts = index
+        packets.extend(stream.encode(frame))
+    return _Track(stream, packets)
+
+
+def _add_solid_cover_stream(output: Any) -> _Track:
+    """Adds one solid-colour PNG picture as an attached-picture stream and encodes it (nothing is muxed yet)."""
+    import av
+    import numpy as np
+
+    stream = output.add_stream("png", rate=1)
+    stream.width = _PICTURE_SIZE
+    stream.height = _PICTURE_SIZE
+    stream.pix_fmt = "rgb24"
+    stream.disposition = av.stream.Disposition.attached_pic
+    image = np.full((_PICTURE_SIZE, _PICTURE_SIZE, 3), _SOLID_COLOUR, dtype=np.uint8)
+    frame = av.VideoFrame.from_ndarray(image, format="rgb24")
+    frame.pts = 0
+    return _Track(stream, list(stream.encode(frame)))
+
+
+def _finish(output: Any, tracks: list[_Track]) -> None:
+    """Flushes every encoder and muxes all packets, track by track.
+
+    Every stream must be added before the first packet is muxed: the container header is written then.
+    """
+    for track in tracks:
+        for packet in [*track.packets, *track.stream.encode(None)]:
+            output.mux(packet)
+
+
+def stream_kinds_and_codecs(path: Path) -> list[tuple[str, str]]:
+    """Lists the streams of a recording as ``(kind, decoder name)`` pairs, in stream order.
+
+    Args:
+        path: An existing recording.
+
+    Returns:
+        For example ``[("audio", "aac"), ("video", "h264")]``; the PNG cover of an MP3 is ``("video", "png")``.
+    """
+    import av
+
+    with av.open(str(path)) as container:
+        return [(stream.type, stream.codec_context.name) for stream in container.streams]
+
+
+def make_mp4_with_video(path: Path, video_codec: str = "libx264", seconds: float = RECORDING_SECONDS) -> Path:
+    """Writes an MP4 with a 440 Hz AAC tone and a solid-colour video stream.
+
+    Container: MP4. Streams: audio AAC (16 kHz mono), video `video_codec`.
+
+    Args:
+        path: Destination file.
+        video_codec: FFmpeg video encoder, ``libx264`` (decodes as H.264) or ``mpeg4``.
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+    """
+    import av
+
+    with av.open(str(path), "w", format="mp4") as output:
+        audio = _add_tone_stream(output, "aac", 16000, 440.0, seconds)
+        video = _add_solid_video_stream(output, video_codec, seconds)
+        _finish(output, [audio, video])
+    return path
+
+
+def make_mp3_with_cover(path: Path, seconds: float = RECORDING_SECONDS) -> Path:
+    """Writes an MP3 with a 440 Hz tone and one solid-colour PNG cover picture.
+
+    Container: MP3. Streams: audio MP3 (``libmp3lame``, 16 kHz mono), then one PNG video stream
+    flagged ``attached_pic``.
+
+    Args:
+        path: Destination file.
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+    """
+    import av
+
+    with av.open(str(path), "w", format="mp3") as output:
+        audio = _add_tone_stream(output, "libmp3lame", 16000, 440.0, seconds)
+        cover = _add_solid_cover_stream(output)
+        _finish(output, [audio, cover])
+    return path
+
+
+def make_mp4_video_only(path: Path, seconds: float = RECORDING_SECONDS) -> Path:
+    """Writes an MP4 that holds only a solid-colour H.264 video stream (no audio stream).
+
+    Container: MP4. Streams: one video stream, H.264.
+
+    Args:
+        path: Destination file.
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+    """
+    import av
+
+    with av.open(str(path), "w", format="mp4") as output:
+        video = _add_solid_video_stream(output, "libx264", seconds)
+        _finish(output, [video])
+    return path
+
+
+def make_faststart_m4a(path: Path, seconds: float = RECORDING_SECONDS) -> Path:
+    """Writes an M4A whose index (``moov``) comes before the media data (``mdat``).
+
+    Container: MP4 (``movflags=+faststart``). Streams: audio AAC (16 kHz mono, 440 Hz tone).
+
+    Args:
+        path: Destination file.
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+    """
+    import av
+
+    with av.open(str(path), "w", format="mp4", options={"movflags": "+faststart"}) as output:
+        audio = _add_tone_stream(output, "aac", 16000, 440.0, seconds)
+        _finish(output, [audio])
+    return path
+
+
+def make_mp4_with_two_audio_streams(path: Path, seconds: float = RECORDING_SECONDS) -> Path:
+    """Writes an MP4 with two AAC audio streams: a 440 Hz tone first, an 880 Hz tone second.
+
+    Container: MP4. Streams: audio AAC (16 kHz mono) twice.
+
+    Args:
+        path: Destination file.
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+    """
+    import av
+
+    with av.open(str(path), "w", format="mp4") as output:
+        first = _add_tone_stream(output, "aac", 16000, 440.0, seconds)
+        second = _add_tone_stream(output, "aac", 16000, 880.0, seconds)
+        _finish(output, [first, second])
+    return path
+
+
+def make_adpcm_wav(path: Path, codec: str, seconds: float = RECORDING_SECONDS) -> Path:
+    """Writes a WAV holding a 440 Hz tone in an ADPCM codec.
+
+    Container: WAV. Streams: audio `codec` (16 kHz mono).
+
+    Args:
+        path: Destination file.
+        codec: FFmpeg encoder, ``adpcm_ima_wav`` or ``adpcm_ms`` (the listed ones), or ``adpcm_yamaha``
+            (not on the decoder list).
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+    """
+    import av
+
+    _require_encoder(codec)
+    with av.open(str(path), "w", format="wav") as output:
+        audio = _add_tone_stream(output, codec, 16000, 440.0, seconds)
+        _finish(output, [audio])
+    return path
+
+
+def make_mp2(path: Path, seconds: float = RECORDING_SECONDS) -> Path:
+    """Writes an MPEG Layer II recording; the suffix of `path` picks the container.
+
+    Container: raw MP2 for ``.mp3``, WAV for ``.wav``. Streams: audio MP2 (16 kHz mono, 440 Hz tone).
+
+    Args:
+        path: Destination file, ending in ``.mp3`` or ``.wav``.
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+
+    Raises:
+        ValueError: If the suffix is neither ``.mp3`` nor ``.wav``.
+    """
+    import av
+
+    containers = {".mp3": "mp2", ".wav": "wav"}
+    if path.suffix not in containers:
+        raise ValueError("an MP2 test recording needs a .mp3 or .wav suffix")
+    _require_encoder("mp2")
+    with av.open(str(path), "w", format=containers[path.suffix]) as output:
+        audio = _add_tone_stream(output, "mp2", 16000, 440.0, seconds)
+        _finish(output, [audio])
+    return path
+
+
+def make_mp4_with_dolby_audio(path: Path, codec: str, seconds: float = RECORDING_SECONDS) -> Path:
+    """Writes an MP4 holding a 440 Hz tone in AC-3 or E-AC-3.
+
+    Container: MP4. Streams: audio `codec` (48 kHz mono).
+
+    Args:
+        path: Destination file.
+        codec: FFmpeg encoder, ``ac3`` or ``eac3``.
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+    """
+    import av
+
+    _require_encoder(codec)
+    with av.open(str(path), "w", format="mp4") as output:
+        audio = _add_tone_stream(output, codec, 48000, 440.0, seconds)
+        _finish(output, [audio])
+    return path
+
+
+def make_amr_nb_3gp(path: Path, seconds: float = RECORDING_SECONDS) -> Path:
+    """Writes a 3GP holding a 440 Hz tone in AMR-NB; skips the test when PyAV has no encoder for it.
+
+    Container: 3GP (``3gp`` muxer; give `path` an ``.m4a`` suffix to test an M4A name). Streams: audio
+    AMR-NB (8 kHz mono). Only PyAV 17 and 18 ship the ``libopencore_amrnb`` encoder.
+
+    Args:
+        path: Destination file.
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+    """
+    import av
+
+    _require_encoder("libopencore_amrnb")
+    with av.open(str(path), "w", format="3gp") as output:
+        audio = _add_tone_stream(output, "libopencore_amrnb", 8000, 440.0, seconds)
+        _finish(output, [audio])
+    return path
+
+
+def make_mov_ima4(path: Path, seconds: float = RECORDING_SECONDS) -> Path:
+    """Writes a QuickTime MOV holding a 440 Hz tone in QuickTime IMA ADPCM (not on the decoder list).
+
+    Container: MOV (give `path` an ``.m4a`` suffix to test an M4A name). Streams: audio ``adpcm_ima_qt``
+    (16 kHz mono).
+
+    Args:
+        path: Destination file.
+        seconds: Duration in seconds.
+
+    Returns:
+        The written path.
+    """
+    import av
+
+    _require_encoder("adpcm_ima_qt")
+    with av.open(str(path), "w", format="mov") as output:
+        audio = _add_tone_stream(output, "adpcm_ima_qt", 16000, 440.0, seconds)
+        _finish(output, [audio])
+    return path
+
+
+def truncate_to_ratio(path: Path, ratio: float) -> Path:
+    """Cuts the end off a file so that `ratio` of its bytes remain.
+
+    Args:
+        path: An existing file; changed in place.
+        ratio: Fraction of the bytes to keep, strictly between 0 and 1.
+
+    Returns:
+        `path`.
+
+    Raises:
+        ValueError: If `ratio` is not strictly between 0 and 1.
+    """
+    if not 0 < ratio < 1:
+        raise ValueError("ratio must be strictly between 0 and 1")
+    os.truncate(path, int(path.stat().st_size * ratio))
+    return path
+
+
+_MDAT_HEADER_BYTES = 8
+
+
+def truncate_after_mdat_header(path: Path) -> Path:
+    """Cuts an MP4/M4A just after the 8-byte header of its ``mdat`` box, so no media data remains.
+
+    Meant for an M4A whose index (``moov``) comes first (see `make_faststart_m4a`): the index stays
+    whole while every audio packet is gone.
+
+    Args:
+        path: An existing MP4/M4A with a 32-bit-size ``mdat`` box; changed in place.
+
+    Returns:
+        `path`.
+
+    Raises:
+        ValueError: If the file has no top-level ``mdat`` box with a 32-bit size field.
+    """
+    data = path.read_bytes()
+    offset = 0
+    while offset + _MDAT_HEADER_BYTES <= len(data):
+        size = struct.unpack(">I", data[offset : offset + 4])[0]
+        if data[offset + 4 : offset + 8] == b"mdat":
+            if size < _MDAT_HEADER_BYTES:
+                raise ValueError("the mdat box has no 32-bit size field")
+            os.truncate(path, offset + _MDAT_HEADER_BYTES)
+            return path
+        if size < _MDAT_HEADER_BYTES:
+            break
+        offset += size
+    raise ValueError("no top-level mdat box found")
+
+
 # faster-whisper's decode_audio passes metadata_errors, which PyAV 19 removed.
 FASTER_WHISPER_DECODER_MAX_AV_MAJOR = 18
 

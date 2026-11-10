@@ -52,7 +52,7 @@ description: "Task list for 003-reader-hardening"
 
 **Purpose**: 아래 이야기들의 pytest 가 쓸 시험 녹음 도우미와 대역. 동작을 바꾸지 않는다.
 
-- [ ] T001 [P] `tests/server/conftest.py` 에 PyAV 로 시험 녹음을 만드는 도우미를 더한다(research R12): (a) MP4 안 AAC 사인파 + 단색 MPEG-4·H.264 영상,
+- [X] T001 [P] `tests/server/conftest.py` 에 PyAV 로 시험 녹음을 만드는 도우미를 더한다(research R12): (a) MP4 안 AAC 사인파 + 단색 MPEG-4·H.264 영상,
   (b) MP3(`libmp3lame`) 사인파 + 단색 PNG 표지(`Disposition.attached_pic` 흐름에 PNG 묶음 하나), (c) 단색 H.264 만 든 MP4(음성 없음), (d) 색인이 앞인
   M4A(`movflags=+faststart`), (e) 음성 흐름 둘인 MP4(서로 다른 주파수), (f) 더한 녹음기 코덱 — WAV 안 IMA·Microsoft ADPCM, MP2(`.mp3`·`.wav`),
   MP4 안 AC-3·E-AC-3, 설치된 PyAV 에 `libopencore_amrnb` 인코더가 있을 때만 3GP 안 AMR-NB(`.m4a`) — 인코더가 없으면 이유를 적은 `pytest.skip`,
@@ -60,7 +60,7 @@ description: "Task list for 003-reader-hardening"
   `mdat` 머리(8바이트) 바로 뒤에서 자르는 도우미. 모두 사인파·단색만(FR-017). 도우미마다 만든 파일의 흐름 종류·코덱 이름을 한 번 단언하는 작은
   자기 시험을 둔다(인코더가 없는 판은 건너뜀). RED 해당 없음 — 시험 도구(자기 시험은 도구가 맞게 만들었는지만 본다). supports US1-1~5, US2-1~5,
   경계 사례 1·2, FR-017
-- [ ] T002 [P] `tests/server/fake_decode_child.py` 에 동작 `sigint-parent` 를 더한다: 부모(감독)에게 `SIGINT` 를 보내고, 정상 probe 결과를 쓴 뒤 끝 코드 0
+- [X] T002 [P] `tests/server/fake_decode_child.py` 에 동작 `sigint-parent` 를 더한다: 부모(감독)에게 `SIGINT` 를 보내고, 정상 probe 결과를 쓴 뒤 끝 코드 0
   (contracts/reader.md §7). 녹음 내용을 해석하지 않는다. RED 해당 없음 — 대역(이 동작을 쓰는 시험 T021(a)가 RED 를 본다). supports US4-1
 
 ---

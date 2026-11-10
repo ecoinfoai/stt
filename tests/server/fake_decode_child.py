@@ -19,6 +19,8 @@ fixed way:
         process was spawned as the contract requires (argument list, only the
         two named descriptors open, standard streams on ``/dev/null``, same
         process group as the supervisor); otherwise exit with code 1.
+    sigint-parent: send SIGINT to the parent process (the supervisor), then write a valid result
+        for the operation and exit 0.
 
 With ``--marker`` the fake first writes its process id to that file, so a test
 can tell whether the supervisor started it at all.
@@ -44,7 +46,7 @@ import time
 
 from stt.server.reader import EARLY_STOP_EXIT
 
-MODES = ("exit-error", "hang", "sigkill", "sigsys", "early-stop", "write-raw", "write-raw-then-error", "write-bytes", "verify-spawn")
+MODES = ("exit-error", "hang", "sigkill", "sigsys", "early-stop", "write-raw", "write-raw-then-error", "write-bytes", "verify-spawn", "sigint-parent")
 VALID_RESULT = b'{"duration_s": 1.5}'
 ONE_SECOND_OF_SILENCE_BYTES = 32000
 
@@ -179,6 +181,9 @@ def main(argv: list[str]) -> int:
     if args.mode == "write-bytes":
         write_all(args.output_fd, bytes(args.count or 0))
         return 0
+    if args.mode == "sigint-parent":
+        os.kill(os.getppid(), signal.SIGINT)
+        return succeed(args)
     if not spawned_as_contracted(args):
         return 1
     write_all(args.output_fd, VALID_RESULT)
