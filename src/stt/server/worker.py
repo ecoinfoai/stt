@@ -113,9 +113,17 @@ def _write_audio(work_dir: Path, samples: bytes | bytearray) -> None:
 
 
 def _read(
-    layout: Layout, request_id: str, recording: Path, work_dir: Path, reader: ReaderConfig, limit_s: float
+    layout: Layout,
+    request_id: str,
+    recording: Path,
+    work_dir: Path,
+    reader: ReaderConfig,
+    limit_s: float,
+    probed_s: float,
 ) -> _ReadOutcome:
     """Decodes `recording` through the reader and writes the result to ``audio.wav`` when the read is ``ok``.
+
+    When the audio was written and ``is_truncated(probed_s, ...)`` holds, writes ``TRUNCATION_LINE`` to standard output.
 
     The decoded samples are released on return, before the GPU stage starts.
 
@@ -137,13 +145,9 @@ def _read(
         except OSError:
             # Never store the exception: its traceback holds this frame and the decoded buffer.
             return "storage_error"
+        if is_truncated(probed_s, len(result.audio)):
+            print(TRUNCATION_LINE, flush=True)
     return result.outcome
-
-
-def _decoded_bytes(work_dir: Path) -> int:
-    """Returns the size of the samples stored in ``audio.wav`` of `work_dir`."""
-    with wave.open(str(work_dir / _AUDIO_FILE), "rb") as handle:
-        return handle.getnframes() * _SAMPLE_WIDTH_BYTES
 
 
 def _is_running(layout: Layout, request_id: str) -> bool:
@@ -341,7 +345,7 @@ def _run_job(
         began = time.monotonic()
         cause: str | None = None
         try:
-            outcome: str = _read(layout, job.request_id, recording, work_dir, reader, limit_s)
+            outcome: str = _read(layout, job.request_id, recording, work_dir, reader, limit_s, job.duration_s)
             if outcome == "unavailable":
                 cause = "reader_unavailable"
         except reader_client.RecordingError:
@@ -358,8 +362,6 @@ def _run_job(
         if outcome != "ok":
             _settle(layout, job, work_dir, _READ_FAILURES[outcome], now, cause)
             return
-        if is_truncated(job.duration_s, _decoded_bytes(work_dir)):
-            print(TRUNCATION_LINE, flush=True)
         remaining_s = limit_s - (time.monotonic() - began)
         if remaining_s <= 0:
             _settle(layout, job, work_dir, _TIMEOUT, now)

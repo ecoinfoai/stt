@@ -104,8 +104,11 @@ def test_hardening_us2_1_a_recording_cut_in_half_ends_done_with_one_truncation_l
 # ---------------------------------------------------------------- US2-2
 
 
+INTACT_FORMATS = [*LISTED_FORMATS, ("wav", "wav", "pcm_s16le", 16000)]
+
+
 @pytest.mark.parametrize(
-    ("extension", "muxer", "codec", "rate"), LISTED_FORMATS, ids=[case[0] for case in LISTED_FORMATS]
+    ("extension", "muxer", "codec", "rate"), INTACT_FORMATS, ids=[case[0] for case in INTACT_FORMATS]
 )
 def test_hardening_us2_2_an_intact_recording_leaves_no_truncation_line(
     layout: Layout,
@@ -381,3 +384,39 @@ def test_hardening_us2_7_a_read_that_does_not_end_ok_leaves_no_truncation_line(
     lines = stdout_lines(capfd)
     assert lines[0] == f"{request_id} running"
     assert worker.TRUNCATION_LINE not in lines
+
+
+# ---------------------------------------------------------------- a delete right after the audio was written
+
+
+def test_hardening_us2_8_a_job_deleted_right_after_its_audio_was_written_ends_as_stopped_and_the_next_job_runs(
+    layout: Layout,
+    clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    doomed = submit(layout, make_half_cut_flac(tmp_path / "cut.flac"), clock)
+    next_job = submit(layout, make_half_cut_flac(tmp_path / "next.flac"), clock)
+    real_read = worker._read
+    deleted: list[str] = []
+
+    def read_then_delete(*args: Any, **kwargs: Any) -> Any:
+        outcome = real_read(*args, **kwargs)
+        if not deleted:
+            deleted.append(doomed)
+            write_delete_request(layout.inbox, request_id=new_id(), requested_by="professor-a", target=doomed)
+            intake.run_once(layout, clock.now)
+        return outcome
+
+    monkeypatch.setattr(worker, "_read", read_then_delete)
+    capfd.readouterr()
+
+    run_worker(layout, clock)
+
+    assert read_response(layout, doomed)["state"] == "deleted"
+    assert not (layout.outbox / doomed).exists()
+    assert read_response(layout, next_job)["state"] == "done"
+    lines = stdout_lines(capfd)
+    assert f"{doomed} stopped" in lines
+    assert f"{next_job} done" in lines
