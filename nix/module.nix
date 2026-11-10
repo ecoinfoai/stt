@@ -118,6 +118,15 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = lib.versionAtLeast config.systemd.package.version "257";
+        message =
+          "services.stt needs systemd 257 or later: older systemd ignores PrivatePIDs= with only a warning, "
+          + "so reader instances could see and signal each other; systemd.package is version ${config.systemd.package.version}.";
+      }
+    ];
+
     users.users.stt = {
       isSystemUser = true;
       group = "stt";

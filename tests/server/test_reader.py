@@ -704,7 +704,7 @@ def connected_stream() -> socket.socket:
 
 
 @pytest.mark.parametrize("kind", ["devnull", "pipe", "regular-file", "unconnected", "listening", "stream"])
-def test_stdin_that_is_not_a_connected_seqpacket_socket_ends_with_code_2_and_no_output(
+def test_stdin_that_is_not_a_connected_seqpacket_socket_ends_with_code_2_and_the_manual_run_line(
     tmp_path: Path, kind: str
 ) -> None:
     opened: list[Any] = []
@@ -739,7 +739,7 @@ def test_stdin_that_is_not_a_connected_seqpacket_socket_ends_with_code_2_and_no_
 
     assert run.code == 2
     assert run.stdout == b""
-    assert run.stderr == b""
+    assert run.stderr == (reader.MANUAL_RUN_LINE + "\n").encode("utf-8")
 
 
 # ------------------------------------------------- supervisor: no request

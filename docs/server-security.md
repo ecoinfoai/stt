@@ -75,6 +75,15 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
 `KillSignal=SIGKILL` 이라 단위 정지도 기다리지 않는다. 읽기 단위의 자식은 로그를 쓰지 않고, 감독은 아래 §3 의 고정된 영어 한 줄만 쓴다(감독 내부 예외의 트레이스백은 예외다. 코드 위치만 담고 녹음 경로는 담지 않는다). 저널에 작업 ID·경로·
 파일 이름·해독기 문구가 남지 않는다.
 
+**끊기 신호와 손 실행.** 감독은 시작하자마자 SIGINT 를 무시한다. 해독 자식이 감독에게 SIGINT 를 보내도 감독은 자식의 끝을 기다려 평소의 판정과 줄을 낸다.
+운영자가 터미널에서 `stt server read` 를 손으로 띄우면 표준 입력이 연결된 소켓이 아니라서 아무것도 읽지 않고, 표준 오류에 아래 한 줄을 쓰고 끝 코드 2 로 끝난다(표준 출력에는 아무것도 없다).
+
+```text
+stt server read only serves a connection that systemd passes from stt-reader.socket on standard input
+```
+
+해독 자식과 엔진은 `python -I` 로 떠서 현재 폴더를 모듈 찾는 길에 넣지 않는다.
+
 ### 2.1 해독기 목록
 
 서버 경로(받을 때의 길이 재기와 처리 때의 해독)는 아래 음성 해독기만 연다. 영상·이미지·자막 해독기는 녹음 상자에 그 트랙이 있어도 열리지 않는다 — 분석
@@ -215,6 +224,12 @@ journalctl -u stt-worker -g ' running$|shorter than the probed length'
   reader child decode stopped early at invalid data
   reader child <probe|decode> timed out
   reader child probe returned an invalid result
+  ```
+
+  손으로 `stt server read` 를 띄웠을 때만 나오는 줄이 하나 더 있다. 읽기 단위 안에서는 표준 입력이 늘 연결된 소켓이라 운영 중에는 나오지 않는다. 이 줄에도 작업 ID·경로·파일 이름이 없다.
+
+  ```text
+  stt server read only serves a connection that systemd passes from stt-reader.socket on standard input
   ```
 
   ```sh

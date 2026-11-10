@@ -3,14 +3,15 @@
 The supervisor (``serve``, run as ``stt server read``) imports only the standard
 library and never reads a recording. It checks the caller's request, starts the
 decode child and answers with its verdict. The decode child
-(``python -m stt.server.reader child probe|decode <recording fd> <output fd>``)
+(``python -I -m stt.server.reader child probe|decode <recording fd> <output fd>``)
 is the only code that imports PyAV; it reads the recording through the
 descriptor it was handed and never sees a path.
 
 The decode child writes nothing to standard output or error. The supervisor writes
 one fixed line to standard error (the unit's journal) when the child ends abnormally,
 times out, returns an invalid result or its decode stopped early at invalid data; the
-line holds no job ID, path, file name or decoder text.
+line holds no job ID, path, file name or decoder text. Started by hand, with standard input not a connected
+socket, it writes ``MANUAL_RUN_LINE`` to standard error and ends with status 2.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import json
 import math
 import os
 import select
+import signal
 import socket
 import stat
 import subprocess
@@ -52,7 +54,10 @@ AUDIO_DECODERS = (
 # The decode child's exit status for "the output is complete up to the first invalid frame".
 EARLY_STOP_EXIT = 3
 
-DEFAULT_CHILD_COMMAND: tuple[str, ...] = (sys.executable, "-m", "stt.server.reader", "child")
+MANUAL_RUN_LINE = "stt server read only serves a connection that systemd passes from stt-reader.socket on standard input"
+
+# -I keeps the current folder out of the child's module search path.
+DEFAULT_CHILD_COMMAND: tuple[str, ...] = (sys.executable, "-I", "-m", "stt.server.reader", "child")
 
 _LIMITS_S = {"probe": PROBE_LIMIT_S, "decode": DECODE_LIMIT_S}
 _REQUEST_KEYS = frozenset({"op", "limit_s"})
@@ -302,7 +307,8 @@ def _adopt_stdin() -> socket.socket | None:
 def serve(child_command: Sequence[str] = DEFAULT_CHILD_COMMAND, *, request_timeout_s: float = START_TIMEOUT_S) -> int:
     """Serves the one request on standard input and ends.
 
-    The child is started as ``[*child_command, op, recording_fd, output_fd]``, in this
+    SIGINT is ignored from the start, so that a child signalling its parent cannot interrupt the supervisor
+    before it has answered. The child is started as ``[*child_command, op, recording_fd, output_fd]``, in this
     process' own group so that killing the group also kills the child.
 
     Args:
@@ -311,10 +317,13 @@ def serve(child_command: Sequence[str] = DEFAULT_CHILD_COMMAND, *, request_timeo
 
     Returns:
         0 when the request was answered (including a refusal) or the caller hung up; 1 when the caller sent no
-        request; 2 when standard input is not a connected ``AF_UNIX`` ``SOCK_SEQPACKET`` socket.
+        request; 2 when standard input is not a connected ``AF_UNIX`` ``SOCK_SEQPACKET`` socket, after
+        writing ``MANUAL_RUN_LINE`` to standard error.
     """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     connection = _adopt_stdin()
     if connection is None:
+        print(MANUAL_RUN_LINE, file=sys.stderr, flush=True)
         return 2
     with connection:
         return _supervise(connection, child_command, request_timeout_s)
