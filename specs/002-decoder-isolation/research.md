@@ -284,8 +284,11 @@
     `/nix/var/nix/db/db.sqlite-shm`(0644)에 SQLite 잠금을 쥐면 nix-daemon 쓰기가 `SQLITE_BUSY` 를 만난다. 그래서 `/run`·`/var` 를 빈 읽기 전용 tmpfs 로 덮고
     (`TemporaryFileSystem=/dev/shm:ro /run:ro /var:ro`), `/nix/var`(`/nix/store` 는 아니다 — 파이썬과 PyAV 가 거기서 읽힌다)를 가린다. 읽기는 `/run` 아래의 것을
     쓰지 않는다: 연결은 표준 입력, 로그는 표준 오류(기술자)로 받는다. 가리는 경로는 모두 `-` 를 붙인다 — `/run`·`/var` 를 덮고 나면 `/run/stt`·`/var/lib/stt` 가
-    없어서, `-` 가 없으면 단위 시작이 실패한다. `[VERIFY]` (B-P2-1, 닫음 아래): `DynamicUser` 의 사설 `/tmp`·`/var/tmp` 와 함께 되는지, 파이썬·PyAV 가
-    그대로 뜨고 해독하는지를 VM 에서 본다. 안 되면 `/var` 전체 대신 그 아래 디렉터리를 가리는 쪽으로 물러서고 그 이유를 여기에 적는다.
+    없어서, `-` 가 없으면 단위 시작이 실패한다. `[VERIFY]` (B-P2-1) — **닫음(VM, 2026-11-10)**: `TemporaryFileSystem=/var:ro` 는 `DynamicUser` 의 사설 `/tmp`·`/var/tmp` 와 함께 되고(VM 에서 `PrivateTmp=yes` 로 보이며 호스트에
+    `systemd-private-*stt-reader*` 폴더가 남지 않는다), 파이썬과 PyAV 가 그대로 떠서 2초 녹음의 길이 재기·해독과 형식별 해독이 통과했다. 그래서 `/var` 전체를 덮고
+    물러서지 않았다. `systemctl show` 는 `InaccessiblePaths` 를 `-` 를 붙인 채 보여 준다. 권한 점검(B-P2-4)에서 `/run/nixos/switch-to-configuration.lock`·`/nix/var/nix/db`
+    아래 0644 root 파일은 열기·`flock -n` 이 모두 실패한다. 점검 대상 목록 파일은 이제 `/etc/vm-double/targets.json` 이다 — 이전 자리(`/run/vm-double`)는 `/run` 을 덮은 뒤 읽히지 않는다.
+    같은 점검이 `/run`·`/var` 를 덮기 전(옛 설정)에는 `host-files` 에서 실패하는 것을 먼저 보았다.
   - 받기·워커는 `wants`·`after` 에 `stt-reader.socket` 을 두고, `ExecStart` 에 `--reader-socket /run/stt-reader.sock` 을 붙인다.
   - P1 의 세 설정은 읽기 단위에도 있고 더 좁다. P2 뒤로는 SC-001 의 「서버 단위」에 읽기 단위가 들어간다(단위 다섯).
   - nixos-config 는 바꿀 것이 없다. `DynamicUser` 의 이름 풀이(nss-systemd)가 없어도 UID 는 할당된다.
@@ -341,7 +344,9 @@
   - **작업 하나의 실패**: 응답의 `failure.reason`, 그리고 단위 로그의 `<request_id> failed <reason>` 줄(`journalctl -u stt-worker -u stt-intake`).
   - **서버 단위의 비정상 종료**: `systemctl --failed`, 그리고 `systemctl show -p Result -p ExecMainCode -p ExecMainStatus <unit>`. OOM 이면
     `Result=oom-kill`, 호출 필터면 SIGSYS(31)이다. 막힌 호출 번호는 커널 기록(`journalctl -k -g 'type=1326'`)에 있다.
-  - **읽기 인스턴스의 실패**(메모리 상한 등): 그 작업의 `unreadable_audio` 로 이미 응답에 나오고, `journalctl -u 'stt-reader@*'` 에 남는다.
+  - **읽기 인스턴스의 실패**(메모리 상한 등): 그 작업의 `unreadable_audio` 로 이미 응답에 나오고, `journalctl -u 'stt-reader@*'` 에 남는다. 감독이 자식의
+    비정상 종료와 일찍 멈춘 해독에 고정된 영어 한 줄을 쓴다(작업 ID·경로·해독기 문구 없음, [contracts/reader.md](contracts/reader.md) §5.7, 최종 감사 M1·H2,
+    운영자 결정 2026-11-10).
     인스턴스는 `CollectMode` 로 치워져 `--failed` 에 쌓이지 않는다. 단위 비정상 종료로 세지 않는다.
 - **근거**: 운영자 결정(2026-11-08, Q1 A). 서버 전체의 `OnFailure` 알림은 nixos-config 의 별도 과제다.
 

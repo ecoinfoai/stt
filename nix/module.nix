@@ -210,15 +210,25 @@ in
           PrivateDevices = true;
           PrivateNetwork = true;
           RestrictAddressFamilies = "none";
+          # Every path carries `-`: under the empty /run and /var below the stt paths do not exist, and a
+          # missing path must not fail the unit. /nix/var holds the Nix database, whose files are readable.
           InaccessiblePaths = [
-            stateDir
-            modelsDir
-            "/run/stt"
+            "-${stateDir}"
+            "-${modelsDir}"
+            "-/run/stt"
+            "-/nix/var"
           ];
           ProtectSystem = "strict";
           ProtectHome = true;
-          # PrivateDevices leaves /dev/shm shared with the host; an empty read-only tmpfs covers it.
-          TemporaryFileSystem = [ "/dev/shm:ro" ];
+          # PrivateDevices leaves /dev/shm shared with the host; an empty read-only tmpfs covers it. /run and
+          # /var are covered too: `flock` needs only a readable descriptor, so the host's 0644 lock files
+          # (switch-to-configuration, the Nix database) could be held against their owners. The reader uses
+          # nothing under them; the connection and the journal arrive as descriptors.
+          TemporaryFileSystem = [
+            "/dev/shm:ro"
+            "/run:ro"
+            "/var:ro"
+          ];
           PrivateIPC = true;
           PrivatePIDs = true;
           ProtectProc = "invisible";

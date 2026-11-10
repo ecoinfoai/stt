@@ -372,9 +372,11 @@ pkgs.testers.runNixOSTest {
             assert prop(reader, name) == value, (name, prop(reader, name))
         # `DynamicUser=yes` prints `yes` on this systemd; that private /tmp leaves no folder on the host.
         assert prop(reader, "PrivateTmp") == "yes", prop(reader, "PrivateTmp")
-        assert set(prop(reader, "InaccessiblePaths").split()) == {"/var/lib/stt", "/var/lib/stt-models", "/run/stt"}, prop(reader, "InaccessiblePaths")
-        # The unit's /dev/shm is the host's even with PrivateDevices=yes, so an empty read-only tmpfs covers it.
-        assert set(prop(reader, "TemporaryFileSystem").split()) == {"/dev/shm:ro"}, prop(reader, "TemporaryFileSystem")
+        # Every hidden path carries `-`: under the empty /run and /var the stt paths do not exist, and a missing path must not fail the unit.
+        assert set(prop(reader, "InaccessiblePaths").split()) == {"-/var/lib/stt", "-/var/lib/stt-models", "-/run/stt", "-/nix/var"}, prop(reader, "InaccessiblePaths")
+        # The unit's /dev/shm is the host's even with PrivateDevices=yes, so an empty read-only tmpfs covers it;
+        # /run and /var hold the host's readable lock files and are covered the same way.
+        assert set(prop(reader, "TemporaryFileSystem").split()) == {"/dev/shm:ro", "/run:ro", "/var:ro"}, prop(reader, "TemporaryFileSystem")
         calls = set(prop(reader, "SystemCallFilter").split())
         assert calls and not prop(reader, "SystemCallFilter").startswith("~"), prop(reader, "SystemCallFilter")
         assert "read" in calls, "the filter allows the ordinary calls"
@@ -605,7 +607,11 @@ pkgs.testers.runNixOSTest {
     UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
     # Groups the double always adds after the ones in its target list (nix/vm-reader-double.py).
     FIXED_GROUPS = ("network", "own-fd-write", "scratch-write", "other-processes", "keyring")
-    TARGETS_FILE = "/run/vm-double/targets.json"
+    TARGETS_FILE = "/etc/vm-double/targets.json"
+    # World-readable lock files of the host, which a reader must not be able to open or lock (adversary H1).
+    HOST_LOCK = "/run/nixos/switch-to-configuration.lock"
+    NIX_DB = "/nix/var/nix/db"
+    NIX_DB_LOCK = f"{NIX_DB}/vm-double-lock"
 
     def switch_to(specialisation=None):
         """Activates the base system or one of its specialisations without touching the boot entry."""
@@ -715,6 +721,12 @@ pkgs.testers.runNixOSTest {
         # A world-writable file in the host's /dev/shm: the reader must neither see nor change it.
         SHM_MARKER = "/dev/shm/host-marker"
         server.succeed(f"echo host-data > {SHM_MARKER} && chmod 0666 {SHM_MARKER}")
+        # The host's own 0644 root lock files, as they are on a real host; made here when the VM lacks them.
+        server.succeed(
+            "mkdir -p -m 0755 /run/nixos /nix/var/nix/db"
+            f" && touch {HOST_LOCK} {NIX_DB_LOCK} && chmod 0644 {HOST_LOCK} {NIX_DB_LOCK}"
+        )
+        assert server.succeed(f"stat -c '%a %U' {HOST_LOCK} {NIX_DB_LOCK}").split("\n")[:2] == ["644 root", "644 root"]
         a, b, c, a2, p = (str(uuid.uuid4()) for _ in range(5))
 
         def audio_paths(i):
@@ -736,12 +748,12 @@ pkgs.testers.runNixOSTest {
             ("state-root", [STATE, f"{STATE}/state.lock", f"{STATE}/worker.lock", f"{STATE}/queue"]),
             ("gpu-lock", ["/run/stt", GPU_LOCK, "/var/lib/stt-models"]),
             ("devices", ["/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm"]),
-            ("host-shm", [SHM_MARKER]),
+            ("host-files", [SHM_MARKER, HOST_LOCK, NIX_DB, NIX_DB_LOCK]),
         ]
         GROUP_NAMES = [name for name, _ in TARGET_GROUPS] + list(FIXED_GROUPS)
         document = {"groups": [{"name": name, "paths": paths} for name, paths in TARGET_GROUPS]}
         server.succeed(
-            "mkdir -p -m 0755 /run/vm-double"
+            "mkdir -p -m 0755 /etc/vm-double"
             f" && echo {base64.b64encode(json.dumps(document).encode()).decode()} | base64 -d > {TARGETS_FILE}"
             f" && chmod 0644 {TARGETS_FILE}"
         )
@@ -813,6 +825,7 @@ pkgs.testers.runNixOSTest {
             f"{STATE}/audio/{a}/audio.wav", f"{STATE}/audio/{b}/audio.wav", f"{STATE}/jobs/{a}/job.json",
             f"{STATE}/jobs/{b}/job.json", f"{OUTBOX}/{a}.json", f"{OUTBOX}/{b}.json", INBOX, f"{INBOX}/{p}.json.tmp", GPU_LOCK,
             f"{STATE}/state.lock", "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm", SHM_MARKER,
+            HOST_LOCK, NIX_DB_LOCK,
         ]
 
         # A: job A (requester one, with hints) and job B (requester two) wait behind the operator's lock.
@@ -869,7 +882,7 @@ pkgs.testers.runNixOSTest {
         assert not failed_stt_units(), failed_stt_units()
 
         release_cuda()
-        server.succeed(f"rm {INBOX}/{p}.json.tmp {SHM_MARKER}")
+        server.succeed(f"rm {INBOX}/{p}.json.tmp {SHM_MARKER} {NIX_DB_LOCK}")
         for node_name in ("nvidia0", "nvidiactl", "nvidia-uvm"):
             server.succeed(f"rm /dev/{node_name}")
         server.succeed("systemctl start stt-worker.path stt-sweep.timer")

@@ -30,7 +30,8 @@ import sys
 from collections.abc import Callable, Sequence
 from typing import Any
 
-TARGETS_PATH = "/run/vm-double/targets.json"
+# Under /etc, not /run: the unit covers /run with an empty tmpfs.
+TARGETS_PATH = "/etc/vm-double/targets.json"
 CHECK_HOLD_S = 30
 CHUNK = b"\x01" * (16 << 20)
 CHUNK_LIMIT = 64
@@ -89,6 +90,24 @@ def reach_readonly(path: str) -> int:
     return visible(path) + worked(lambda: close_after(os.open(path, os.O_RDONLY)))
 
 
+def locked(path: str) -> int:
+    """Returns 1 when a lock can be taken on `path` without waiting; the lock is released at once.
+
+    ``flock`` needs only a descriptor opened for reading, also on a read-only mount, which is how a
+    readable lock file of the host could be held against its owner.
+    """
+    import fcntl
+
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return 0
+    try:
+        return worked(lambda: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB))
+    finally:
+        os.close(fd)
+
+
 def created_in(directory: str) -> int:
     """Returns 1 when a file can be created in `directory`; the double removes the file it made."""
     path = os.path.join(directory, "double-probe")
@@ -105,7 +124,7 @@ def created_in(directory: str) -> int:
 
 def reach(path: str) -> int:
     """Counts the operations on `path` that work: stat (unmasked), open for reading, open for writing
-    (without truncating), list, create a file inside.
+    (without truncating), list, create a file inside, take a non-blocking lock.
 
     Nothing that exists is changed or removed, so a weakened unit cannot damage later steps. Being able to
     delete a target is the same permission as creating a file in its directory, which the directory
@@ -116,6 +135,7 @@ def reach(path: str) -> int:
         + worked(lambda: close_after(os.open(path, os.O_WRONLY)))
         + worked(lambda: os.listdir(path))
         + created_in(path)
+        + locked(path)
     )
 
 
