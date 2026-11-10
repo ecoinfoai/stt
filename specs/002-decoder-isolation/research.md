@@ -304,6 +304,10 @@
     줄이 경고 수준으로 오며, 같은 인스턴스 이름으로 systemd 의 `The kernel OOM killer killed some processes in this unit.` 도 온다. 인스턴스는 정상 종료라 `--failed` 에 없다. 옛 메모리 대역(감독을 대신해
     대역이 직접 죽는 것)에서는 `Main process exited, code=killed, status=9/KILL` 과 `Failed with result 'signal'` 이 온다. 호스트의 systemd 262 로는 아직 돌려 보지 않았다 —
     262 의 `libsystemd-core` 에 OOM 문구와 `Service reached runtime time limit. Stopping.` 가 같은 글자로 있음만 `strings` 로 보았다. 실제 줄은 T042 에서 본다.
+    systemd 의 OOM 줄은 notice 수준(이 호스트의 262 저널에서 확인)이고 `Main process exited`·`Failed with result`·시간 상한 줄은 warning 이다. 그래서 운영자 확인 명령(`docs/server-security.md` §3)은
+    `-p warning` 없이 `-g 'reader child|oom|runtime time limit|main process exited'` 이고, VM 시험이 그 명령을 커서 이후로 좁혀 진짜 감독의 OOM(감독의 줄 + OOM 줄)과 감독이 죽는 OOM
+    (`Main process exited, code=killed` + OOM 줄, 감독의 줄 없음) 둘 다에서 돌린다. `OOMPolicy`·`SyslogLevel` 의 RED 는 VM 단언이 아니라 변경 전 `nix eval`(`serviceConfig ? OOMPolicy` 가 `false`)과
+    옛 모듈에 두 이름이 없다는 확인으로 남겼다. 속성 단언(`OOMPolicy == continue`, 단위 파일의 `SyslogLevel=warning`)은 옛 모듈에서 실패하는 결정적 단언이다.
   - 받기·워커는 `wants`·`after` 에 `stt-reader.socket` 을 두고, `ExecStart` 에 `--reader-socket /run/stt-reader.sock` 을 붙인다.
   - P1 의 세 설정은 읽기 단위에도 있고 더 좁다. P2 뒤로는 SC-001 의 「서버 단위」에 읽기 단위가 들어간다(단위 다섯).
   - nixos-config 는 바꿀 것이 없다. `DynamicUser` 의 이름 풀이(nss-systemd)가 없어도 UID 는 할당된다.

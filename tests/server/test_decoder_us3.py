@@ -473,9 +473,15 @@ TWO_SECONDS_OF_SAMPLES = 2 * reader.SAMPLE_RATE
 
 
 def test_decoder_edge_10_a_decode_that_stopped_early_ends_the_job_done_with_the_audio_before_it(
-    layout: Layout, tone: Path, clock: FakeClock, reader_socket: ReaderSocket, tmp_path: Path
+    layout: Layout,
+    tone: Path,
+    clock: FakeClock,
+    reader_socket: ReaderSocket,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
     request_id = submit(layout, tone, clock)
+    capfd.readouterr()
     reader_socket.use_supervisor(child_command("--mode", "early-stop", "--count", str(2 * TWO_SECONDS_OF_SAMPLES)))
     record = tmp_path / "engine.jsonl"
 
@@ -483,14 +489,21 @@ def test_decoder_edge_10_a_decode_that_stopped_early_ends_the_job_done_with_the_
 
     assert read_response(layout, request_id)["state"] == "done"
     assert (layout.outbox / request_id / "result.json").is_file()
+    assert capfd.readouterr().out.splitlines() == [f"{request_id} running", f"{request_id} done"]
     (line,) = record.read_text(encoding="utf-8").splitlines()
     assert json.loads(line)["wav_frames"] == TWO_SECONDS_OF_SAMPLES
 
 
 def test_decoder_edge_10_a_recording_damaged_from_its_first_frame_ends_the_job_done_with_an_empty_audio(
-    layout: Layout, tone: Path, clock: FakeClock, reader_socket: ReaderSocket, tmp_path: Path
+    layout: Layout,
+    tone: Path,
+    clock: FakeClock,
+    reader_socket: ReaderSocket,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
     request_id = submit(layout, tone, clock)
+    capfd.readouterr()
     reader_socket.use_supervisor(child_command("--mode", "early-stop", "--count", "0"))
     record = tmp_path / "engine.jsonl"
 
@@ -498,6 +511,7 @@ def test_decoder_edge_10_a_recording_damaged_from_its_first_frame_ends_the_job_d
 
     assert read_response(layout, request_id)["state"] == "done"
     assert (layout.outbox / request_id / "result.json").is_file()
+    assert capfd.readouterr().out.splitlines() == [f"{request_id} running", f"{request_id} done"]
     (line,) = record.read_text(encoding="utf-8").splitlines()
     assert json.loads(line)["wav_frames"] == 0
 

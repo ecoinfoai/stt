@@ -1,4 +1,4 @@
-# NixOS VM test of `services.stt` (quickstart B, steps 1-11 and B-P2-1..7; contracts/module.md).
+# NixOS VM test of `services.stt` (quickstart B, steps 1-11 and B-P2-1..8; contracts/module.md).
 #
 # There is no GPU and there are no models in the VM, so every transcribe job the
 # worker runs ends `failed(gpu_unavailable)`: the engine checks the GPU before the
@@ -461,7 +461,7 @@ pkgs.testers.runNixOSTest {
             assert socket_unit in prop(unit, "After").split(), (unit, prop(unit, "After"))
             assert server.succeed(f"grep '^ExecStart=' /etc/systemd/system/{unit}").strip().endswith(f"/bin/stt {command}"), unit
 
-    with subtest("every format of the reader's list is read through the real reader without a blocked call (US2-8, SC-007)"):
+    with subtest("every format of the reader's list is read through the real reader without a blocked call (B-P2-8, US2-8, SC-007)"):
         formats = (
             "two-seconds.wav", "tone.m4a", "tone.mp3", "tone.flac", "tone-vorbis.ogg", "tone-opus.opus", "tone.aac", "tone.wma",
         )
@@ -703,6 +703,22 @@ pkgs.testers.runNixOSTest {
     # Readable files on the data disks and in the add-on trees of a host, which a reader must not reach either (reaudit RM2).
     DATA_DIRS = ("/mnt", "/srv", "/opt", "/media")
     DATA_FILES = [f"{directory}/vm-double-data" for directory in DATA_DIRS]
+
+    # The journal check of docs/server-security.md section 3, run after a cursor so that only what one subtest
+    # caused is looked at. The cursor comes from the last entry, which exists by then.
+    OPERATOR_CHECK = "journalctl -u 'stt-reader@*' -g 'reader child|oom|runtime time limit|main process exited'"
+
+    def journal_cursor():
+        return server.succeed("journalctl -n1 --show-cursor --no-pager -o cat").split("-- cursor: ")[1].strip()
+
+    def operator_output(cursor, ready):
+        """Runs the documented check on the entries after `cursor`; waits up to 30 s for `ready(output)`."""
+        deadline = time.monotonic() + 30
+        while True:
+            output = server.execute(f"{OPERATOR_CHECK} --after-cursor={shlex.quote(cursor)} --no-pager -o cat")[1]
+            if ready(output) or time.monotonic() > deadline:
+                return output
+            time.sleep(1)
 
     def switch_to(specialisation=None):
         """Activates the base system or one of its specialisations without touching the boot entry."""
@@ -1003,6 +1019,7 @@ pkgs.testers.runNixOSTest {
                 # reader is exactly what this subtest expects.
                 panic_on_oom = server.succeed("sysctl -n vm.panic_on_oom").strip()
                 server.succeed("sysctl -w vm.panic_on_oom=0")
+            cursor = journal_cursor()
             # The job to be decoded by the failing reader is accepted by the healthy one first.
             hold_gpu(lock, 900)
             victim = transcribe()
@@ -1037,7 +1054,12 @@ pkgs.testers.runNixOSTest {
                 check_victim()
             no_reader_instance()
             if double == "reader-memory":
-                server.wait_until_succeeds("journalctl --no-pager -o cat -u 'stt-reader@*' | grep -i 'oom'", timeout=30)
+                # The supervisor is the double itself here, so it is the one the cap kills: the supervisor writes no
+                # line, and the operator sees systemd's own lines for the instance.
+                output = operator_output(cursor, lambda text: "OOM killer" in text and "Main process exited" in text)
+                assert "The kernel OOM killer killed some processes in this unit." in output, output
+                assert "Main process exited, code=killed, status=9/KILL" in output, output
+                assert "reader child" not in output, output
                 server.succeed(f"sysctl -w vm.panic_on_oom={panic_on_oom}")
             # A request the reader could not even be asked about ends the intake run with exit 1
             # (001 FR-032a, kept by the operator decision of 2026-11-08): the one failed stt unit any double may leave.
@@ -1051,10 +1073,11 @@ pkgs.testers.runNixOSTest {
             no_reader_instance()
             assert not failed_stt_units(), failed_stt_units()
 
-    with subtest("a decode child killed by the memory cap leaves the real supervisor alive to answer and to write its line (OOMPolicy)"):
+    with subtest("a probe child killed by the memory cap leaves the real supervisor alive to answer and to write its line (OOMPolicy)"):
         # The test VM panics on any out-of-memory kill; the unit's memory cap killing the child is what this expects.
         panic_on_oom = server.succeed("sysctl -n vm.panic_on_oom").strip()
         server.succeed("sysctl -w vm.panic_on_oom=0")
+        cursor = journal_cursor()
         switch_to("reader-supervised-memory")
         victim = transcribe()
         submit(victim)
@@ -1064,9 +1087,11 @@ pkgs.testers.runNixOSTest {
         server.wait_until_succeeds(f"journalctl -u 'stt-reader@*' --no-pager -o cat | grep -Fx '{line}'", timeout=30)
         # The line is a warning, so that `journalctl -p warning` shows it (reaudit RL5).
         server.succeed(f"journalctl -u 'stt-reader@*' -p warning --no-pager -o cat | grep -Fx '{line}'")
-        # systemd's own lines for the instance, whose wording the operator's check and the document rely on.
-        print(server.succeed("journalctl -u 'stt-reader@*' --no-pager -o short-monotonic"))
-        server.succeed("journalctl -u 'stt-reader@*' --no-pager -o cat | grep -i 'oom'")
+        # The documented check shows the supervisor's line and systemd's own line for the instance, and the supervisor survived.
+        output = operator_output(cursor, lambda text: "OOM killer" in text and line in text)
+        assert line in output.splitlines(), output
+        assert "The kernel OOM killer killed some processes in this unit." in output, output
+        assert "Main process exited" not in output, output
         no_reader_instance()
         assert not failed_stt_units(), failed_stt_units()
         server.succeed(f"sysctl -w vm.panic_on_oom={panic_on_oom}")

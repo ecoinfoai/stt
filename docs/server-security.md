@@ -51,9 +51,9 @@
   잠그지도 못함을 본다.
 - 호스트의 자료 디스크와 덧붙인 설치 자리: `/mnt`·`/srv`·`/opt`·`/media` 도 `InaccessiblePaths` 로 가린다(`-/mnt -/srv -/opt -/media`. 운영자 결정 2026-11-10,
   재감사 RM2·RL1·RL2). 읽기는 이 아래에서 아무것도 필요로 하지 않는다. 자료 디스크의 누구나 읽을 수 있는 파일(대용량 보관 파일 포함)이 장악된 읽기의 읽기 범위에서
-  빠지고, 그 자리를 붙들어 두어 호스트의 `umount` 가 `EBUSY` 로 실패하게 하는 길(마운트 붙들기)도 닫힌다. VM 시험의 권한 점검이 네 자리 아래의 0644 root 파일을
+  빠진다. 그 자리의 파일을 열어 둔 채 호스트의 `umount` 가 `EBUSY` 로 실패하게 하는 길(마운트 붙들기)도, 읽기가 그 아래를 열 수 없으므로 닫힌다고 본다(추론이다. 실제 `umount` 로 확인하지는 않았다). VM 시험의 권한 점검이 네 자리 아래의 0644 root 파일을
   열지도 잠그지도 못함을 본다.
-- 호스트의 다른 파일(남는 위험): `/mnt`·`/srv`·`/opt` 는 가렸다. 남는 것은 `/etc`·`/nix/store`·`/usr` 의 누구나 읽을 수 있는 파일이다. 이 경로 밖에서 누구나 읽을 수 있는 파일은 읽기 단위도 읽을 수 있다. 장악된 읽기는
+- 호스트의 다른 파일(남는 위험): `/mnt`·`/srv`·`/opt`(와 `/media`)는 가렸다. 남는 것은 `/etc`·`/nix/store`·`/usr` 의 누구나 읽을 수 있는 파일이다. 이 경로 밖에서 누구나 읽을 수 있는 파일은 읽기 단위도 읽을 수 있다. 장악된 읽기는
   그 내용을 자기 작업의 전사록으로 내보낼 수 있다 — 읽은 내용을 녹음 속 음성으로 합성해 두면 Whisper 가 받아 적고 전사록이 그 작업의 호출자에게 돌아간다
   (느리다. 다른 이용자의 녹음·전사록은 닿지 않는다). 망으로 나가는 길은 없다(`PrivateNetwork`). 홈은 `ProtectHome=true` 로 닫혔다. 이 호스트에서는 다른
   서비스의 상태가 `/var/lib/private`(0700)에 있어 일회용 UID 로는 들어가지 못하고, `/var` 는 위에서 덮었다.
@@ -130,14 +130,20 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
   ```
 
   ```sh
-  journalctl -u 'stt-reader@*' -p warning -g 'reader child|OOM killer|runtime time limit'
+  journalctl -u 'stt-reader@*' -g 'reader child|oom|runtime time limit|main process exited'
   ```
 
-  앞의 `reader child` 는 감독의 줄이고, 뒤의 둘은 systemd 자신이 그 인스턴스 이름으로 쓰는 줄이다.
+  `reader child` 는 감독의 줄(경고 수준)이고, 나머지 셋은 systemd 자신이 그 인스턴스 이름으로 쓰는 줄이다. `-p warning` 을 붙이지 않는다: systemd 의 OOM 줄
+  (`The kernel OOM killer killed some processes in this unit.`)은 notice 수준이라 `-p warning` 에 가려진다(이 호스트의 systemd 262 저널에서 확인). 패턴을 소문자로 쓰면
+  `journalctl -g` 는 대소문자를 가리지 않는다. 시각 범위는 `--since` 로 좁힌다. 감독의 줄만 훑을 때는 `journalctl -u 'stt-reader@*' -p warning -g 'reader child'` 가 된다.
+  VM 시험은 이 명령(커서 이후로 좁힘)의 출력으로 아래 두 경우를 확인한다.
   - `killed by signal 31` 은 시스템 호출 필터(SIGSYS), `killed by signal 9` 는 메모리 상한(OOM)이거나 밖에서 죽인 것이다. 읽기 단위에는 `OOMPolicy=continue` 가 있다. 메모리 상한이
     죽이는 것은 해독 자식이고, 기본 정책(`stop`)이면 관리자가 단위를 멈추며 감독도 죽여 `failed` 를 보내고 줄을 쓰기 전에 끝날 수 있기 때문이다(재감사 RM1). `continue` 면 감독이
     살아 둘 다 하고, 같은 인스턴스 이름으로 systemd 의 `The kernel OOM killer killed some processes in this unit.` 도 저널에 온다(VM 시험이 진짜 감독과 메모리만 쓰는 자식으로
     systemd 261.1 에서 확인했다. 262 의 `libsystemd-core` 에도 같은 문구가 있다. 호스트 저널의 실제 줄은 T042 에서 본다).
+  - 감독 자신이 메모리 상한에 죽은 경우(자식이 아니라 감독이 가장 큰 프로세스일 때)는 감독의 줄이 없고 systemd 의 줄만 남는다: `The kernel OOM killer killed some processes in this
+    unit.`, `Main process exited, code=killed, status=9/KILL`, 그리고 `Failed with result 'signal'`(`OOMPolicy=continue` 에서는 `oom-kill` 이 아니다). 위 명령이 앞의 둘을 보여 준다.
+    호출한 쪽에는 연결 끊김이라 작업은 같은 `unreadable_audio` 다. VM 시험이 감독을 대신하는 메모리 대역으로 이 줄들을 확인한다.
   - 감독이 시간 상한에 죽인 자식은 `timed out` 이다. 단위의 `RuntimeMaxSec` 가 cgroup 전체(감독 포함)를 죽인 경우는 감독의 줄이 남지 않는다. 그때는 systemd 가 인스턴스 이름으로
     `Service reached runtime time limit. Stopping.` 을 쓴다(systemd 261·262 의 `libsystemd-core` 에서 문구를 확인했고, 실제로 인스턴스가 상한에 걸리게 해 본 적은 없다). 읽기 인스턴스는
     `CollectMode` 로 치워져 `systemctl --failed` 에 쌓이지 않으므로, 감독의 줄과 이 systemd 줄이 단위 수준의 흔적이다.
@@ -161,11 +167,13 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
   FFmpeg 형식을 열고, 해독기를 노리는 파일이면 운영자(root) 또는 `stt` 권한으로 모든 이용자의 녹음·GPU·망이 닿는 곳에서 돈다. 읽히지 않는 녹음을 다시 확인하려면
   읽기 단위를 거친다.
 - **안전한 재확인**: 읽기 단위가 정상 녹음을 읽는지, 형식 하나가 깨졌는지는 사고 중에도 `stt` 사용자로 읽기 소켓을 거쳐 확인할 수 있다. 아래는 VM 시험의 `readFormats` 와 같은 길이다
-  (`stt` 가 `reader_client` 로 기술자만 넘기고, 해독은 샌드박스 안에서 된다). 서버 안의 녹음이 아니라 알려진 정상 파일(예: 2초 사인파)을 `stt` 가 읽을 수 있는 자리에 둔다.
+  (`stt` 가 `reader_client` 로 기술자만 넘기고, 해독은 샌드박스 안에서 된다). 서버 안의 녹음이 아니라 운영자가 만든 알려진 정상 파일(아래 첫 줄의 2초 사인파)을 `stt` 가 읽을 수 있는 자리에 둔다. `-I` 는 현재 폴더를 모듈 찾는 길에서 뺀다.
 
   ```sh
+  ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=440:duration=2" -ac 1 -ar 44100 -c:a aac -f ipod /tmp/known-good.m4a
+  chmod 0644 /tmp/known-good.m4a
   BIN=$(systemctl cat stt-intake.service | sed -n 's|^ExecStart=\(.*\)/stt server .*|\1|p')
-  sudo -u stt "$BIN/python" - /tmp/known-good.m4a <<'EOF'
+  sudo -u stt "$BIN/python" -I - /tmp/known-good.m4a <<'EOF'
   import sys
   from stt.server.reader_client import ReaderConfig, decode, probe
   config = ReaderConfig()

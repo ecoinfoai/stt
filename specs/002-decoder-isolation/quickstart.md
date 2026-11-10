@@ -94,7 +94,8 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
    `--failed` 에 오른다(001 FR-032a — 받기의 시작 실패 규칙, 운영자 결정 2026-11-08 유지). 이 경우에도 다른 단위는 `--failed` 에 없고,
    다른 세 대역은 모든 단위가 `--failed` 에 없다. 메모리 대역은 감독을 바꾸는 것이라 진짜 감독을 못 본다. 그래서 진짜 감독(`reader.serve`)에 메모리만 쓰는 자식을 붙인
    specialisation 도 돌린다: 자식이 메모리 상한에 죽어도 감독이 살아 그 요청이 `unreadable_audio` 가 되고, `reader child probe killed by signal 9` 줄이 경고 수준으로
-   저널에 오며, systemd 의 OOM 줄도 같은 저널에 있다(`OOMPolicy=continue`, 재감사 RM1).
+   저널에 오며, systemd 의 OOM 줄(notice 수준)도 같은 저널에 있다(`OOMPolicy=continue`, 재감사 RM1). 확인은 `docs/server-security.md` §3 의 명령으로 하고(`-p warning` 없이),
+   감독이 죽는 메모리 대역에서는 감독의 줄 없이 `Main process exited, code=killed` 와 OOM 줄이 보인다.
 6. **B-P2-6 읽는 중의 삭제**: 멈추는 대역으로 읽기를 붙잡아 둔 채 다음 셋을 한다.
    - 「다 지우기」 → 1분 안에 `stt-reader@*` 인스턴스가 없고 그 작업의 파일이 0개다(US4-4).
    - VM 시계를 23:58 로 옮겨 청소 → 같음(US4-5).
@@ -102,7 +103,7 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
 7. **B-P2-7 로그**: 기존 「힌트 단어·요청자 없음」 시험에 더해, `journalctl -u 'stt-reader@*'` 에 작업 ID 가 하나도 없다(FR-019). 감독의 줄은 모두 경고 수준이다
    (`-p warning` 으로 B-P2-3 의 줄이 보인다. 재감사 RL5).
 8. **B-P2-8 형식별 해독**: 읽기 단위의 형식 목록(`AUDIO_FORMATS`)마다 사인파 녹음 하나를 진짜 감독으로 읽어 길이·표본 수·크기가 맞고 `type=1326` 과
-   `reader child` 줄이 없다(US2-8, SC-007). VM 시험의 부분 시험 「every format of the reader's list …(US2-8, SC-007)」다. 줄 없음 확인은 마지막 인스턴스가 끝나고 저널을
+   `reader child` 줄이 없다(US2-8, SC-007). VM 시험의 부분 시험 「every format of the reader's list …(B-P2-8, US2-8, SC-007)」다. 줄 없음 확인은 마지막 인스턴스가 끝나고 저널을
    `journalctl --sync` 로 비운 뒤에 한다(늦게 온 줄을 놓치지 않으려고, 재감사 L4).
 
 ## C. 호스트 시험 (운영자와, miniecoinfo)
