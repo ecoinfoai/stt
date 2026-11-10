@@ -352,16 +352,16 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 ## Phase 8: P2·P3 배포와 회신 (운영자 승인 뒤, bhu-llm FR-659 전)
 
-- [ ] T041 P2·P3 배포: T040 이 통과한 뒤 운영자 승인을 받아 master 에 합치고 push, 운영자가 nixos-config 의 `stt` 입력을 갱신하고 `nxr` 한다. 배포한
+- [X] T041 P2·P3 배포: T040 이 통과한 뒤 운영자 승인을 받아 master 에 합치고 push, 운영자가 nixos-config 의 `stt` 입력을 갱신하고 `nxr` 한다. 배포한
   커밋과 날을 `specs/002-decoder-isolation/handoff/p2-reply.md` 에 적는다. RED 해당 없음 — 배포. supports US2~US5
-- [ ] T042 C-P2-1~7·C-P3 호스트 확인(운영자와, quickstart C-P2): 설정 조회 세 명령 출력을 그대로 싣고(`TemporaryFileSystem` 셋, `InaccessiblePaths` 여덟, `OOMPolicy`,
+- [X] T042 C-P2-1~7·C-P3 호스트 확인(운영자와, quickstart C-P2): 설정 조회 세 명령 출력을 그대로 싣고(`TemporaryFileSystem` 셋, `InaccessiblePaths` 여덟, `OOMPolicy`,
   `SyslogLevel` 포함), 인계 §6 의 정상 + 텍스트 첨부(`journalctl -u 'stt-reader@*' -p warning` 의 `reader child probe exited with status 1` 줄, `type=1326` 비어 있음,
   인스턴스가 `/run/nixos`·`/nix/var`·`/mnt` 등을 보지 못함 — quickstart C-P2-2), 3시간 사인파의
   해독 시간·최대 메모리(`captest 1G 10m`, 기대 48초·153 MB 이하 — 넘으면 상한을 고치는 과제를 더한다), 한 녹음에 작업 5개와 「다 지우기」, 기준
   녹음 비교(먼저 `cmp` 로 s16 비교, 다르면 운영자가 받아들인 뒤에만 완료), 1시간 녹음의 처리 시간과 접수 확인 시간, (선택) 도는 인스턴스의 `/dev`
   와 UID. §4 의 첫 매달 확인 줄과 `av` 줄의 `comparison` 을 이날로 고친다(T036 이 GREEN 인지 다시 본다). 결과를 `handoff/p2-reply.md` 에 적는다. RED 해당 없음 — 호스트 확인.
   closes US2-8, US2-9, US4-2, US4-3, US4-7, US5-3, US5-4(호스트), 경계 사례 3, SC-001, SC-004, SC-006, SC-007, 해결 `[VERIFY]` C-P2-3·C-P2-5·C-P2-6
-- [ ] T043 C-P2-8 회신 `specs/002-decoder-isolation/handoff/p2-reply.md`: data-model §9 의 P2 열 — 다섯 단위 확인 결과와 권한 점검, 요청 1(읽기 단위
+- [X] T043 C-P2-8 회신 `specs/002-decoder-isolation/handoff/p2-reply.md`: data-model §9 의 P2 열 — 다섯 단위 확인 결과와 권한 점검, 요청 1(읽기 단위
   덧붙임), 요청 2·3(배포된 격리), 요청 4(정책과 첫 매달 확인), §5 질문, 남는 위험. 운영자에게 넘긴다. RED 해당 없음 — 회신 문서.
   closes SC-010, supports FR-027
 
