@@ -116,7 +116,7 @@ description: "Task list for 003-reader-hardening"
 
 ### Tests for User Story 1 (write first) ⚠️
 
-- [ ] T006 [US1] `tests/server/test_hardening_us1.py`(새), T001 의 녹음과 기존 흉내 읽기 소켓(진짜 감독·자식)으로:
+- [X] T006 [US1] `tests/server/test_hardening_us1.py`(새), T001 의 녹음과 기존 흉내 읽기 소켓(진짜 감독·자식)으로:
   (a) `test_hardening_us1_1_*` — 형식 8가지(기존 `encode_tone`·`make_wav`)와 ALAC·PCM 변형을 `open_container(..., codec_whitelist=reader.AUDIO_DECODERS)`
   로 연 길이 재기 값과 해독 바이트가 목록 없이 연 것과 같고, 진짜 감독·자식으로 probe·decode 가 `ok`·`ok`. (b) `test_hardening_us1_2_*`·
   `test_hardening_edge_1_*` — AAC + 단색 MPEG-4/H.264: 진짜 자식의 probe 값·decode 바이트가 같은 음성만 든 녹음과 같다. 프로세스 안에서
@@ -134,25 +134,25 @@ description: "Task list for 003-reader-hardening"
   보면 (b)(c)의 `pix_fmt` 가 `None` 이 아니고 (e)의 probe 가 `ok` 다 — 이 실패 모양을 커밋 메시지에 적는다. (a)(g)(h)는 지금 코드에서 이미 참인
   회귀 지킴이다(T009 의 돌연변이 확인 셋이 RED 를 대신한다). closes US1-1, US1-2, US1-3, US1-4, US1-5, 경계 사례 1·2, SC-001(pytest), SC-002(앞),
   supports FR-001~003, FR-005
-- [ ] T007 [P] [US1] (a) `tests/test_server_security_doc.py` 에 더한다: `<!-- stt:audio-decoders -->` 표의 `decoder` 칸 값 집합 ==
+- [X] T007 [P] [US1] (a) `tests/test_server_security_doc.py` 에 더한다: `<!-- stt:audio-decoders -->` 표의 `decoder` 칸 값 집합 ==
   `set(reader.AUDIO_DECODERS.split(","))`, 겹침 없음. (b) `tests/server/test_audio_decode.py` 에 더한다: 가로챈 `av.open` 과 열린 컨테이너로: `open_container(..., codec_whitelist=X)` 가
   `container_options["codec_whitelist"] == X` 를 넘기고 모든 흐름의 코덱 문맥 `options["codec_whitelist"] == X` 를 둔다. `codec_whitelist=None` 이면
   어느 쪽에도 두지 않는다. 영어 표식·칸 이름으로만 읽는다. verify RED: 표식 없음, `AUDIO_DECODERS` 없음, 키워드 없음. closes US1-6, supports FR-004
 
 ### Implementation for User Story 1 (turn T006–T007 GREEN)
 
-- [ ] T008 [US1] `src/stt/audio_decode.py`: `open_container(source, *, format_whitelist=None, codec_whitelist=None)` — `None` 이 아니면
+- [X] T008 [US1] `src/stt/audio_decode.py`: `open_container(source, *, format_whitelist=None, codec_whitelist=None)` — `None` 이 아니면
   `container_options` 에 `codec_whitelist` 를 더하고, 열린 컨테이너의 흐름마다 코덱 문맥이 있으면 그 `options` 에 같은 값을 둔다(contracts/reader.md §2).
   `None` 이면 지금과 똑같다. `metadata_errors`(PyAV 19 미만) 처리와 `format_whitelist` 는 그대로. docstring(Google, 영어)에 두 겹의 이유. PyAV 17·18·19
   모두에서 같은 동작인지는 CI(3.10)·로컬 3.11 이 본다(T031). RED → GREEN: turns T007(b) GREEN. supports FR-001, FR-005
-- [ ] T009 [US1] `src/stt/server/reader.py`: `AUDIO_DECODERS`(contracts/reader.md §1 의 32개, `AUDIO_FORMATS` 옆, 코드에서 이 한 곳만), 자식의
+- [X] T009 [US1] `src/stt/server/reader.py`: `AUDIO_DECODERS`(contracts/reader.md §1 의 32개, `AUDIO_FORMATS` 옆, 코드에서 이 한 곳만), 자식의
   `_open_container` 가 `format_whitelist=AUDIO_FORMATS, codec_whitelist=AUDIO_DECODERS` 로 연다. probe 는 길이를 재기 전에 순수 함수
   `first_audio_decoder_allowed(container) -> bool`(음성 흐름 없음·`codec_context is None`·이름이 목록 밖 → 거짓 → 끝 코드 1)을 부른다. 감독·받기·워커는 바꾸지 않는다(받기·워커는 PyAV 를
   불러오지 않는다 — 002 T019(e) 시험이 그대로 지킨다). RED → GREEN: turns T006, T007(a 제외) GREEN. **돌연변이 확인**(T006(a)(g)의 RED 대신):
   `AUDIO_DECODERS` 에서 녹음기 코덱 10개를 빼면 T006(g)가, `aac` 를 빼면 T006(a)가, `stt.audio_decode.decode_samples` 가 `open_container` 에
   `codec_whitelist=AUDIO_DECODERS` 를 넘기게 하면 T006(h)가 실패함을 한 번씩 보고 되돌린다(quickstart B-003-1(1)의 「22개
   일 때 `failed`」를 pytest 로 본다 — 결과를 커밋 메시지에). closes US1-1, US1-2, US1-3, US1-4, US1-5, 경계 사례 1·2, supports FR-001~003, SC-002
-- [ ] T010 [US1] `docs/server-security.md` §2 에 「해독기 목록」 절(contracts/operator-log.md §5.1): 문장(서버 경로는 이 음성 해독기만 연다, 영상·이미지·
+- [X] T010 [US1] `docs/server-security.md` §2 에 「해독기 목록」 절(contracts/operator-log.md §5.1): 문장(서버 경로는 이 음성 해독기만 연다, 영상·이미지·
   자막 해독기는 분석에서도 해독에서도 거절, 영상 트랙이 든 녹음은 음성만, 목록 밖 음성 코덱은 받을 때 `unreadable_audio`), `<!-- stt:audio-decoders -->`
   표(칸 `decoder`·`codec`·`formats`, 32줄), 남는 범위 한 단락(분석기·형식은 목록이 막지 않음, 해독 단계의 영상 묶음 버리기는 운영자가 미룸
   2026-11-10, 그런 공지는 지금처럼 판정). §3 「가장 흔한 줄」의 원인 목록에 「목록 밖 음성 코덱」을 더한다. 목록에 이름을 더하거나 빼면 상수·표·

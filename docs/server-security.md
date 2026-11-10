@@ -75,6 +75,57 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
 `KillSignal=SIGKILL` 이라 단위 정지도 기다리지 않는다. 읽기 단위의 자식은 로그를 쓰지 않고, 감독은 아래 §3 의 고정된 영어 한 줄만 쓴다(감독 내부 예외의 트레이스백은 예외다. 코드 위치만 담고 녹음 경로는 담지 않는다). 저널에 작업 ID·경로·
 파일 이름·해독기 문구가 남지 않는다.
 
+### 2.1 해독기 목록
+
+서버 경로(받을 때의 길이 재기와 처리 때의 해독)는 아래 음성 해독기만 연다. 영상·이미지·자막 해독기는 녹음 상자에 그 트랙이 있어도 열리지 않는다 — 분석
+(`find_stream_info`)과 해독 모두 FFmpeg 의 `codec_whitelist` 로 거절된다. 영상 트랙이 든 녹음(영상 강의의 MP4, 표지 그림이 든 MP3)은 음성만 읽는다(운영자 결정
+2026-11-10). 영상 트랙만 든 녹음과, 목록 밖 음성 코덱의 녹음은 받을 때 `unreadable_audio` 다. 명령줄(`stt`)의 해독은 이 목록을 쓰지 않는다.
+
+<!-- stt:audio-decoders -->
+
+| decoder | codec | formats |
+|---|---|---|
+| `aac` | AAC (LC, HE) | m4a, aac |
+| `alac` | Apple Lossless | m4a |
+| `flac` | FLAC | flac, ogg |
+| `mp3float` | MP3 | mp3 |
+| `mp2` | MPEG Layer II | mp3, wav |
+| `opus` | Opus | opus, ogg |
+| `vorbis` | Vorbis | ogg |
+| `wmav1` | WMA 1 | wma |
+| `wmav2` | WMA 2 | wma |
+| `wmapro` | WMA Pro | wma |
+| `wmavoice` | WMA Voice | wma |
+| `wmalossless` | WMA Lossless | wma |
+| `ac3` | AC-3 | m4a |
+| `eac3` | E-AC-3 | m4a |
+| `amrnb` | AMR-NB | m4a |
+| `amrwb` | AMR-WB | m4a |
+| `adpcm_ima_wav` | IMA ADPCM | wav |
+| `adpcm_ms` | Microsoft ADPCM | wav |
+| `pcm_alaw` | G.711 A-law | wav, m4a |
+| `pcm_f32be` | PCM float 32 big-endian | m4a |
+| `pcm_f32le` | PCM float 32 little-endian | wav, m4a |
+| `pcm_f64be` | PCM float 64 big-endian | m4a |
+| `pcm_f64le` | PCM float 64 little-endian | wav, m4a |
+| `pcm_mulaw` | G.711 mu-law | wav, m4a |
+| `pcm_s16be` | PCM 16-bit big-endian | m4a |
+| `pcm_s16le` | PCM 16-bit little-endian | wav, m4a |
+| `pcm_s24be` | PCM 24-bit big-endian | m4a |
+| `pcm_s24le` | PCM 24-bit little-endian | wav, m4a |
+| `pcm_s32be` | PCM 32-bit big-endian | m4a |
+| `pcm_s32le` | PCM 32-bit little-endian | wav, m4a |
+| `pcm_s8` | PCM 8-bit signed | m4a |
+| `pcm_u8` | PCM 8-bit unsigned | wav, m4a |
+
+인코더가 없어 끝까지 읽어 보지 못한 이름은 `wmapro`·`wmavoice`·`wmalossless`·`amrwb` 넷이다(시험 파일을 밖에서 받지 않는다). 그런 녹음이 처음 올 때 운영 확인으로
+본다.
+
+**남는 범위.** 분석기(parser)와 형식(demuxer)은 목록이 막지 않는다. 길이 재기의 분석 중 영상 분석기가 영상 묶음 몇 개를 읽을 수 있고, 해독 중에도 영상 묶음이
+형식·분석기를 지난다(research R3 — 해독 단계에서 영상 묶음을 버리는 안은 운영자가 미뤘다, 2026-11-10). 공지가 분석기·형식에 관한 것이면 지금처럼 판정한다.
+
+**바꾸는 규칙.** 목록에 이름을 더하거나 빼면 상수(`reader.AUDIO_DECODERS`)·이 표·형식별 시험을 함께 바꾼다. 표와 상수가 어긋나면 `tests/test_server_security_doc.py` 가 실패한다.
+
 ## 3. 작업 실패와 단위 비정상 종료 구별
 
 새 알림 길은 없다. 운영자는 다음 두 곳을 구별해서 본다.
@@ -151,7 +202,7 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
   - 연결만 하고 요청을 보내지 않은 채 끊거나 「시작」 기다림(30초)을 넘긴 연결은 감독의 줄 없이 systemd 의 `Main process exited, code=exited, status=1/FAILURE` 만 남는다
     (2026-11-10 호스트의 systemd 262 에서 확인). 받기·워커는 연결하자마자 요청을 보내므로 평소에는 없는 줄이다. 소켓은 `stt` 만 열 수 있으니(0600), 운영자의
     시험이 아니라면 `stt` 권한의 프로세스가 이상한 것이다. 요청을 받은 뒤 호출하는 쪽이 끊은 경우는 끝 코드 0 이라 이 줄도 없다.
-  - 가장 흔한 줄은 `reader child probe exited with status 1` 이다. 읽을 수 없는 첨부(텍스트 파일, 깨진 머리, 목록 밖 형식)마다 길이 재기 자식이 끝 코드 1 로 끝나며 이 줄이 나온다.
+  - 가장 흔한 줄은 `reader child probe exited with status 1` 이다. 읽을 수 없는 첨부(텍스트 파일, 깨진 머리, 목록 밖 형식, 목록 밖 음성 코덱)마다 길이 재기 자식이 끝 코드 1 로 끝나며 이 줄이 나온다.
     그 요청은 `unreadable_audio` 로 거절되고 서버는 정상이다. 이 줄이 가끔 있는 것은 사고가 아니다. 같은 줄이 갑자기 많아지거나 정상 녹음에서 나올 때만 본다.
   - `timed out` 은 감독이 시간 상한(길이 재기 30초·해독 240초)에 자식을 죽였다는 뜻이다. `returned an invalid result` 는 길이 재기 자식이 정상으로 끝났지만 결과가
     규격에 맞지 않았다는 뜻이다. 호출하는 쪽이 먼저 끊은 경우(다 지우기 등)는 정상이라 줄이 없다.
