@@ -72,14 +72,14 @@ description: "Task list for 003-reader-hardening"
 
 **⚠️ CRITICAL**: T005(RED 기록)가 끝나야 Phase 3 의 구현 과제(T008·T009)를 시작한다 — 감시 라이브러리의 RED 는 목록이 없는 코드에서만 볼 수 있다.
 
-- [ ] T003 `nix/vm-test.nix`: 해독기 감시 라이브러리(contracts/module.md §3) — `pkgs.runCommandCC` 로 만든 공유 라이브러리(002 `hangingCuda` 와 같은
+- [X] T003 `nix/vm-test.nix`: 해독기 감시 라이브러리(contracts/module.md §3) — `pkgs.runCommandCC` 로 만든 공유 라이브러리(002 `hangingCuda` 와 같은
   방식, 영어 주석). `avcodec_open2` 를 가로채, 프로세스에 실린 `libavcodec` 의 진짜 함수(`dl_iterate_phdr` → `dlopen(RTLD_NOLOAD)`)가 0 을 돌려줬는데
   문맥의 `codec_type` 이 음성이 아니면 `abort()`. `server` 노드에만 `systemd.services."stt-reader@".environment.LD_PRELOAD` 로 싣는다(운영 모듈에는
   없음). 같은 과제에서 `audio` 파생물에 시험 녹음 15개를 더한다(contracts/module.md §4 표 그대로: `tone-video.m4a`·`tone-video.wma`·`tone-cover.mp3`·
   `video-only.m4a`·`tone-adpcm-ima.wav`·`tone-adpcm-ms.wav`·`tone-mp2.mp3`·`tone-ac3.m4a`·`tone-eac3.m4a`·`tone-speex.ogg`·`cut-tone.mp3`·
   `cut-tone.flac`·`cut-faststart.m4a`·`nopackets-faststart.m4a`·`tone10.mp3`). 모두 nixpkgs `ffmpeg` 의 사인파·단색 영상·단색 PNG 와 `head -c` 로 자른
   것이다(FR-017). RED 해당 없음 — 시험 도구(T005 가 이 도구로 RED 를 본다). supports SC-001, SC-003, US1-1~5, US2-1·2·4
-- [ ] T004 `nix/vm-test.nix` 에 부분 시험을 쓴다(quickstart B 그대로). 자리는 `journal_cursor()` 가 정의된 `nix/vm-test.nix:711` 뒤다 — B-P2-8
+- [X] T004 `nix/vm-test.nix` 에 부분 시험을 쓴다(quickstart B 그대로). 자리는 `journal_cursor()` 가 정의된 `nix/vm-test.nix:711` 뒤다 — B-P2-8
   (`:483`)은 커서 없이 읽기 단위 저널 전체에 `reader child` 줄이 없음을 보므로, B-003-1(3)의 줄이 그 앞에 쓰이면 B-P2-8 이 깨진다. B-003 부분
   시험들은 단언마다 멈추지 않고 실패를 목록에 모았다가 B-003 끝에서 한 번에 단언한다(실패 목록을 모두 찍는다) — 그래야 T005 의 한 번 실행이 모든
   B-003 RED 를 보인다. **B-003-1** — (1) B-P2-8 목록에 더한 녹음기 코덱 다섯을 더해 감시 아래에서 probe·
@@ -94,7 +94,7 @@ description: "Task list for 003-reader-hardening"
   묶어 지금 코드의 FIFO 막힘이 VM 전체를 붙잡지 않고 실패로 나오게 한다. **B-003-4** — `${package}/bin/stt server read </dev/null`(root): 끝 코드 2,
   표준 오류가 `MANUAL_RUN_LINE` 한 줄. 시험 녹음은 T003 의 것뿐이다. RED 는 T005 에서 본다(이 과제는 단언을 쓰기만 한다).
   supports US1-1~5, US2-1·2·4, US3-1~3, US4-4, SC-001~004
-- [ ] T005 VM RED 기록: `captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L` 를 지금 코드(T003·T004 만 더한 상태)로 돌려 실패를 보고, 실패한
+- [X] T005 VM RED 기록: `captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L` 를 지금 코드(T003·T004 만 더한 상태)로 돌려 실패를 보고, 실패한
   부분 시험과 줄을 커밋 메시지에 적는다. 기대: B-003-1(2)에서
   `reader child probe killed by signal 6`(영상·표지 그림 해독기가 열림), B-003-1(3)의 `tone-speex.ogg` probe `ok`, B-003-2 잘림 줄 0, B-003-3 줄 끝
   원인 없음과 FIFO 의 시간 넘김, B-003-4 빈 표준 오류. T004 의 모은 실패 목록이 한 번의 실행에서 B-003 RED 를 모두 보인다(다시 돌리지 않는다). **해결 `[VERIFY]` B-003-1**: B-003-1(2)에서 `killed by signal 6` 이 나오면 감시 라이브러리가 읽기 단위의 제한
