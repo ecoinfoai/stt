@@ -445,3 +445,18 @@ def test_every_engine_error_line_in_the_document_names_its_cause():
 
     assert "failed engine_error reader_unavailable" in text
     assert re.findall(rf"failed engine_error(?! (?:<cause>|(?:{names})\b))", text) == []
+
+
+def test_truncation_threshold_in_the_document_matches_the_worker_constant():
+    from stt.server import worker
+
+    found = re.search(r"(?m)^<!-- stt:truncation threshold_s=([0-9.]+) -->$", DOC.read_text())
+
+    assert found, "docs/server-security.md has no stt:truncation marker"
+    assert float(found.group(1)) == worker.TRUNCATION_THRESHOLD_S
+
+
+def test_the_document_shows_the_truncation_line_as_a_line_of_its_own():
+    from stt.server import worker
+
+    assert worker.TRUNCATION_LINE in DOC.read_text().splitlines()
