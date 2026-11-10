@@ -128,7 +128,7 @@ stt server read only serves a connection that systemd passes from stt-reader.soc
 | `pcm_u8` | PCM 8-bit unsigned | wav, m4a |
 
 인코더가 없어 끝까지 읽어 보지 못한 이름은 `wmapro`·`wmavoice`·`wmalossless`·`amrwb` 넷이다(시험 파일을 밖에서 받지 않는다). 그런 녹음이 처음 올 때 운영 확인으로
-본다: 응답이 `unreadable_audio` 가 아니고 `journalctl -u 'stt-reader@*' -g 'reader child'` 에 그 시각의 `reader child` 줄이 없으면 읽힌 것이다.
+본다: 응답이 `unreadable_audio` 가 아니고 `journalctl -u 'stt-reader@*' -g 'reader child'` 에 그 시각의 실패 줄(`exited with status`·`killed by signal`·`timed out`·`returned an invalid result`)이 없으면 읽힌 것이다. `reader child decode stopped early at invalid data` 는 판정이 `ok` 라 실패 줄이 아니다.
 
 **남는 범위.** 분석기(parser)와 형식(demuxer)은 목록이 막지 않는다. 길이 재기의 분석 중 영상 분석기가 영상 묶음 몇 개를 읽을 수 있고, 해독 중에도 영상 묶음이
 형식·분석기를 지난다(research R3 — 해독 단계에서 영상 묶음을 버리는 안은 운영자가 미뤘다, 2026-11-10). 공지가 분석기·형식에 관한 것이면 지금처럼 판정한다.

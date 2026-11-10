@@ -280,7 +280,7 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
   - `config.systemd.package.version` 이 판 문자열이다: 이 flake 의 nixpkgs 에서 `"261.1"`(VM 과 같음). 시험 모듈로 `systemd.package` 를
     `pkgs.systemd.overrideAttrs (_: { version = "256.10"; })` 로 바꾸자 단언이 그 문장으로 실패했고, 그대로(261.1)는 통과했다. `pkgs.systemd // { version = …; }`
     로는 바뀌지 않았다 — 시험은 `overrideAttrs`(+ `__intentionallyOverridingVersion = true`, nixpkgs 경고를 끈다)를 쓴다. NixOS 평가 한 번의 최대 메모리가 약 4.2 GB 였다
-    (`captest` 의 최대값). `boot.isContainer = true` 로 부트로더·파일시스템 단언을 피했다.
+    (`captest` 의 최대값; 서버 패키지를 `pkgs.hello` 로 바꾼 뒤의 잰 값은 [contracts/module.md](contracts/module.md) §2: 6초·728 MiB). `boot.isContainer = true` 로 부트로더·파일시스템 단언을 피했다.
 - `[VERIFY]` (B-003-6): CI 의 `nix flake check --no-build` 가 이 검사를 평가하는 시간과 메모리(VM 시험 노드 평가와 같은 급으로 본다).
 - **대안**: 단위 파일에 `ConditionVersion=systemd >= 257` — 이 호스트의 설명서는 이 설정을 258 에서 들어온 것으로 적어, 바로 그 낮은 판들에서는 설정
   자체가 경고만 남기고 무시된다. 조건이 걸리는 판에서도 단위가 조용히 건너뛰어져 서버가 말없이 멈춘다(헌법 V). 실행 중 확인 — 배포 뒤에야 안다. 기각.
