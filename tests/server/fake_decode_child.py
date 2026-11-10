@@ -36,15 +36,17 @@ from __future__ import annotations
 
 import argparse
 import os
+import resource
 import signal
 import stat
 import sys
 import time
 
+from stt.server.reader import EARLY_STOP_EXIT
+
 MODES = ("exit-error", "hang", "sigkill", "sigsys", "early-stop", "write-raw", "write-raw-then-error", "write-bytes", "verify-spawn")
 VALID_RESULT = b'{"duration_s": 1.5}'
 ONE_SECOND_OF_SILENCE_BYTES = 32000
-EARLY_STOP_EXIT = 3
 
 
 def write_all(fd: int, data: bytes) -> None:
@@ -149,6 +151,8 @@ def main(argv: list[str]) -> int:
         os.kill(os.getpid(), signal.SIGKILL)
         return 0
     if args.mode == "sigsys":
+        # No core dump of this deliberate kill on the host running the tests.
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         os.kill(os.getpid(), signal.SIGSYS)
         return 0
     if args.mode == "early-stop":

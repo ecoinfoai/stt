@@ -261,10 +261,11 @@ def _supervise(connection: socket.socket, child_command: Sequence[str], request_
             child.kill()
         returncode = child.wait()
         verdict = _verdict(op, returncode, result_read) if outcome == "exited" else _FAILED
-        if (line := _journal_line(op, outcome, returncode, verdict)) is not None:
-            print(line, file=sys.stderr, flush=True)
         if outcome != "hangup":
             _send(connection, verdict)
+        # After the verdict, so that a journal that cannot be written never changes what the caller is told.
+        if (line := _journal_line(op, outcome, returncode, verdict)) is not None:
+            print(line, file=sys.stderr, flush=True)
     finally:
         if child.poll() is None:
             child.kill()

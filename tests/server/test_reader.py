@@ -458,6 +458,27 @@ def test_a_child_is_killed_and_reaped_when_waiting_for_it_fails(
                 child.wait()
 
 
+def test_the_verdict_is_sent_even_when_writing_the_journal_line_fails(
+    descriptors: Descriptors, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class BrokenStderr:
+        def write(self, text: str) -> int:
+            raise BrokenPipeError("injected failure")
+
+        def flush(self) -> None:
+            raise BrokenPipeError("injected failure")
+
+    monkeypatch.setattr(reader.sys, "stderr", BrokenStderr())
+    server_end, client = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    client.settimeout(10.0)
+    with server_end, client:
+        send_request(client, DECODE_BODY, [descriptors.recording(), descriptors.pipe()[1]])
+        with pytest.raises(BrokenPipeError):
+            reader._supervise(server_end, fake_child("early-stop"), 5.0)
+        assert receive_one(client) == {"started": True}
+        assert receive_one(client) == {"status": "ok"}
+
+
 # --------------------------------------------------- supervisor: (e) limit_s
 
 

@@ -87,8 +87,6 @@ def test_a_missing_file_fails_loudly(tmp_path: Path) -> None:
 # ------------------------------------------------ a damaged frame ends the decode early
 
 
-
-
 def test_a_damaged_frame_ends_the_decode_with_everything_before_it_and_reports_the_early_stop() -> None:
     output = io.BytesIO()
 
