@@ -138,7 +138,7 @@ def video_streams_unopened(recording: Path) -> None:
     with open(recording, "rb") as handle, reader._open_container(handle) as container:
         videos = container.streams.video
         assert len(videos) >= 1
-        assert all(stream.codec_context.pix_fmt is None for stream in videos)
+        assert all(stream.codec_context.is_open is False for stream in videos)
         with pytest.raises(av.error.ArgumentError):
             list(container.decode(video=0))
 
