@@ -36,7 +36,7 @@
 | `CollectMode` | `inactive-or-failed` | 실패한 인스턴스가 쌓이지 않게(`systemd.socket(5)` 권고). **`[Unit]` 설정이다** — `[Service]` 에 두면 무시된다(`unitConfig`) |
 | `PrivateDevices` | `yes` | GPU 장치 없음(FR-008) |
 | `PrivateNetwork` · `RestrictAddressFamilies` | `yes` · `none` | 망 없음, 소켓 생성 금지 — 받은 연결은 그대로 쓴다(VM 시험 B-P2-1 이 확인 — 닫힘) |
-| `InaccessiblePaths` | `-/var/lib/stt` `-/var/lib/stt-models` `-/run/stt` `-/nix/var` | 권한 위에 한 겹 더. `gpu.lock`(0644) 붙잡기 막기(R12). 모든 항목에 `-` 를 붙인다: `/run`·`/var` 를 빈 tmpfs 로 덮으면 그 아래 경로가 없어도 단위가 실패하지 않아야 한다. `/nix/var` 는 Nix 데이터베이스(0644 파일)를 가린다(감사 H1). `/nix/store` 는 그대로 읽힌다 |
+| `InaccessiblePaths` | `-/var/lib/stt` `-/var/lib/stt-models` `-/run/stt` `-/nix/var` `-/mnt` `-/srv` `-/opt` `-/media` | 설정은 두 번, 실제로는 tmpfs 가 가린다: 앞의 세 경로(`gpu.lock`(0644) 붙잡기 막기, R12)는 `/run`·`/var` 를 덮은 빈 tmpfs 아래에서 없는 경로라 `-` 때문에 건너뛰어진다. 이 항목은 기본이 아닌 `stateDir`·`modelsDir` 나 tmpfs 항목이 빠질 때를 위한 것이다. 모든 항목에 `-` 를 붙인다: `/run`·`/var` 를 빈 tmpfs 로 덮으면 그 아래 경로가 없어도 단위가 실패하지 않아야 한다. `/nix/var` 는 Nix 데이터베이스(0644 파일)를 가린다(감사 H1). `/mnt`·`/srv`·`/opt`·`/media` 는 호스트의 자료 디스크와 덧붙인 설치 자리다. 읽기는 거기서 아무것도 필요로 하지 않는다(운영자 결정 2026-11-10, 재감사 RM2). `/nix/store` 는 그대로 읽힌다 |
 | `ProtectHome` | `yes` | |
 | `TemporaryFileSystem` | `/dev/shm:ro` `/run:ro` `/var:ro` | `PrivateDevices=yes` 에도 단위의 `/dev/shm` 은 호스트의 것과 같다(같은 장치·아이노드, 1777). 읽기 단위가 호스트 `/dev/shm` 의 파일을 읽거나 쓰지 못하게 비어 있는 읽기 전용 tmpfs 로 덮는다(VM 시험 B-P2-1 이 확인 — 닫힘). 같은 까닭으로 `/run`·`/var` 도 덮는다: 호스트의 누구나 읽을 수 있는 잠금 파일(`/run/nixos/switch-to-configuration.lock`, `/nix/var/nix/db/…`)에 `flock` 을 걸어 배포를 막는 길을 없앤다(감사 H1, R12). 읽기는 `/run` 아래에서 아무것도 필요로 하지 않는다 — 연결과 로그는 기술자로 받는다. `DynamicUser` 의 사설 `/tmp`·`/var/tmp` 와 함께 되는 것을 VM 에서 확인했다(R12) |
 | `PrivateIPC` · `PrivatePIDs` · `ProtectProc` · `ProcSubset` | `yes` · `yes` · `invisible` · `pid` | 다른 프로세스·IPC 가 보이지 않게(VM 시험 B-P2-1 이 확인 — 닫힘) |
@@ -51,6 +51,8 @@
 | `TasksMax` | `32` | |
 | `RuntimeMaxSec` | `300` | 감독 상한(최대 240초) 위의 받침 |
 | `restartIfChanged` | `false` | 배포(`switch-to-configuration`)가 도는 읽기를 건드리지 않게. 템플릿이 바뀌었을 때 인스턴스가 켜져 있으면 스위치는 템플릿 이름에서 `@` 를 떼어 소켓을 멈췄다 켜는데(`stt-reader.socket`), 이 설정(`X-RestartIfChanged=false`)이 있으면 그 인스턴스는 건너뛴다. 읽기 하나는 `RuntimeMaxSec` 으로 끝나므로 다음 읽기부터 새 템플릿을 쓴다 |
+| `OOMPolicy` | `continue` | 메모리 상한(`MemoryMax`)은 해독 자식을 죽인다. 기본(호스트의 `DefaultOOMPolicy=stop`)이면 관리자가 단위를 멈추며 감독도 SIGKILL 로 죽여, 감독이 `failed` 를 보내고 `killed by signal 9` 줄을 쓰기 전에 끝날 수 있다. `continue` 면 감독이 살아 둘 다 한다(재감사 RM1). VM 시험이 진짜 감독 아래 메모리만 쓰는 자식으로 확인한다 |
+| `SyslogLevel` | `warning` | 감독의 고정된 줄([reader.md](reader.md) §5.7)을 경고 수준으로 낸다. `journalctl -p warning` 이 이 줄을 보여 준다(재감사 RL5). 줄의 글자는 그대로다 |
 | `KillSignal` | `SIGKILL` | 감독은 `PrivatePIDs` 의 PID 1 이라 처리기 없는 SIGTERM 을 무시한다(001 워커와 같은 까닭). 그대로 두면 상한·OOM 정지가 `TimeoutStopSec`(90초)만큼 늦어진다. 정리할 상태가 없다 |
 
 **UID 에 대하여** (2026-11-09 실측, systemd 261.1, 소스 `src/core/socket.c`·`dynamic-user.c`·`user-util.c`).
@@ -99,14 +101,14 @@ systemctl show stt-worker.service stt-intake.service stt-sweep.service stt-model
 systemctl show stt-reader@check.service \
   -p DynamicUser -p PrivateDevices -p PrivateNetwork -p RestrictAddressFamilies -p InaccessiblePaths \
   -p SystemCallFilter -p SystemCallArchitectures -p MemoryDenyWriteExecute -p MemoryMax -p MemorySwapMax -p LimitFSIZE -p LimitCORE \
-  -p RuntimeMaxUSec -p KillSignal -p CollectMode -p PrivateTmp -p TemporaryFileSystem
+  -p RuntimeMaxUSec -p KillSignal -p CollectMode -p PrivateTmp -p TemporaryFileSystem -p OOMPolicy -p SyslogLevel
 systemctl show stt-reader.socket -p Listen -p Accept -p SocketUser -p SocketMode -p MaxConnections
 ```
 
 - 🟢 이 호스트에서 확인한 형식: `SystemCallArchitectures=native` 는 그대로 `native` 로, 필터는 풀린 호출 목록으로 나온다. 필터가 없는 지금의
   워커는 `SystemCallFilter=~`·`SystemCallArchitectures=`·`MemoryDenyWriteExecute=no` 로 나온다. `systemctl show 'x@.service'` 는 오류이고,
   인스턴스 이름은 띄우지 않고 조회된다(2026-11-09).
-- 읽기 단위의 `MemorySwapMax`·`LimitCORE`·`KillSignal`·`CollectMode`·`PrivateTmp` 는 FR-012(스왑·덤프 없음)와 §2.2 를 보는 값이다. VM 에서 본 꼴:
+- `SyslogLevel` 은 숫자로 나온다(`warning` 은 `4`). 읽기 단위의 `MemorySwapMax`·`LimitCORE`·`KillSignal`·`CollectMode`·`PrivateTmp` 는 FR-012(스왑·덤프 없음)와 §2.2 를 보는 값이다. VM 에서 본 꼴:
   `RestrictAddressFamilies=` 는 빈 값, `PrivateTmp=yes`, `CollectMode` 는 `[Unit]` 에서 `inactive-or-failed`. B-P2-1 은 VM 시험이 닫았다.
 
 ## 5. 001 의 계약 문서에 고칠 것 (구현 때)

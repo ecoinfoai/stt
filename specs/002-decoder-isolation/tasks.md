@@ -354,7 +354,9 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
 
 - [ ] T041 P2·P3 배포: T040 이 통과한 뒤 운영자 승인을 받아 master 에 합치고 push, 운영자가 nixos-config 의 `stt` 입력을 갱신하고 `nxr` 한다. 배포한
   커밋과 날을 `specs/002-decoder-isolation/handoff/p2-reply.md` 에 적는다. RED 해당 없음 — 배포. supports US2~US5
-- [ ] T042 C-P2-1~7·C-P3 호스트 확인(운영자와, quickstart C-P2): 설정 조회 세 명령 출력을 그대로 싣고, 인계 §6 의 정상 + 텍스트 첨부, 3시간 사인파의
+- [ ] T042 C-P2-1~7·C-P3 호스트 확인(운영자와, quickstart C-P2): 설정 조회 세 명령 출력을 그대로 싣고(`TemporaryFileSystem` 셋, `InaccessiblePaths` 여덟, `OOMPolicy`,
+  `SyslogLevel` 포함), 인계 §6 의 정상 + 텍스트 첨부(`journalctl -u 'stt-reader@*' -p warning` 의 `reader child probe exited with status 1` 줄, `type=1326` 비어 있음,
+  인스턴스가 `/run/nixos`·`/nix/var`·`/mnt` 등을 보지 못함 — quickstart C-P2-2), 3시간 사인파의
   해독 시간·최대 메모리(`captest 1G 10m`, 기대 48초·153 MB 이하 — 넘으면 상한을 고치는 과제를 더한다), 한 녹음에 작업 5개와 「다 지우기」, 기준
   녹음 비교(먼저 `cmp` 로 s16 비교, 다르면 운영자가 받아들인 뒤에만 완료), 1시간 녹음의 처리 시간과 접수 확인 시간, (선택) 도는 인스턴스의 `/dev`
   와 UID. §4 의 첫 매달 확인 줄과 `av` 줄의 `comparison` 을 이날로 고친다(T036 이 GREEN 인지 다시 본다). 결과를 `handoff/p2-reply.md` 에 적는다. RED 해당 없음 — 호스트 확인.
@@ -478,20 +480,20 @@ T024 src/stt/transcribe.py   T025 src/stt/server/worker.py + tests/server/confte
 재감사 결과: `audit/reaudit-qa-engineer.md`(PASS, Medium 2·Low 8), `audit/reaudit-adversary.md`(PASS, Medium 3·Low 7). 운영자 결정(2026-11-10):
 읽기 단위에서 `/mnt`·`/srv`·`/opt` 도 가린다(호스트의 자료 디스크 `/mnt/hdd-3_6t` 등).
 
-- [ ] T052 [US2] 자료 디스크 가리기(reaudit RM2·RL1·RL2): RED — VM 권한 점검 대상에 `/mnt`·`/srv`·`/opt` 아래의 0644 root 파일(VM 에서 만든다)을
+- [X] T052 [US2] 자료 디스크 가리기(reaudit RM2·RL1·RL2): RED — VM 권한 점검 대상에 `/mnt`·`/srv`·`/opt` 아래의 0644 root 파일(VM 에서 만든다)을
   더해 열기·잠그기가 실패해야 한다고 단언한다(지금은 성공해 실패). GREEN — `stt-reader@` 의 `InaccessiblePaths` 에 `-/mnt`·`-/srv`·`-/opt`·`-/media`
   를 더한다. `docs/server-security.md` §2 남는 위험에 「`/mnt`·`/srv`·`/opt` 는 가렸다, 남는 것은 `/etc`·`/nix/store`·`/usr` 의 누구나 읽을 수 있는
   파일」과 운영자 결정(2026-11-10)을 적고, US2-10 과 R12 에 같은 경로를 더한다. closes US2-10
-- [ ] T053 [US3] 메모리 상한에서의 기록(reaudit RM1, qa L2): `stt-reader@` 에 `OOMPolicy=continue` 를 두어 자식이 메모리 상한으로 죽어도 감독이 살아
+- [X] T053 [US3] 메모리 상한에서의 기록(reaudit RM1, qa L2): `stt-reader@` 에 `OOMPolicy=continue` 를 두어 자식이 메모리 상한으로 죽어도 감독이 살아
   `failed` 를 보내고 `killed by signal 9` 줄을 쓴다. RED/GREEN — VM 에서 단위 설정을 단언하고, 생산 코드에 시험용 길을 더하지 않고 감독 아래 메모리를
   쓰는 무해한 자식을 띄울 수 있으면 그 줄이 기록에 오는지 `[VERIFY]` 한다(못 하면 그 이유를 R12 에 적는다). §3 에서 「유일한 흔적」을 지우고, 확인
   명령에 systemd 자신의 인스턴스 줄(`oom-kill`·시간 상한)을 더한다(systemd 262 의 문구 `[VERIFY]` VM). supports FR-023
-- [ ] T054 [US3] `decode_samples` 의 일찍 멈춤 알림을 빠뜨릴 수 없게(reaudit RM3): RED — 알림 받는 인자 없이 부르면 `TypeError` 라고 단언한다.
+- [X] T054 [US3] `decode_samples` 의 일찍 멈춤 알림을 빠뜨릴 수 없게(reaudit RM3): RED — 알림 받는 인자 없이 부르면 `TypeError` 라고 단언한다.
   GREEN — 그 인자를 키워드 필수로 하고, 상관없는 시험은 명시적으로 넘긴다. 명령줄 경고에 파일 이름을 넣는다(qa L8, RL4). closes 경계 사례 10
-- [ ] T055 [US3] 경계 사례 10 의 끝 결과 시험(reaudit qa M1): RED — 시험용 읽기 대역이 「일찍 멈춤」(끝 코드 3)과 그 앞까지의 표본을 돌려줄 때 워커를
+- [X] T055 [US3] 경계 사례 10 의 끝 결과 시험(reaudit qa M1): RED — 시험용 읽기 대역이 「일찍 멈춤」(끝 코드 3)과 그 앞까지의 표본을 돌려줄 때 워커를
   거친 작업이 `done` 으로 끝나고 전사가 그 표본만 다루며, 첫 프레임에서 멈추면 빈 전사의 `done` 임을 `test_decoder_edge_10_*` 로 단언한다(녹음 파일은
   사인파·무음만). GREEN — 시험이 드러낸 것만 고친다. closes 경계 사례 10
-- [ ] T056 문서·시험 정리(reaudit qa M2·L1·L3~L5, RL3·RL5~RL7): `quickstart.md` 의 B-P2-1·B-P2-3·B-P2-4 와 C-P2 단계, T042 문구에 새 설정(`/run`·`/var`
+- [X] T056 문서·시험 정리(reaudit qa M2·L1·L3~L5, RL3·RL5~RL7): `quickstart.md` 의 B-P2-1·B-P2-3·B-P2-4 와 C-P2 단계, T042 문구에 새 설정(`/run`·`/var`
   덮개, 가린 경로)과 감독의 기록 줄 확인을 더한다. `docs/server-security.md`·`contracts/module.md` 의 「두 겹」을 「설정은 두 번, 실제로는 tmpfs 가
   가린다」로, §3 에 가장 흔한 줄(`probe exited with status 1`)의 뜻, `type=1326` 보다 감독 줄을 믿을 것, 운영자의 안전한 재확인 방법(VM 의
   `readFormats` 처럼 `stt` 로 `reader_client` 를 거쳐 기술자만 넘기는 명령)을 적는다. 감독 줄은 경고 수준으로 쓴다(`<4>` 앞붙임 또는 `SyslogLevel`,

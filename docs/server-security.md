@@ -36,9 +36,11 @@
 파이프의 쓰는 쪽도), 읽기 단위는 경로를 쓰지 않고 받은 기술자만 읽는다. 읽기 한 번이 인스턴스 하나이고, 끝나면 systemd 가 그 cgroup 을 지운다.
 
 **무엇에 닿지 못하는가.**
-- 파일: `/var/lib/stt`(다른 작업의 녹음·기록·해독된 음성·응답·`state.lock`)와 `/var/lib/stt-models` 는 권한(일회용 UID 는 `stt` 가 아니다)과
-  `InaccessiblePaths` 의 두 겹으로 막힌다. `/run/stt`(0755)와 그 안의 `gpu.lock`(0644)은 권한으로는 읽을 수 있으므로 `InaccessiblePaths` 와 `/run` 을 덮은 빈 tmpfs(아래) 두 겹이
-  막는다(research R12).
+- 파일: `/var/lib/stt`(다른 작업의 녹음·기록·해독된 음성·응답·`state.lock`)와 `/var/lib/stt-models` 는 권한(일회용 UID 는 `stt` 가 아니다)으로 막히고,
+  `/var` 를 덮은 빈 tmpfs(아래)에서는 경로 자체가 없다. `/run/stt`(0755)와 그 안의 `gpu.lock`(0644)은 권한으로는 읽을 수 있으므로 `/run` 을 덮은 빈 tmpfs(아래)가 막는다
+  (research R12). 설정은 두 번 적혀 있지만(`InaccessiblePaths` 의 `-/var/lib/stt`·`-/var/lib/stt-models`·`-/run/stt` 와 tmpfs) 실제로 가리는 것은 tmpfs 다. tmpfs 아래에서는
+  이 세 경로가 없어 `-` 때문에 건너뛰어진다. 이 항목들은 기본이 아닌 `stateDir`·`modelsDir` 를 쓰거나 tmpfs 항목이 빠질 때(호스트의 `lib.mkForce` 등)에만 일을
+  한다. 그런 덮어쓰기를 잡는 호스트 쪽 시험은 없다.
 - 쓰기: 이 단위에서 쓰기가 되는 자리는 인스턴스마다 따로인 사설 `/tmp`·`/var/tmp` 뿐이고, 거기에도 파일을 만들 수는 있어도 자료는 쓰지
   못한다(`LimitFSIZE=0`). 현재 폴더를 비롯한 그 밖은 `ProtectSystem=strict` 로 읽기 전용이다. `/dev/shm` 은 `PrivateDevices=yes` 에도 호스트의 것과 같아(같은 장치·아이노드, 1777,
   만든 파일이 호스트에 남음) 읽기 전용 빈 tmpfs 로 덮는다(`TemporaryFileSystem=/dev/shm:ro`).
@@ -47,12 +49,17 @@
   (`/run/nixos/switch-to-configuration.lock`, `/nix/var/nix/db` 아래의 파일)을 장악된 읽기가 붙잡아 배포를 막는 길을 닫았다(최종 감사 H1, research R12).
   읽기는 `/run` 아래의 것을 쓰지 않는다. 가리는 경로는 모두 `-` 를 붙여, 없는 경로가 단위를 실패시키지 않는다. VM 시험의 권한 점검이 이 파일들을 열지도
   잠그지도 못함을 본다.
-- 호스트의 다른 파일(남는 위험): 위에서 닫은 경로 밖에서 누구나 읽을 수 있는 파일(`/etc`, `/nix/store`, `/usr` 등)은 읽기 단위도 읽을 수 있다. 장악된 읽기는
+- 호스트의 자료 디스크와 덧붙인 설치 자리: `/mnt`·`/srv`·`/opt`·`/media` 도 `InaccessiblePaths` 로 가린다(`-/mnt -/srv -/opt -/media`. 운영자 결정 2026-11-10,
+  재감사 RM2·RL1·RL2). 읽기는 이 아래에서 아무것도 필요로 하지 않는다. 자료 디스크의 누구나 읽을 수 있는 파일(대용량 보관 파일 포함)이 장악된 읽기의 읽기 범위에서
+  빠지고, 그 자리를 붙들어 두어 호스트의 `umount` 가 `EBUSY` 로 실패하게 하는 길(마운트 붙들기)도 닫힌다. VM 시험의 권한 점검이 네 자리 아래의 0644 root 파일을
+  열지도 잠그지도 못함을 본다.
+- 호스트의 다른 파일(남는 위험): `/mnt`·`/srv`·`/opt` 는 가렸다. 남는 것은 `/etc`·`/nix/store`·`/usr` 의 누구나 읽을 수 있는 파일이다. 이 경로 밖에서 누구나 읽을 수 있는 파일은 읽기 단위도 읽을 수 있다. 장악된 읽기는
   그 내용을 자기 작업의 전사록으로 내보낼 수 있다 — 읽은 내용을 녹음 속 음성으로 합성해 두면 Whisper 가 받아 적고 전사록이 그 작업의 호출자에게 돌아간다
   (느리다. 다른 이용자의 녹음·전사록은 닿지 않는다). 망으로 나가는 길은 없다(`PrivateNetwork`). 홈은 `ProtectHome=true` 로 닫혔다. 이 호스트에서는 다른
   서비스의 상태가 `/var/lib/private`(0700)에 있어 일회용 UID 로는 들어가지 못하고, `/var` 는 위에서 덮었다.
   운영자 결정(2026-11-09): 이 잔여 노출을 받아들이고 모듈은 바꾸지 않으며 나중에 다시 검토한다. 운영자가 읽은 내용이 전사록으로 나갈 수 있다는 것까지 알고
-  다시 받아들였다(2026-11-10).
+  다시 받아들였다(2026-11-10). 같은 날 재감사가 이 호스트의 자료 디스크(`/mnt` 아래, 누구나 읽을 수 있는 대용량 보관 파일)가 이 기록에 없음을 짚었고, 운영자가
+  `/mnt`·`/srv`·`/opt`(와 `/media`)를 읽기 단위에서 가리기로 정했다(2026-11-10). 위 「자료 디스크」 항목이 그 결과다. 잔여 노출은 시스템 경로 쪽으로 좁혀졌다.
 - 장치·망: `PrivateDevices`(GPU 장치 노드 없음), `PrivateNetwork`, `RestrictAddressFamilies=none`(소켓을 만들 수 없음. 받은 연결은 그대로 쓴다).
 - 다른 프로세스: `PrivatePIDs`·`ProtectProc=invisible`·`ProcSubset=pid`·`PrivateIPC`·`PrivateTmp`. 겹쳐 도는 인스턴스끼리도 서로를 보지 못한다.
   템플릿의 모든 인스턴스는 같은 동적 UID 를 받으므로(인스턴스별 `User=` 는 이름 길이 한도로 쓸 수 없다. contracts/module.md §2.2) UID 가 아니라 이
@@ -78,7 +85,8 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
   journalctl -u stt-worker -u stt-intake
   ```
 
-- **서버 단위의 비정상 종료**: 실패한 단위 목록과 종료 원인. 메모리 상한(OOM)이면 `Result=oom-kill`, 호출 필터에 걸렸으면 SIGSYS(31)이다.
+- **서버 단위의 비정상 종료**: 실패한 단위 목록과 종료 원인. 메모리 상한(OOM)이면 `Result=oom-kill`, 호출 필터에 걸렸으면 SIGSYS(31)이다. 읽기 인스턴스는
+  예외다: 단위에 `OOMPolicy=continue` 가 있어 해독 자식만 메모리 상한에 죽으면 인스턴스는 정상으로 끝난다(아래 「읽기 인스턴스의 비정상 종료」).
   막힌 호출 번호는 커널 기록에 있다.
 
   ```sh
@@ -111,7 +119,7 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
     응답 없음. 운영자 결정 2026-11-08).
 
 - **읽기 인스턴스의 비정상 종료와 일찍 멈춘 해독**: 읽기 단위의 감독은 해독 자식이 비정상으로 끝나거나 시간 상한을 넘기거나 엉터리 결과를 내면 단위 로그에 아래 고정된 영어 한 줄을 쓴다. 작업 ID·경로·
-  파일 이름·해독기 문구는 없다. 정상 판정에는 아무것도 쓰지 않는다. 장악된 자식은 이 줄을 속일 수 있으므로 운영자에게 알리는 신호일 뿐 보안 통제가 아니다.
+  파일 이름·해독기 문구는 없다. 정상 판정에는 아무것도 쓰지 않는다. 줄은 경고 수준(`SyslogLevel=warning`)이라 `journalctl -p warning` 에도 나온다. 장악된 자식은 이 줄을 속일 수 있으므로 운영자에게 알리는 신호일 뿐 보안 통제가 아니다.
 
   ```text
   reader child <probe|decode> exited with status <n>
@@ -122,11 +130,19 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
   ```
 
   ```sh
-  journalctl -u 'stt-reader@*' -g 'reader child'
+  journalctl -u 'stt-reader@*' -p warning -g 'reader child|OOM killer|runtime time limit'
   ```
 
-  - `killed by signal 31` 은 시스템 호출 필터(SIGSYS), `killed by signal 9` 는 메모리 상한(OOM)이거나 밖에서 죽인 것이다. 감독이 시간 상한에 죽인 자식은 `timed out` 이고, 단위의 `RuntimeMaxSec` 가 cgroup 전체(감독 포함)를 죽인 경우는 줄이 남지 않는다. 읽기 인스턴스는
-    `CollectMode` 로 치워져 `systemctl --failed` 에 쌓이지 않으므로, 이 줄이 단위 수준의 유일한 흔적이다.
+  앞의 `reader child` 는 감독의 줄이고, 뒤의 둘은 systemd 자신이 그 인스턴스 이름으로 쓰는 줄이다.
+  - `killed by signal 31` 은 시스템 호출 필터(SIGSYS), `killed by signal 9` 는 메모리 상한(OOM)이거나 밖에서 죽인 것이다. 읽기 단위에는 `OOMPolicy=continue` 가 있다. 메모리 상한이
+    죽이는 것은 해독 자식이고, 기본 정책(`stop`)이면 관리자가 단위를 멈추며 감독도 죽여 `failed` 를 보내고 줄을 쓰기 전에 끝날 수 있기 때문이다(재감사 RM1). `continue` 면 감독이
+    살아 둘 다 하고, 같은 인스턴스 이름으로 systemd 의 `The kernel OOM killer killed some processes in this unit.` 도 저널에 온다(VM 시험이 진짜 감독과 메모리만 쓰는 자식으로
+    systemd 261.1 에서 확인했다. 262 의 `libsystemd-core` 에도 같은 문구가 있다. 호스트 저널의 실제 줄은 T042 에서 본다).
+  - 감독이 시간 상한에 죽인 자식은 `timed out` 이다. 단위의 `RuntimeMaxSec` 가 cgroup 전체(감독 포함)를 죽인 경우는 감독의 줄이 남지 않는다. 그때는 systemd 가 인스턴스 이름으로
+    `Service reached runtime time limit. Stopping.` 을 쓴다(systemd 261·262 의 `libsystemd-core` 에서 문구를 확인했고, 실제로 인스턴스가 상한에 걸리게 해 본 적은 없다). 읽기 인스턴스는
+    `CollectMode` 로 치워져 `systemctl --failed` 에 쌓이지 않으므로, 감독의 줄과 이 systemd 줄이 단위 수준의 흔적이다.
+  - 가장 흔한 줄은 `reader child probe exited with status 1` 이다. 읽을 수 없는 첨부(텍스트 파일, 깨진 머리, 목록 밖 형식)마다 길이 재기 자식이 끝 코드 1 로 끝나며 이 줄이 나온다.
+    그 요청은 `unreadable_audio` 로 거절되고 서버는 정상이다. 이 줄이 가끔 있는 것은 사고가 아니다. 같은 줄이 갑자기 많아지거나 정상 녹음에서 나올 때만 본다.
   - `timed out` 은 감독이 시간 상한(길이 재기 30초·해독 240초)에 자식을 죽였다는 뜻이다. `returned an invalid result` 는 길이 재기 자식이 정상으로 끝났지만 결과가
     규격에 맞지 않았다는 뜻이다. 호출하는 쪽이 먼저 끊은 경우(다 지우기 등)는 정상이라 줄이 없다.
   - `stopped early at invalid data` 는 오류가 아니다: 녹음 가운데의 깨진 조각에서 해독이 멈췄고, 그 앞까지 전사해 작업은 `done` 으로 끝난다(faster-whisper 와
@@ -135,13 +151,33 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
     직접 열지 말고(아래 규칙) 시각으로 요청을 찾아 호출하는 쪽에 알린다. 이 줄과 `type=1326` 은 길이 재기(`probe`)에서도 같은 모양으로 나온다.
   - 이 줄에는 작업 ID 가 없다. 어느 작업인지는 줄의 시각을 받기·워커 기록(`journalctl -u stt-intake -u stt-worker`)의 시각과 맞춰 찾는다. 커널 기록
     `journalctl -k -g 'type=1326'` 의 시각도 같은 방법으로 맞춘다.
+  - `type=1326` 의 있고 없음보다 감독의 줄(`killed by signal 31`)을 믿는다. 장악된 자식이 손자 프로세스를 여럿 띄워 막힌 호출을 되풀이하면 커널의 출력 속도 제한이 다른 인스턴스의
+    `type=1326` 줄을 떨어뜨릴 수 있다. 감독의 줄은 따로 쌓이므로 남는다(재감사 RL7).
 - **한 형식이 늘 `unreadable_audio` 일 때**: 같은 확장자의 정상 녹음이 모두 `unreadable_audio` 로 끝나면 녹음 탓이 아니라 그 형식의 해독 경로가 시스템 호출 필터나
   메모리 상한에 막힌 것일 수 있다. 위의 `journalctl -k -g 'type=1326'` 에 읽기 UID 의 줄이 있는지, `reader child decode killed by signal 31`(길이 재기가 막혔으면 `reader child probe killed by signal 31`)이 같은 시각에 있는지 본다.
   VM 시험이 `AUDIO_FORMATS` 의 형식마다 사인파 녹음 하나를 실제 읽기 단위로 해독해 이 기록이 비어 있음을 확인하지만(FR-028), 실제 코덱 경로는 FFmpeg 판에
   따라 달라질 수 있다.
 - **서버 녹음을 직접 열지 않는다**: `/var/lib/stt/audio/` 의 녹음을 `stt transcribe`·`ffprobe`·`ffmpeg` 로 직접 열지 않는다. 명령줄은 격리되지 않아(FR-022) 모든
   FFmpeg 형식을 열고, 해독기를 노리는 파일이면 운영자(root) 또는 `stt` 권한으로 모든 이용자의 녹음·GPU·망이 닿는 곳에서 돈다. 읽히지 않는 녹음을 다시 확인하려면
-  읽기 단위를 거친다(요청을 다시 맡기는 것 등).
+  읽기 단위를 거친다.
+- **안전한 재확인**: 읽기 단위가 정상 녹음을 읽는지, 형식 하나가 깨졌는지는 사고 중에도 `stt` 사용자로 읽기 소켓을 거쳐 확인할 수 있다. 아래는 VM 시험의 `readFormats` 와 같은 길이다
+  (`stt` 가 `reader_client` 로 기술자만 넘기고, 해독은 샌드박스 안에서 된다). 서버 안의 녹음이 아니라 알려진 정상 파일(예: 2초 사인파)을 `stt` 가 읽을 수 있는 자리에 둔다.
+
+  ```sh
+  BIN=$(systemctl cat stt-intake.service | sed -n 's|^ExecStart=\(.*\)/stt server .*|\1|p')
+  sudo -u stt "$BIN/python" - /tmp/known-good.m4a <<'EOF'
+  import sys
+  from stt.server.reader_client import ReaderConfig, decode, probe
+  config = ReaderConfig()
+  for path in sys.argv[1:]:
+      probed = probe(config, path)
+      decoded = decode(config, path, job_running=lambda: True, job_limit_s=240)
+      print(path, probed.outcome, probed.duration_s, decoded.outcome, len(decoded.audio) // 2 / 16000, "s")
+  EOF
+  ```
+
+  `ok ... ok` 와 맞는 길이가 나오면 그 형식의 읽기 길은 산다. 그 형식만 `failed` 면 위의 줄(`journalctl -u 'stt-reader@*'`)과 `type=1326` 을 본다. 의심스러운 서버 녹음은 이 방법으로도
+  넣지 않는다 — 알려진 정상 파일만 쓴다(이 스니펫의 호스트 실행은 T042 에서 확인한다).
 
 호출 번호는 `scmp_sys_resolver <번호>` 로 이름을 찾는다. 서버 전체의 `OnFailure` 알림은 nixos-config 의 별도 과제다.
 

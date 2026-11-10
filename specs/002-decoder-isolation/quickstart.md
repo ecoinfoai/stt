@@ -66,10 +66,12 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
    - `work/<id>/audio.wav` 가 있다(16-bit 모노 16 kHz).
    - `spec.json` 에 `audio_path` 가 없다(US2-5).
    - `RestrictAddressFamilies=none`·`ProtectProc`·`ProcSubset`·`InaccessiblePaths` 를 건 채로 해독이 끝났다.
-   - 설정에 `TemporaryFileSystem=/dev/shm:ro` 가 있고, 필터에 `add_key`·`request_key`·`keyctl` 이 없다(`~@keyring`).
+   - 설정에 `TemporaryFileSystem` 이 `/dev/shm:ro`·`/run:ro`·`/var:ro` 셋이고, `InaccessiblePaths` 가 `-/var/lib/stt -/var/lib/stt-models -/run/stt -/nix/var -/mnt -/srv -/opt -/media`
+     여덟 개이며(앞의 세 경로는 tmpfs 아래에서 건너뛰어지고 실제로 가리는 것은 tmpfs 다), `OOMPolicy=continue`·`SyslogLevel=warning` 이 있다. 필터에 `add_key`·`request_key`·`keyctl` 이 없다(`~@keyring`).
 2. **B-P2-2 접속**: 받기·워커가 자기 샌드박스(읽기 전용 루트, 망 이름공간 없음)에서 소켓에 접속했다 — B-P2-1 이 통과하면 성립한다.
 3. **B-P2-3 텍스트 첨부**: `corrupt.mp3`(녹음 확장자를 붙인 텍스트)와 정상 녹음을 같은 묶음으로 맡긴다. 텍스트는 `unreadable_audio`, 정상은
-   `queued` 가 되고, 받기·워커·청소 단위는 `failed` 가 아니다(US3-1, SC-004).
+   `queued` 가 되고, 받기·워커·청소 단위는 `failed` 가 아니다(US3-1, SC-004). 텍스트 첨부에 대해 `journalctl -u 'stt-reader@*'` 에 `reader child probe exited with status 1`
+   한 줄이 오고 그 줄이 경고 수준이다(`-p warning` 으로도 보인다. FR-023 덧붙임, 재감사 RL5). 이 줄은 잘못된 첨부마다 나오는 가장 흔한 줄이다.
 4. **B-P2-4 권한 점검**: specialisation 으로 읽기 단위의 `ExecStart` 를 권한 점검 대역으로 바꾼다. 먼저 VM 에 `/dev/nvidia0`·`nvidiactl`·
    `nvidia-uvm` 시험 노드를 만든다(장치 번호만 같은 가짜). 요청자가 다른 작업 A·B 와 A 의 재전사를 둔 뒤, A 의 읽기와 재전사 A′ 의 읽기에서 각각
    대역이 다음을 시도하고 성공 수를 판정에 담는다. 기대는 모두 0 이다(US2-1·2·3·4, SC-002). 반대로 자기가 받은 녹음 기술자는 읽혀야 한다
@@ -80,6 +82,8 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
    - 자기 녹음 기술자에 쓰기
    - 쓰기 가능한 자리(`/tmp`·`/var/tmp`·현재 폴더)와 `/dev/shm` 에 자료 쓰기(`LimitFSIZE=0`, `/dev/shm` 은 읽기 전용 tmpfs)
    - 호스트 `/dev/shm` 에 둔 표식 파일 읽기·쓰기(호스트 것이 보이지 않아야 한다)
+   - 호스트의 0644 root 파일을 열기·`flock -n` 으로 잠그기: `/run/nixos/switch-to-configuration.lock`, `/nix/var/nix/db` 와 그 아래 파일, `/var` 아래의 호스트 파일,
+     `/mnt`·`/srv`·`/opt`·`/media` 아래 파일(`host-files` 묶음. 성공 0. US2-10)
    - 키링 호출(`add_key`·`request_key`·`keyctl`) — 필터가 `SIGSYS` 로 막는다(`~@keyring`)
    - 대역은 자기 UID 와 `/proc` 에 보이는 프로세스 수도 보고한다. 받기의 길이 재기와 워커의 해독을 겹쳐 돌려 두 UID 가 모두 `stt` 와 다르고, 겹친 두 읽기가 각각 `/proc` 에서 자기 인스턴스의 프로세스(1개)만 보는지 본다 — 상대를 보지도 신호를 보내지도 못한다(US2-6, 경계 사례 2. 동적 UID 는 템플릿의 인스턴스끼리 같다: contracts/module.md §2.2).
    - 읽기가 끝난 뒤 `systemctl list-units --all 'stt-reader@*'` 가 비어 있고, 호스트의 `/tmp`·`/var/tmp` 에 그 인스턴스의 사설 폴더가 없다(US2-7).
@@ -88,12 +92,18 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
    `systemctl --failed` 에 stt 단위가 없다(US3-2·3·4·5·6·8, SC-005). 각 실패 뒤 `stt-reader@*` 인스턴스가 남지 않는다(US2-7).
    단, `started: false` 대역(「시작」을 알리지 못함)에서는 받기의 요청 하나가 처리되지 못한 것이므로 `stt-intake.service` 가 끝 코드 1 로 끝나
    `--failed` 에 오른다(001 FR-032a — 받기의 시작 실패 규칙, 운영자 결정 2026-11-08 유지). 이 경우에도 다른 단위는 `--failed` 에 없고,
-   다른 세 대역은 모든 단위가 `--failed` 에 없다.
+   다른 세 대역은 모든 단위가 `--failed` 에 없다. 메모리 대역은 감독을 바꾸는 것이라 진짜 감독을 못 본다. 그래서 진짜 감독(`reader.serve`)에 메모리만 쓰는 자식을 붙인
+   specialisation 도 돌린다: 자식이 메모리 상한에 죽어도 감독이 살아 그 요청이 `unreadable_audio` 가 되고, `reader child probe killed by signal 9` 줄이 경고 수준으로
+   저널에 오며, systemd 의 OOM 줄도 같은 저널에 있다(`OOMPolicy=continue`, 재감사 RM1).
 6. **B-P2-6 읽는 중의 삭제**: 멈추는 대역으로 읽기를 붙잡아 둔 채 다음 셋을 한다.
    - 「다 지우기」 → 1분 안에 `stt-reader@*` 인스턴스가 없고 그 작업의 파일이 0개다(US4-4).
    - VM 시계를 23:58 로 옮겨 청소 → 같음(US4-5).
    - `systemctl stop stt-worker` → 인스턴스가 끝나고, 청소 뒤 `interrupted`, `work/` 가 비어 있다(US4-6).
-7. **B-P2-7 로그**: 기존 「힌트 단어·요청자 없음」 시험에 더해, `journalctl -u 'stt-reader@*'` 에 작업 ID 가 하나도 없다(FR-019).
+7. **B-P2-7 로그**: 기존 「힌트 단어·요청자 없음」 시험에 더해, `journalctl -u 'stt-reader@*'` 에 작업 ID 가 하나도 없다(FR-019). 감독의 줄은 모두 경고 수준이다
+   (`-p warning` 으로 B-P2-3 의 줄이 보인다. 재감사 RL5).
+8. **B-P2-8 형식별 해독**: 읽기 단위의 형식 목록(`AUDIO_FORMATS`)마다 사인파 녹음 하나를 진짜 감독으로 읽어 길이·표본 수·크기가 맞고 `type=1326` 과
+   `reader child` 줄이 없다(US2-8, SC-007). VM 시험의 부분 시험 「every format of the reader's list …(US2-8, SC-007)」다. 줄 없음 확인은 마지막 인스턴스가 끝나고 저널을
+   `journalctl --sync` 로 비운 뒤에 한다(늦게 온 줄을 놓치지 않으려고, 재감사 L4).
 
 ## C. 호스트 시험 (운영자와, miniecoinfo)
 
@@ -138,7 +148,11 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
 1. **C-P2-1 설정**: [contracts/module.md](contracts/module.md) §4 의 세 명령. 읽기 단위는 `DynamicUser=yes`·`PrivateDevices=yes`·
    `PrivateNetwork=yes` 이고, 받기·워커는 그대로 `User=stt` 다.
 2. **C-P2-2 인계 §6**: 같은 묶음에 정상 녹음 하나와 텍스트 파일을 `.m4a` 로 붙인 요청 하나를 맡긴다. 정상은 완료되고 텍스트는
-   `unreadable_audio` 이며, `systemctl --failed` 에 stt 단위가 없다(SC-004).
+   `unreadable_audio` 이며, `systemctl --failed` 에 stt 단위가 없다(SC-004). 이어서 호스트에서 다음을 본다.
+   - `journalctl -u 'stt-reader@*' -p warning` 에 `reader child probe exited with status 1` 이 텍스트 첨부 시각에 있다(FR-023 덧붙임. 이 줄이 있어야 감독의 기록이 호스트에서 산다).
+   - 읽기를 몇 번 거친 뒤에도 `journalctl -k -g 'type=1326'` 이 비어 있다.
+   - 도는 읽기 인스턴스가 `/run/nixos`·`/nix/var`·`/mnt`·`/srv`·`/opt`·`/media` 를 보지 못한다(C-P2-7 의 `sudo nsenter -t <PID> -m ls /run /nix/var /mnt /srv /opt /media` 에서 `/run` 은 비고 나머지는 접근 거부나 빈 자리).
+   - 호스트가 VM 과 다를 수 있으므로(`/run`·`/var`·`/etc` 의 내용) 위 `host-files` 점검 대상에 호스트의 누구나 읽을 수 있는 잠금 파일(`find` 로 찾은 `*.lock`)이 더 있는지 본다.
 3. **C-P2-3 해독 시간의 여유**: 3시간 사인파(Opus·AAC)의 해독 시간과 최대 메모리를 배포된 서버 해석기로 잰다(research R9 의 방법, `captest 1G 10m`).
    기대는 해독 48초 이하(상한 240초의 1/5)와 메모리 153 MB 이하(상한 768M 의 1/5)다. 넘으면 상한을 고친다.
 4. **C-P2-4 재전사**: 한 녹음에 1차·자동 2차·재전사 3번(작업 5개)이 모두 완료되고, 「다 지우기」 1분 뒤 그 녹음을 쓴 작업들의 파일이 0개다(US4-2·3,

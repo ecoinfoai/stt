@@ -276,8 +276,15 @@
     `SocketMode=0600`, `MaxConnections=4`(받기 1 + 워커 1 + 여유).
   - `stt-reader@.service`: `CollectMode=inactive-or-failed`(`systemd.socket(5)` 의 권고 — 실패한 인스턴스가 쌓이지 않게),
     `StandardInput=socket`·`StandardOutput=null`·`StandardError=journal`.
-  - `InaccessiblePaths=-/var/lib/stt -/var/lib/stt-models -/run/stt -/nix/var`: 권한으로도 막히지만 한 겹 더 둔다. 특히 `/run/stt/gpu.lock` 은 0644 라 일회용
-    사용자도 열어 `flock` 할 수 있다. 가리지 않으면 장악된 읽기가 GPU 줄을 붙잡을 수 있다.
+  - `InaccessiblePaths=-/var/lib/stt -/var/lib/stt-models -/run/stt -/nix/var -/mnt -/srv -/opt -/media`: 앞의 세 경로는 권한으로도 막히지만 한 겹 더 둔 것이다. 특히
+    `/run/stt/gpu.lock` 은 0644 라 일회용 사용자도 열어 `flock` 할 수 있다. 가리지 않으면 장악된 읽기가 GPU 줄을 붙잡을 수 있다. 다만 `/run`·`/var` 를 빈 tmpfs 로
+    덮은 뒤로는(아래 H1) 이 세 경로가 없어 `-` 때문에 건너뛰어진다. 설정은 두 번, 실제로는 tmpfs 가 가린다. `InaccessiblePaths` 의 세 항목은 기본이 아닌
+    `stateDir`·`modelsDir`, 또는 tmpfs 항목이 빠질 때(호스트의 `lib.mkForce`)에만 일한다(재감사 RL3).
+  - **자료 디스크와 덧붙인 설치 자리(재감사 RM2·RL1·RL2, 2026-11-10)**: `/mnt`·`/srv`·`/opt`·`/media` 의 누구나 읽을 수 있는 파일은 장악된 읽기가 읽어 자기 전사록으로 내보낼 수 있다
+    (이 호스트의 `/mnt` 아래에는 0644 대용량 보관 파일이 있다). 그 자리를 열어 둔 채 붙들면 호스트의 `umount` 가 `EBUSY` 로 실패하고(RL1, 확인하지 않음), `/opt`(0711)는
+    목록을 볼 수 없어 잠금 파일이 없는지 확인하지 못했다(RL2). 읽기는 이 아래에서 아무것도 필요로 하지 않으므로 운영자가 가리기로 정했다(2026-11-10). 모두 `-` 를 붙인다.
+    RED 는 VM 의 권한 점검 대상에 네 자리 아래의 0644 root 파일을 더해 먼저 보았다: 옛 설정에서 `host-files` 의 성공이 12(파일마다 보기·열기·잠그기 3)였다.
+    GREEN 에서 0 이다.
   - **호스트의 잠금 파일(최종 감사 H1, 2026-11-10)**: 같은 까닭이 호스트의 다른 0644 잠금 파일에도 닿는다. `flock(2)` 은 읽을 수 있는 기술자만 있으면 읽기 전용
     마운트에서도 걸리고, `fcntl` 읽기 잠금은 `O_RDONLY` 면 된다. `flock`·`fcntl` 은 필터(`@system-service`)가 허용한다. 읽기 인스턴스는 길이 재기 35초, 해독
     245초(받침 `RuntimeMaxSec=300`) 동안 산다. 그동안 `/run/nixos/switch-to-configuration.lock`(0644 root)을 쥐면 `nixos-rebuild switch` 가 막히거나 실패하고,
@@ -289,6 +296,14 @@
     물러서지 않았다. `systemctl show` 는 `InaccessiblePaths` 를 `-` 를 붙인 채 보여 준다. 권한 점검(B-P2-4)에서 `/run/nixos/switch-to-configuration.lock`·`/nix/var/nix/db`
     아래 0644 root 파일은 열기·`flock -n` 이 모두 실패한다. 점검 대상 목록 파일은 이제 `/etc/vm-double/targets.json` 이다 — 이전 자리(`/run/vm-double`)는 `/run` 을 덮은 뒤 읽히지 않는다.
     같은 점검이 `/run`·`/var` 를 덮기 전(옛 설정)에는 `host-files` 에서 실패하는 것을 먼저 보았다.
+  - **메모리 상한에서의 기록(재감사 RM1, 2026-11-10)**: 호스트의 `DefaultOOMPolicy=stop` 에서 읽기 단위가 `OOMPolicy` 를 두지 않으면, 메모리 상한이 해독 자식을 죽인 순간 관리자가 단위를
+    멈추며 감독도 SIGKILL 로 죽인다. 감독이 `failed` 를 보내고 `killed by signal 9` 줄을 쓰기 전에 끝나는 경주가 된다. 그래서 `OOMPolicy=continue` 를 둔다. 감독은 `PrivatePIDs` 의
+    PID 1 이고 가장 큰 프로세스가 아니라서 커널의 cgroup OOM 은 자식을 고른다. 감독 아래 메모리만 쓰는 자식을 띄우는 데 운영 코드에 시험용 길이 필요하지 않았다 —
+    `reader.serve(child_command=…)` 가 이미 자식 명령을 인자로 받는다. VM 의 specialisation `reader-supervised-memory` 가 진짜 감독을 `serve(child_command=(python, 메모리만 쓰는 자식))` 으로 돌린다
+    (자식은 녹음을 열지 않고 16 MiB 씩 할당만 한다. FR-028). `[VERIFY]` — **닫음(VM, systemd 261.1, 2026-11-10)**: 요청은 `unreadable_audio` 로 거절되고, 저널에 `reader child probe killed by signal 9`
+    줄이 경고 수준으로 오며, 같은 인스턴스 이름으로 systemd 의 `The kernel OOM killer killed some processes in this unit.` 도 온다. 인스턴스는 정상 종료라 `--failed` 에 없다. 옛 메모리 대역(감독을 대신해
+    대역이 직접 죽는 것)에서는 `Main process exited, code=killed, status=9/KILL` 과 `Failed with result 'signal'` 이 온다. 호스트의 systemd 262 로는 아직 돌려 보지 않았다 —
+    262 의 `libsystemd-core` 에 OOM 문구와 `Service reached runtime time limit. Stopping.` 가 같은 글자로 있음만 `strings` 로 보았다. 실제 줄은 T042 에서 본다.
   - 받기·워커는 `wants`·`after` 에 `stt-reader.socket` 을 두고, `ExecStart` 에 `--reader-socket /run/stt-reader.sock` 을 붙인다.
   - P1 의 세 설정은 읽기 단위에도 있고 더 좁다. P2 뒤로는 SC-001 의 「서버 단위」에 읽기 단위가 들어간다(단위 다섯).
   - nixos-config 는 바꿀 것이 없다. `DynamicUser` 의 이름 풀이(nss-systemd)가 없어도 UID 는 할당된다.
