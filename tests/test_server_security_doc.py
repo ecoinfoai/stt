@@ -426,3 +426,22 @@ def test_audio_decoder_table_matches_the_reader_constant():
 
     assert len(decoders) == len(set(decoders))
     assert set(decoders) == set(reader.AUDIO_DECODERS.split(","))
+
+
+def test_engine_error_cause_table_matches_the_worker_constant():
+    from stt.server import worker
+
+    causes = [row["cause"] for row in _table("stt:engine-error-causes")]
+
+    assert len(causes) == len(set(causes))
+    assert set(causes) == set(worker.ENGINE_ERROR_CAUSES)
+
+
+def test_every_engine_error_line_in_the_document_names_its_cause():
+    from stt.server import worker
+
+    text = DOC.read_text()
+    names = "|".join(sorted(worker.ENGINE_ERROR_CAUSES))
+
+    assert "failed engine_error reader_unavailable" in text
+    assert re.findall(rf"failed engine_error(?! (?:<cause>|(?:{names})\b))", text) == []
