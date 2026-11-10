@@ -75,9 +75,10 @@ def _make_noise(spec: dict[str, Any]) -> None:
 
 
 def _inspect_work_dir(work_dir: Path) -> dict[str, Any]:
-    """Describes what the engine finds in its work folder: file modes and, for ``audio.wav``, its header."""
+    """Describes what the engine finds in its work folder: file modes and, for ``audio.wav``, its header and frame count."""
     files = {entry.name: stat.S_IMODE(entry.stat().st_mode) for entry in work_dir.iterdir()}
     header = None
+    frames = None
     if (work_dir / "audio.wav").is_file():
         with wave.open(str(work_dir / "audio.wav"), "rb") as handle:
             header = {
@@ -85,7 +86,8 @@ def _inspect_work_dir(work_dir: Path) -> dict[str, Any]:
                 "sample_width": handle.getsampwidth(),
                 "frame_rate": handle.getframerate(),
             }
-    return {"work_files": files, "wav": header}
+            frames = handle.getnframes()
+    return {"work_files": files, "wav": header, "wav_frames": frames}
 
 
 def main(argv: list[str]) -> int:

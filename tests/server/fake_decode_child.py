@@ -61,6 +61,18 @@ def write_all(fd: int, data: bytes) -> None:
         view = view[os.write(fd, view) :]
 
 
+def silence_bytes(count: int | None) -> bytes:
+    """Returns `count` zero bytes, or one second of silence when `count` is None (0 means none).
+
+    Args:
+        count: The ``--count`` value, or None when the option was not given.
+
+    Returns:
+        The silent bytes to write.
+    """
+    return bytes(ONE_SECOND_OF_SILENCE_BYTES if count is None else count)
+
+
 def claim_first(path: str) -> bool:
     """Tells whether this process is the first to claim `path`.
 
@@ -89,7 +101,7 @@ def succeed(args: argparse.Namespace) -> int:
     if args.op == "probe":
         write_all(args.output_fd, VALID_RESULT)
     else:
-        write_all(args.output_fd, bytes(args.count or ONE_SECOND_OF_SILENCE_BYTES))
+        write_all(args.output_fd, silence_bytes(args.count))
     return 0
 
 
@@ -131,7 +143,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--once")
     parser.add_argument("--mode", choices=MODES, required=True)
     parser.add_argument("--payload", default="")
-    parser.add_argument("--count", type=int, default=0)
+    parser.add_argument("--count", type=int, default=None)
     parser.add_argument("op")
     parser.add_argument("recording_fd", type=int)
     parser.add_argument("output_fd", type=int)
@@ -156,7 +168,7 @@ def main(argv: list[str]) -> int:
         os.kill(os.getpid(), signal.SIGSYS)
         return 0
     if args.mode == "early-stop":
-        write_all(args.output_fd, bytes(args.count or ONE_SECOND_OF_SILENCE_BYTES))
+        write_all(args.output_fd, silence_bytes(args.count))
         return EARLY_STOP_EXIT
     if args.mode == "write-raw":
         write_all(args.output_fd, args.payload.encode("utf-8"))
@@ -165,7 +177,7 @@ def main(argv: list[str]) -> int:
         write_all(args.output_fd, args.payload.encode("utf-8"))
         return 1
     if args.mode == "write-bytes":
-        write_all(args.output_fd, bytes(args.count))
+        write_all(args.output_fd, bytes(args.count or 0))
         return 0
     if not spawned_as_contracted(args):
         return 1

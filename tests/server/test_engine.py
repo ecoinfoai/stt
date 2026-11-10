@@ -508,6 +508,26 @@ def test_us5_7_silent_audio_completes_with_zero_paragraphs(
     assert harness.diarized_wavs == []
 
 
+def write_empty_audio(path: Path) -> Path:
+    """Writes the decoded recording of a file damaged from its first frame: a valid WAV header and no samples."""
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+    os.chmod(path, 0o600)
+    return path
+
+
+def test_decoder_edge_10_audio_without_a_single_sample_completes_with_an_empty_transcript(harness: Harness) -> None:
+    harness.model.segments = []
+
+    assert harness.run(write_audio=write_empty_audio) == 0
+
+    assert harness.outcome == {"status": "done"}
+    assert harness.result["paragraphs"] == []
+    assert harness.model.calls[0]["audio"].shape == (0,)
+
+
 def test_us5_8_unexpected_error_hides_internal_text(
     harness: Harness, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:

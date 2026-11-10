@@ -15,6 +15,7 @@ Seams the worker must offer to the tests (they are not in the worker yet):
 from __future__ import annotations
 
 import errno
+import json
 import os
 import re
 import sys
@@ -40,7 +41,7 @@ from .conftest import (
     write_delete_request,
 )
 from .inbox_helpers import inbox_names, make_layout, put_attachment, put_body, read_response, transcribe_body
-from .test_decoder_us2 import submit
+from .test_decoder_us2 import recorded_engine_cmd, submit
 
 FAKE_DECODE_CHILD = Path(__file__).with_name("fake_decode_child.py")
 REAL_READER = [sys.executable, "-m", "stt", "server", "read"]
@@ -466,6 +467,39 @@ def test_decoder_edge_5_a_storage_error_while_writing_the_decoded_audio_fails_th
     assert_failed(layout, request_id, UNREADABLE)
     assert_no_result(layout, request_id)
     assert [path for path in layout.root.rglob("*.wav") if layout.audio not in path.parents] == []
+
+
+TWO_SECONDS_OF_SAMPLES = 2 * reader.SAMPLE_RATE
+
+
+def test_decoder_edge_10_a_decode_that_stopped_early_ends_the_job_done_with_the_audio_before_it(
+    layout: Layout, tone: Path, clock: FakeClock, reader_socket: ReaderSocket, tmp_path: Path
+) -> None:
+    request_id = submit(layout, tone, clock)
+    reader_socket.use_supervisor(child_command("--mode", "early-stop", "--count", str(2 * TWO_SECONDS_OF_SAMPLES)))
+    record = tmp_path / "engine.jsonl"
+
+    assert run_worker_once(layout, clock, engine_cmd=recorded_engine_cmd(record)) is True
+
+    assert read_response(layout, request_id)["state"] == "done"
+    assert (layout.outbox / request_id / "result.json").is_file()
+    (line,) = record.read_text(encoding="utf-8").splitlines()
+    assert json.loads(line)["wav_frames"] == TWO_SECONDS_OF_SAMPLES
+
+
+def test_decoder_edge_10_a_recording_damaged_from_its_first_frame_ends_the_job_done_with_an_empty_audio(
+    layout: Layout, tone: Path, clock: FakeClock, reader_socket: ReaderSocket, tmp_path: Path
+) -> None:
+    request_id = submit(layout, tone, clock)
+    reader_socket.use_supervisor(child_command("--mode", "early-stop", "--count", "0"))
+    record = tmp_path / "engine.jsonl"
+
+    assert run_worker_once(layout, clock, engine_cmd=recorded_engine_cmd(record)) is True
+
+    assert read_response(layout, request_id)["state"] == "done"
+    assert (layout.outbox / request_id / "result.json").is_file()
+    (line,) = record.read_text(encoding="utf-8").splitlines()
+    assert json.loads(line)["wav_frames"] == 0
 
 
 @pytest.mark.parametrize("outcome", ["timeout", "failed", "unavailable"])
