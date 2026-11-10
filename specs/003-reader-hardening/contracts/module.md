@@ -55,12 +55,20 @@ assertions = [
 | `tone-video.wma` | 사인파 2초 WMA 2 + 단색 WMV2, `-f asf` | US1-2 |
 | `tone-cover.mp3` | `tone.mp3` + 단색 32×32 PNG, `-map 0 -map 1 -c copy -id3v2_version 3 -disposition:v attached_pic` | US1-3 |
 | `video-only.m4a` | 단색 H.264 2초, 음성 없음 | US1-4 |
-| `tone-ac3.m4a` | 사인파 2초 AC-3, `-f mp4` | US1-5 |
+| `tone-adpcm-ima.wav`·`tone-adpcm-ms.wav` | 기존 `tone()` 도우미(사인파 2초 모노)로 `-ar 16000 -c:a adpcm_ima_wav`·`adpcm_ms` | US1-1(더한 녹음기 코덱, B-P2-8 목록에 더함) |
+| `tone-mp2.mp3` | `tone -ar 44100 -c:a mp2 -f mp2` | 같음 |
+| `tone-ac3.m4a`·`tone-eac3.m4a` | `tone -ar 48000 -c:a ac3`·`eac3` `-f mp4` | 같음 |
+| `tone-speex.ogg` | `tone -ar 16000 -c:a libspeex -f ogg` — 목록 밖(Speex) | US1-5 |
 | `cut-tone.mp3`·`cut-tone.flac`·`cut-faststart.m4a` | 사인파 10초(M4A 는 `-movflags +faststart`)를 `head -c $((크기 / 2))` 로 반만 | US2-1 |
 | `nopackets-faststart.m4a` | 색인이 앞인 사인파 10초 M4A 를 `mdat` 머리(크기·이름 8바이트) 바로 뒤에서 자름 | US2-4 |
 | `tone10.mp3` | 사인파 10초 MP3(자르지 않음) | US2-2 대조 |
 
 모두 사인파·단색 영상·단색 그림과 그 끝을 자른 것이다(FR-017). 해독기를 노리는 파일은 없다.
+
+- 더한 녹음기 코덱 가운데 nixpkgs `ffmpeg` 8.1.2 에 인코더가 있는 다섯(IMA·MS ADPCM, MP2, AC-3, E-AC-3)만 VM 에 넣는다. 2초 파일 다섯의 읽기는 몇 초라
+  싸고, 이 세션의 측정(길이 1.994~2.041초, 최대 진폭 0.125~0.128)이 B-P2-8 의 기준(2초 ± 0.35, 0.08~0.2)에 든다. AMR-NB 는 nixpkgs `ffmpeg` 에 인코더가
+  없어 VM 에 넣지 않는다(A 층의 Python 3.10·3.11 시험과 research R2 의 측정). WMA Pro·Voice·Lossless 와 AMR-WB 는 어디에도 인코더가 없다(research R2 의
+  `[VERIFY]`). GSM 도 인코더(`libgsm`)가 없어 목록 밖 예는 Speex 로 한다.
 
 ## 5. 배포 메모 (002 §3 의 규칙 그대로)
 

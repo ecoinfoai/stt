@@ -32,9 +32,10 @@ UV_PROJECT_ENVIRONMENT="$HOME/.cache/stt-py311" captest 4G 25m uv run --locked -
 | US1-2, 경계 1 | 같은 파일 · AAC + 단색 MPEG-4/H.264 영상: 진짜 자식의 probe·decode 가 음성만 든 녹음과 같은 값·바이트. 프로세스 안에서 `reader._open_container` 로 연 영상 흐름이 `pix_fmt is None`, `decode(video=0)` 이 `av.error.ArgumentError`. 워커(가짜 엔진)로 `done` |
 | US1-3 | 같은 파일 · MP3 + 단색 PNG 표지: 위와 같은 단언 |
 | US1-4 | 같은 파일 · 영상만 든 MP4 → 받기 `unreadable_audio`, 영상 흐름 `pix_fmt is None` |
-| US1-5, FR-003 | 같은 파일 · MP4 안 AC-3 → 받기 `unreadable_audio`(길이 재기의 이름 확인). 해독 자식을 직접 부르면 끝 코드 1(`ArgumentError`). 길이 재기 이름 확인 함수의 순수 시험(가짜 컨테이너: 해독기 없음·목록 밖·목록 안) |
+| US1-5, FR-003 | 같은 파일 · WAV 안 Yamaha ADPCM·MOV(`.m4a`) 안 QuickTime IMA4(PyAV 로 만듦) → 받기 `unreadable_audio`(길이 재기의 이름 확인). 해독 자식을 직접 부르면 끝 코드 1(`ArgumentError`). 길이 재기 이름 확인 함수의 순수 시험(가짜 컨테이너: 해독기 없음·목록 밖·목록 안) |
 | 경계 2 | 같은 파일 · 음성 흐름 둘: 첫 흐름만, 바이트 그대로 |
-| FR-005 | 같은 파일 · `stt.audio_decode.decode_samples` 는 목록 없이 AC-3 도 해독한다(명령줄 그대로) |
+| R2 더한 녹음기 코덱 | 같은 파일 · WAV 안 IMA·Microsoft ADPCM, MP2(`.mp3`·`.wav`), MP4 안 AC-3·E-AC-3(PyAV 19 인코더)과, 설치된 PyAV 에 `libopencore_amrnb` 인코더가 있으면(17·18 — Python 3.10·3.11) 3GP 안 AMR-NB(`.m4a`): 진짜 감독·자식으로 probe·decode `ok`, 사인파 길이. 인코더가 없는 판은 이유를 적고 건너뛴다. WMA Pro·Voice·Lossless·AMR-WB 는 인코더가 없어 A 층 시험이 없다(research R2 의 `[VERIFY]`) |
+| FR-005 | 같은 파일 · `stt.audio_decode.decode_samples` 는 목록 없이 Yamaha ADPCM 도 해독한다(명령줄 그대로) |
 | US1-6, FR-004 | `tests/test_server_security_doc.py` · `<!-- stt:audio-decoders -->` 의 `decoder` 집합 == `reader.AUDIO_DECODERS`. 그리고 `open_container(..., codec_whitelist=…)` 가 형식 옵션과 모든 흐름의 코덱 문맥 옵션에 그 값을 둔다(가로챈 `av.open` 과 열린 컨테이너로) |
 | US2-1, SC-003(앞) | `test_hardening_us2.py` · 사인파 10초 MP3·FLAC·색인이 앞인 M4A 를 반으로 자른 것: 받기 → 워커(가짜 엔진) → `done`, 표준 출력에 `<id> running`, 잘림 줄, `<id> done` 이 이 순서로 한 번 |
 | US2-2·3, SC-003(뒤) | 같은 파일 · 형식 8가지 정상 녹음은 줄 0개. 비교 함수: 차이 정확히 1.0 → 참, 0.999… → 거짓, 해독이 더 김 → 거짓, 0.046(WMA 끝)·0.0065(Opus)·−0.056(기준 1시간) → 거짓 |
@@ -69,10 +70,12 @@ captest 8G 60m nix build .#checks.x86_64-linux.server-vm -L
 VM 의 읽기 단위에는 해독기 감시 라이브러리가 실려 있다([contracts/module.md](contracts/module.md) §3). 진짜 읽기 단위에서 비음성 해독기가 열리면 해독
 자식이 SIGABRT 로 끝나고 감독이 `reader child <op> killed by signal 6` 를 쓴다.
 
-1. 기존 B-P2-8(형식 8가지)이 감시 아래에서도 그대로 통과한다 — `type=1326`·`reader child` 줄 없음(US1-1).
+1. B-P2-8(형식 8가지)에 더한 녹음기 코덱 다섯(`tone-adpcm-ima.wav`·`tone-adpcm-ms.wav`·`tone-mp2.mp3`·`tone-ac3.m4a`·`tone-eac3.m4a`)을 더해, 감시 아래에서
+   모두 probe·decode `ok`, 2초 ± 0.35, 최대 진폭 0.08~0.2 이고 `type=1326`·`reader child` 줄이 없다(US1-1, research R2). 목록을 넓히기 전(22개)에는 이
+   다섯이 `failed` 다(RED).
 2. `tone-video.m4a`·`tone-video.wma`·`tone-cover.mp3` 를 `readFormats` 로 `stt` 가 읽는다: probe·decode 모두 `ok`, 2초 ± 0.35, 최대 진폭 0.08~0.2.
    마지막 인스턴스가 끝난 뒤 `journalctl --sync` 하고 커서 이후에 `type=1326` 과 `reader child` 줄이 없다(US1-2·3, SC-001).
-3. `video-only.m4a`·`tone-ac3.m4a`: probe·decode 모두 `failed`(`readFormats` 는 둘 다 부른다). 커서 이후 저널에 `reader child probe exited with status 1`
+3. `video-only.m4a`·`tone-speex.ogg`: probe·decode 모두 `failed`(`readFormats` 는 둘 다 부른다). 커서 이후 저널에 `reader child probe exited with status 1`
    과 `reader child decode exited with status 1` 이 파일마다 하나씩 있고 `killed by signal` 은 없다(US1-4·5 — 해독기를 열지 않고 거절).
 4. RED: 해독기 목록을 넣기 전에 2 를 돌리면 `killed by signal 6` 가 나오고 probe 가 `failed` 다. `[VERIFY]` 감시 라이브러리가 단위의 제한 안에서
    실리는지는 이 RED 로 확인한다.
@@ -116,4 +119,9 @@ VM 의 읽기 단위에는 해독기 감시 라이브러리가 실려 있다([co
    1차 작업으로 맡겨 `done` 을 본다.
 4. **C-003-4 (선택) 잘린 녹음**: 사인파 10초 MP3 를 반으로 잘라 1차로 맡긴다 → `done` 이고 그 시각에 잘림 줄 하나.
 5. **C-003-5 손 실행**: 셸에서 `stt server read` 를 띄우면 안내 한 줄이 나오고 끝 코드가 2 다(`echo $?`).
-6. **회신(선택, 운영자 결정)**: 호출하는 쪽에 보이는 바뀜은 「목록 밖 음성 코덱의 녹음이 `unreadable_audio`」 하나다(research R14). 알릴지 운영자가 정한다.
+6. **C-003-6 회신**(운영자 결정 2026-11-10): `specs/003-reader-hardening/handoff/reply.md` 를 쓰고 운영자가 bhu-llm 대장으로 옮긴다. 내용:
+   - 계약(스키마·실패 이유·고정 문장·지우기·재전사·23:58)은 바뀌지 않았다.
+   - 한 단락: 서버가 여는 해독기는 이제 음성 해독기 목록(research R2, 보안 문서 §2)뿐이다. 받는 녹음 형식은 그대로이고 영상 트랙이 든 녹음은 음성만 읽는다.
+     첫 음성 트랙이 Speex, GSM, 그 밖의 목록 밖 음성 코덱(예: MPEG Layer I, TrueSpeech, IMA·Microsoft 밖의 ADPCM — G.726·G.722·Yamaha·QuickTime IMA4)이면
+     받을 때 바로 `unreadable_audio`(「The recording could not be read as audio.」)로 거절된다. 002 까지는 이런 녹음도 전사됐다.
+   - 배포 커밋·날짜와 C-003-2·C-003-3 의 결과.

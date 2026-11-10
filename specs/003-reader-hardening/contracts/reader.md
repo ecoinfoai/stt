@@ -8,7 +8,7 @@ R1·R2·R6·R8~R10 이다.
 
 | 이름 | 값 | 근거 |
 |---|---|---|
-| `AUDIO_DECODERS` | `"aac,alac,flac,mp3float,opus,vorbis,wmav1,wmav2,pcm_alaw,pcm_f32be,pcm_f32le,pcm_f64be,pcm_f64le,pcm_mulaw,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_s8,pcm_u8"` | R2. FFmpeg 해독기 이름(`AVCodec.name`)의 쉼표 목록, `AUDIO_FORMATS` 와 같은 꼴. 영상·이미지·자막 해독기는 없다 |
+| `AUDIO_DECODERS` | `"aac,alac,flac,mp3float,mp2,opus,vorbis,wmav1,wmav2,wmapro,wmavoice,wmalossless,ac3,eac3,amrnb,amrwb,adpcm_ima_wav,adpcm_ms,pcm_alaw,pcm_f32be,pcm_f32le,pcm_f64be,pcm_f64le,pcm_mulaw,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_s8,pcm_u8"` (32개) | R2. FFmpeg 해독기 이름(`AVCodec.name`)의 쉼표 목록, `AUDIO_FORMATS` 와 같은 꼴. 영상·이미지·자막 해독기는 없다. 녹음기 코덱 10개는 운영자 결정(2026-11-10) |
 | `MANUAL_RUN_LINE` | `"stt server read only serves a connection that systemd passes from stt-reader.socket on standard input"` | R9 |
 | `DEFAULT_CHILD_COMMAND` | `(sys.executable, "-I", "-m", "stt.server.reader", "child")` — `-I` 를 더함 | R10 |
 
@@ -41,10 +41,10 @@ def open_container(source: BinaryIO | str, *, format_whitelist: str | None = Non
 
 | 녹음 | probe | decode | 열리는 비음성 해독기 |
 |---|---|---|---|
-| 형식 8가지·ALAC·PCM 변형(목록 안 코덱) | `ok`(값 그대로) | `ok`(바이트 그대로) | 없음 |
+| 형식 8가지·ALAC·PCM 변형·더한 녹음기 코덱(목록 안 코덱) | `ok`(값 그대로) | `ok`(바이트 그대로) | 없음 |
 | 목록 안 음성 + 영상 트랙 / 표지 그림 | `ok`(값 그대로) | `ok`(음성만, 바이트 그대로) | 없음(`find_stream_info` 에서 거절) |
 | 영상 트랙만 | `failed`(음성 흐름 없음) | — | 없음 |
-| 목록 밖 음성 코덱만(AC-3, MP2, ADPCM …) | `failed`(이름 확인) | `failed`(`ArgumentError`) | 없음 |
+| 목록 밖 음성 코덱만(Speex, GSM, MPEG Layer I, IMA·Microsoft 밖의 ADPCM …) | `failed`(이름 확인) | `failed`(`ArgumentError`) | 없음 |
 | 녹음 확장자를 붙인 텍스트 | `failed`(`InvalidDataError`, 지금과 같다) | — | 없음 |
 
 ## 4. 감독 (`stt server read`, 002 §5·§8 에 더함)

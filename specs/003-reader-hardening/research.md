@@ -43,16 +43,17 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
 
     002 감사 L11 과 보안 문서 4.3 의 판정(「허용한 컨테이너의 분석 중 불릴 수 있다」)이 실제였다.
   - **형식 단계 목록만 더함**(`container_options` 의 `codec_whitelist`): `find_stream_info` 안의 영상·그림 해독기는 모두 `-22`(EINVAL)로 거절되고 묶음도
-    받지 않는다. 길이 재기는 그대로 성공한다(경계 사례 1). 그러나 해독 단계에서 PyAV 가 여는 해독기에는 목록이 걸리지 않았다 — `ac3`(MP4 안 AC-3)·
+    받지 않는다. 길이 재기는 그대로 성공한다(경계 사례 1). 그러나 해독 단계에서 PyAV 가 여는 해독기에는 목록이 걸리지 않았다 — 그때(22개) 목록 밖이던 `ac3`(MP4 안 AC-3)·
     `adpcm_ima_qt`·`mp2`(MP2 를 담은 `.mp3`)가 `whitelist=-` 로 열려 끝까지 해독됐다. `av.open(options=…)` 도 같다: 형식과 `find_stream_info` 에는
     가지만 PyAV 의 코덱 문맥은 `options == {}` 로 남아 `ac3` 가 해독됐다.
   - **결정한 두 겹 + 이름 확인**: 46개 파일 모두에서 비음성 해독기가 한 번도 열리지 않았다(`h264`·`mpeg4`·`mjpeg`·`png`·`wmv2` 는 모두 거절).
     목록 안 코덱의 파일은 길이 재기 값이 같고, 해독 출력이 SHA-256 까지 같았다(형식 8가지의 2초·60초, ALAC, PCM 변형 8, WMA 1, Ogg 안 FLAC,
     48 kHz 스테레오 AAC, 영상·표지 그림이 든 파일 10, 음성 흐름 둘). 기준 녹음도 같다: `clip60.m4a` 1,920,342 B, `hour.m4a` 115,201,800 B 로 바이트까지
-    같았다. 목록 밖 코덱(`ac3`·`adpcm_ima_qt`·`mp2`)은 길이 재기에서 이름 확인으로, 해독에서는 `ArgumentError` 로 거절됐다. 영상만 든 파일은 지금처럼
+    같았다. 이때의 목록(22개)에서 목록 밖 코덱(`ac3`·`adpcm_ima_qt`·`mp2`)은 길이 재기에서 이름 확인으로, 해독에서는 `ArgumentError` 로 거절됐다(32개
+    목록에서는 `ac3`·`mp2` 가 읽히고 `adpcm_ima_qt` 는 그대로 거절된다 — R2). 영상만 든 파일은 지금처럼
     「음성 흐름 없음」으로 거절된다(US1-4). 녹음 확장자를 붙인 텍스트는 지금처럼 `InvalidDataError` 다.
   - **PyAV 17.1.0·18.1.0**(Python 3.10·3.11 의 명령줄 판, uv 캐시의 cp311-abi3 휠을 Python 3.11.15 로): 같은 코드가 같은 해독기를 열고 같게
-    거절했다(`aac`·`mp3float`·`wmav2` 열림, `h264`·`png`·`ac3`·`mp2` 거절). 두 판 모두 `CodecContext.options` 가 `avcodec_open2` 로 넘어간다(소스
+    거절했다(`aac`·`mp3float`·`wmav2` 열림, `h264`·`png` 거절, 22개 목록에서 `ac3`·`mp2` 거절 — 32개 목록의 결과도 같다, R2). 두 판 모두 `CodecContext.options` 가 `avcodec_open2` 로 넘어간다(소스
     `av/codec/context.py`). 그래서 3.10·3.11 의 시험도 같은 결과를 본다.
   - **시간**: 10분 사인파 + 320×240 단색 H.264 `m4a` 의 길이 재기 0.09초, 해독 0.56초로 목록이 있으나 없으나 같았다. 영상 해독기가 막힌 흐름은
     `find_stream_info` 가 매개변수를 끝내 못 채우지만, 읽는 양은 FFmpeg 의 탐색 한도 안이다.
@@ -67,52 +68,94 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
     이름 확인만 쓴다.
   - **명령줄도 목록으로**: 범위 밖(FR-005). 명령줄은 `stt fetch` 가 받은 영상 파일도 연다.
 
-## R2. 목록의 내용 — 형식 8가지와 ALAC 의 음성 해독기 22개
+## R2. 목록의 내용 — 음성 해독기 32개: 형식 8가지·ALAC 의 22개와 녹음기 코덱 10개
 
-- **결정**: `AUDIO_DECODERS` 는 FFmpeg 해독기 이름(`AVCodec.name`)의 쉼표 목록이다.
+- **결정**: `AUDIO_DECODERS` 는 FFmpeg 해독기 이름(`AVCodec.name`)의 쉼표 목록이다. 처음 측정한 22개에 운영자가 정한 녹음기 코덱 10개를 더했다
+  (운영자 결정 2026-11-10: ADPCM(WAV 의 IMA·Microsoft), WMA Pro·Voice·Lossless, MP2, AC-3·E-AC-3, AMR-NB·AMR-WB 를 넣는다. Speex·GSM 과 영상·이미지·자막
+  해독기는 넣지 않는다).
 
-  | 해독기 이름 | 코덱 | 쓰는 형식(확장자) |
-  |---|---|---|
-  | `aac` | AAC(LC·HE) | m4a, aac |
-  | `alac` | Apple Lossless | m4a |
-  | `mp3float` | MP3 | mp3 |
-  | `flac` | FLAC | flac, ogg |
-  | `vorbis` | Vorbis | ogg |
-  | `opus` | Opus | opus, ogg |
-  | `wmav1`, `wmav2` | WMA 1·2 | wma |
-  | `pcm_u8`, `pcm_s8`, `pcm_s16le`, `pcm_s16be`, `pcm_s24le`, `pcm_s24be`, `pcm_s32le`, `pcm_s32be`, `pcm_f32le`, `pcm_f32be`, `pcm_f64le`, `pcm_f64be` | 선형 PCM | wav, m4a(mov) |
-  | `pcm_alaw`, `pcm_mulaw` | G.711 | wav, m4a(mov) |
+  | 해독기 이름 | 코덱 | 쓰는 형식(확장자) | 끝까지 읽어 봄 |
+  |---|---|---|---|
+  | `aac` | AAC(LC·HE) | m4a, aac | 🟢 |
+  | `alac` | Apple Lossless | m4a | 🟢 |
+  | `mp3float` | MP3 | mp3 | 🟢 |
+  | `mp2` | MPEG Layer II (더함) | mp3, wav | 🟢 |
+  | `flac` | FLAC | flac, ogg | 🟢 |
+  | `vorbis` | Vorbis | ogg | 🟢 |
+  | `opus` | Opus | opus, ogg | 🟢 |
+  | `wmav1`, `wmav2` | WMA 1·2 | wma | 🟢 |
+  | `wmapro`, `wmavoice`, `wmalossless` | WMA Pro·Voice·Lossless (더함) | wma | `[VERIFY]` — 인코더 없음 |
+  | `ac3`, `eac3` | AC-3·E-AC-3 (더함) | m4a(mp4) | 🟢 |
+  | `amrnb` | AMR-NB (더함) | m4a(3GP·MP4, `mov` 형식) | 🟢 |
+  | `amrwb` | AMR-WB (더함) | m4a(3GP·MP4) | `[VERIFY]` — 인코더 없음 |
+  | `adpcm_ima_wav`, `adpcm_ms` | IMA ADPCM·Microsoft ADPCM (더함) | wav | 🟢 |
+  | `pcm_u8`, `pcm_s8`, `pcm_s16le`, `pcm_s16be`, `pcm_s24le`, `pcm_s24be`, `pcm_s32le`, `pcm_s32be`, `pcm_f32le`, `pcm_f32be`, `pcm_f64le`, `pcm_f64be` | 선형 PCM | wav, m4a(mov) | 🟢(8개 변형) |
+  | `pcm_alaw`, `pcm_mulaw` | G.711 | wav, m4a(mov) | 🟢 |
 
 - **근거** 🟢:
   - 목록에 넣는 이름은 「그 코덱 번호로 FFmpeg 가 고르는 해독기」의 이름이어야 한다(`codec_whitelist` 는 `av_match_list` 로 해독기 이름을 정확히
-    맞춘다). 잰 이름: 형식 8가지는 `pcm_s16le`(wav)·`aac`(m4a·aac)·`mp3float`(mp3 — 고정소수점 `mp3` 가 아니다)·`flac`·`vorbis`·`opus`(휠에 든
-    `libopus` 가 아니라 내장 해독기)·`wmav2`. ALAC 은 `alac`. WAV·MOV 의 PCM 변형은 `pcm_s24le`·`pcm_f32le`·`pcm_u8`·`pcm_s32le`·`pcm_mulaw`·
-    `pcm_alaw`·`pcm_s16be`·`pcm_s16le`, WMA 1 은 `wmav1`, Ogg 안 FLAC 은 `flac` 였다.
+    맞춘다). PyAV 는 흐름마다 `avcodec_find_decoder(codec_id)` 로 해독기를 고른다. 실제 파일로 잰 이름:
+    - 형식 8가지: `pcm_s16le`(wav)·`aac`(m4a·aac)·`mp3float`(mp3 — 고정소수점 `mp3` 가 아니다)·`flac`·`vorbis`·`opus`(휠에 든 `libopus` 가 아니라
+      내장 해독기)·`wmav2`. ALAC 은 `alac`. WAV·MOV 의 PCM 변형은 `pcm_s24le`·`pcm_f32le`·`pcm_u8`·`pcm_s32le`·`pcm_mulaw`·`pcm_alaw`·`pcm_s16be`·`pcm_s16le`,
+      WMA 1 은 `wmav1`, Ogg 안 FLAC 은 `flac`.
+    - 더한 코덱(FFmpeg 8.1.1·8.1.2·9.0.2 — PyAV 17·18·19 — 모두 같음): MP2 → `mp2`(`mp2float` 가 아니다. 고정소수점 인코더 `mp2fixed` 로 만든 파일도
+      `mp2`), AC-3 → `ac3`(`ac3_fixed` 가 아니다. `ac3_fixed` 인코더로 만든 파일도 `ac3`), E-AC-3 → `eac3`, AMR-NB → `amrnb`(PyAV 17·18 에는
+      `libopencore_amrnb` 해독기도 있지만 내장이 먼저 골라진다), IMA ADPCM WAV → `adpcm_ima_wav`, Microsoft ADPCM → `adpcm_ms`. 운영자가 말한 「FFmpeg 가
+      고르면 넣을」 부동소수 MP2·고정소수점 AC-3 변형은 어느 판에서도 골라지지 않아 넣지 않았다.
+    - 인코더가 없는 넷은 코덱 번호마다 해독기가 하나뿐이라 이름이 하나로 정해진다: `wmapro`·`wmavoice`·`wmalossless`·`amrwb`(세 PyAV 휠의
+      `av.codecs_available` 과 nixpkgs `ffmpeg -decoders`). 세 휠 모두 이 이름의 해독기가 있다.
+  - 끝까지 읽기(관측 도구, 32개 목록·두 겹·이름 확인, 사인파 2초, 2026-11-10): 인코더가 있는 더한 코덱 모두 길이 재기와 해독이 `ok` 였고 열린 해독기는
+    그 코덱의 것 하나뿐이었다(거절된 해독기 없음).
+
+    | 파일(만든 것) | 길이 재기 | 해독(초 · 최대 진폭) | 열린 해독기 |
+    |---|---|---|---|
+    | WAV 안 IMA ADPCM(nixpkgs `ffmpeg`) | 2.0 | 2.041 · 0.128 | `adpcm_ima_wav` |
+    | WAV 안 Microsoft ADPCM | 2.0 | 2.036 · 0.128 | `adpcm_ms` |
+    | MP2 를 담은 `.mp3`(`mp2`·`mp2fixed` 인코더) | 2.011 | 2.011 · 0.125 | 길이 재기 `mp3float`(형식이 처음에 MP3 로 적는다), 해독 `mp2` |
+    | WAV 안 MP2(형식 태그 0x0050) | 2.011 | 2.011 · 0.125 | `mp2` |
+    | MP4 안 AC-3(`ac3`·`ac3_fixed` 인코더) | 1.994 | 1.994 · 0.125 | `ac3` |
+    | MP4 안 E-AC-3 | 1.994 | 1.994 · 0.125 | `eac3` |
+    | 3GP 안 AMR-NB 12.2 kbit/s(`.m4a`, PyAV 18.1.0 의 `libopencore_amrnb` 인코더 — 저장소 잠금의 Python 3.11 판, uv 캐시) | 2.0 | 2.014 · 0.135 | `amrnb` |
+
+    PyAV 17·18 로도 같은 해독기가 열렸다(AC-3·E-AC-3 의 해독 길이만 FFmpeg 8 이 끝을 자르지 않아 2.011초). 22개 목록으로 같은 파일을 읽으면 모두 이름
+    확인과 `ArgumentError` 로 거절됐다 — 목록을 넓힌 것이 이 결과를 바꾼다.
   - PCM 은 WAV(`riff` 의 PCM·IEEE float·G.711 태그)와 MOV(`twos`·`sowt`·`in24`·`in32`·`fl32`·`fl64`·`raw `·`alaw`·`ulaw`)가 만드는 이름을 모두 넣었다.
     FFmpeg 의 PCM 해독기는 한 소스(`pcm.c`)의 표 변환이라 이름을 늘려도 공격면이 거의 늘지 않고, 24비트·부동소수 WAV 를 쓰는 녹음기에서 회귀를 막는다.
-  - 휠의 해독기는 535개(음성 211개)다. 목록은 그중 22개, 모두 음성이다. 영상·이미지·자막 해독기는 하나도 없다(FR-001).
-- **이번에 거절되기 시작하는 것**(002 까지는 전사됐다): AC-3·E-AC-3(일부 캠코더·휴대폰 영상의 음성), `.mp3` 이름의 MP2, ADPCM WAV(오래된 녹음기),
-  WMA Pro·Voice·Lossless, AMR, Speex, GSM. 받기에서 바로 `unreadable_audio` 가 되고 읽기 단위에 `reader child probe exited with status 1` 이 남는다.
-  배포한 날 이미 받아 둔 이런 녹음을 같은 날 재전사하면 해독에서 `unreadable_audio` 가 된다(녹음은 그날 23:58 에 지워지므로 하루뿐이다).
+  - 휠의 해독기는 535개(음성 211개)다. 목록은 그중 32개, 모두 음성이다. 영상·이미지·자막 해독기는 하나도 없다(FR-001).
+- `[VERIFY]` (운영, 실제 녹음이 처음 올 때): WMA Pro·Voice·Lossless 와 AMR-WB 를 끝까지 읽는 것. nixpkgs `ffmpeg` 8.1.2 와 PyAV 17·18·19 어디에도 이 넷의
+  인코더가 없고(`ffmpeg -encoders`, `av.codecs_available`), 시험 파일을 인터넷에서 받지 않는다(운영자 규칙). 이름은 위대로 확인했고 걸리는 방식(`av_match_list`
+  의 이름 맞춤)은 끝까지 읽어 본 코덱들과 같다. 그런 녹음이 받기에서 `unreadable_audio` 와 `reader child probe exited with status 1` 로 끝나면 이 항목부터 본다.
+- **여전히 거절되는 것**(목록 밖 — 받을 때 `unreadable_audio`, 읽기 단위에 `reader child probe exited with status 1`):
+  - Speex(`speex`), GSM(`gsm`·`gsm_ms`) — 운영자 결정. Ogg 안 Speex 는 🟢 거절을 확인했다(`speex` 열리지 않음). GSM 은 nixpkgs `ffmpeg` 에 인코더
+    (`libgsm`)가 없어 파일을 만들지 않았다.
+  - IMA·Microsoft 밖의 ADPCM. 운영자의 조건(「실제 녹음기 형식이 허용 상자에서 필요할 때만」)에 맞는 것을 찾지 못해 넣지 않았다 — 판단이다:
+    QuickTime IMA4(`adpcm_ima_qt`)는 AIFF-C·CAF·MOV 의 코덱이고 AIFF·CAF 는 허용 형식이 아니다. G.726(`g726`·`g726le`)·G.722(`g722`)는 전화·VoIP 녹음의
+    코덱이고, Yamaha(`adpcm_yamaha`)는 옛 휴대폰의 형식이다. 음성 녹음기가 쓰는 「ADPCM WAV」는 대개 IMA(형식 태그 0x0011)나 Microsoft(0x0002)로 본다.
+    🟢 WAV 안 Yamaha·G.726, MOV(`.m4a`) 안 QuickTime IMA4 는 거절됐다(그 해독기 열리지 않음). 실제 녹음이 오면 이름 하나를 더하는 별도 변경으로 한다.
+  - 그 밖의 음성 코덱: MPEG Layer I(`mp1`), TrueSpeech(`truespeech`) 등 목록에 없는 모든 것.
 - **판을 올릴 때**: FFmpeg 이 어떤 코덱의 기본 해독기 이름을 바꾸면(예: `mp3float` → 다른 이름) 그 형식이 모두 거절된다. 매달 갱신 순서의
-  「빌드·시험」(4.2)에서 A 층의 형식별 시험과 VM 의 B-P2-8 이 잡는다.
+  「빌드·시험」(4.2)에서 A 층의 형식별 시험과 VM 의 B-P2-8 이 잡는다(인코더가 없는 넷은 잡지 못한다 — 위 `[VERIFY]`).
 - **대안**: 형식 8가지에 실제로 쓰인 7개만 — 24비트 WAV·ALAC 같은 정상 녹음이 회귀한다. 목록을 운영자 설정으로 — 판단 경로가 늘고(헌법 I),
-  코드 한 곳·문서 한 곳의 규칙(FR-004)과 맞지 않는다.
-- 운영자 결정 항목: 위 「거절되기 시작하는 것」 가운데 받아야 할 것이 있으면 이름 하나를 더하는 별도 변경으로 한다(plan 의 권장: 목록 그대로 배포하고
-  `exited with status 1` 이 늘면 그때 본다).
+  코드 한 곳·문서 한 곳의 규칙(FR-004)과 맞지 않는다. 처음 낸 22개(녹음기 코덱 없이) — 002 까지 전사되던 녹음기 녹음(ADPCM WAV, MP2, AC-3, AMR, WMA
+  Pro·Voice)이 거절된다. 운영자가 더하기로 정했다(2026-11-10).
 
 ## R3. 남는 것 — 분석기(parser)와 묶음 읽기
 
 - **결정**: 이번 범위는 해독기다. 분석기는 그대로 두고, 보안 문서 §2 에 남는 범위로 적는다. 공지 판정 때 「해독기」와 「분석기·형식(demuxer)」을
-  나눠 본다.
+  나눠 본다. 해독 단계에서 영상 묶음을 버리는 안(아래 대안)은 운영자가 미뤘다(2026-11-10).
+- **남는 위험**(보안 문서 §2 에 함께 적는다):
+  - 길이 재기: `find_stream_info` 가 영상 트랙의 첫 묶음 몇 개를 영상 분석기로 읽는다(H.264 에서 2번). PyAV 로는 끌 수 없다.
+  - 해독: 영상 트랙의 묶음이 모두 형식(demuxer)을 지나고, 분석이 필요한 코덱이면 묶음마다 영상 분석기가 불린다(2초·10 fps H.264 에서 21번). 해독기는 열리지
+    않는다. 비음성 흐름을 버리면 없앨 수 있으나 미뤘다(운영자 2026-11-10).
 - **근거** 🟢 (`av_parser_parse2` 호출 수):
   - H.264 영상이 든 `m4a`: 목록을 걸어도 길이 재기의 `find_stream_info` 가 H.264 분석기를 2번 부르고, 해독(음성만) 중에도 영상 묶음마다 불러
     21번이었다. 해독 전에 비음성 흐름을 `discard = all` 로 두면 해독 중 호출이 없어졌다(합 3번, 모두 `find_stream_info`).
   - MP3 의 PNG 표지 그림과 ASF 의 MJPEG 영상은 분석기 호출이 0번이었다(MP3 분석기만 불렸다).
   - 분석기는 해독기보다 훨씬 작은 코드지만 맡긴 바이트를 해석한다. 길이 재기 단계(`find_stream_info`)의 분석기는 PyAV 로 끌 수 없다(흐름이
     그 안에서 만들어진다). 그래서 `discard` 는 해독 단계만 줄일 뿐 「서버 경로에서 닿지 않음」을 만들지 못한다.
-- **대안**: 해독 단계에서 비음성 흐름을 버리기(`stream.discard`) — 두 줄이면 되지만 길이 재기의 분석기는 남는다. 이번에는 넣지 않고 후속 후보로
-  남긴다(운영자 결정 항목). `fflags=+noparse` — 음성 분석기도 끈다(2초 MP3 하나에 MP3 분석기를 63~93번 부른다). 기각.
+- **대안**: 해독 단계에서 비음성 흐름을 버리기(`stream.discard = all`) — 두 줄이면 해독 중의 영상 분석기 호출이 없어지지만(21번 → 0번) 길이 재기의
+  분석기는 남는다. 운영자가 미뤘다(2026-11-10) — 후속 후보로 남기고 위의 남는 위험으로 적는다. `fflags=+noparse` — 음성 분석기도 끈다(2초 MP3 하나에
+  MP3 분석기를 63~93번 부른다). 기각.
 
 ## R4. 잘림 기준 — 1초. 처음 잰 길이보다 해독된 길이가 1초 이상 짧으면 한 줄
 
@@ -299,8 +342,10 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
 
 - **A. pytest**(GPU·망·systemd·C 컴파일러 없이):
   - 시험 녹음은 PyAV 로 만든다 🟢: MP4 안 AAC + 단색 MPEG-4·H.264 영상(`libx264` 는 휠에 있다), MP3(`libmp3lame`) + 단색 PNG 표지
-    (`Disposition.attached_pic` 흐름에 PNG 묶음 하나), 색인이 앞인 M4A(`options={"movflags": "+faststart"}`), MP4 안 AC-3. 모두 위 R1 의 관측으로 같은
-    해독기가 열리고 거절됨을 확인했다. 끝 자르기는 파일을 반으로 `truncate` 한다.
+    (`Disposition.attached_pic` 흐름에 PNG 묶음 하나), 색인이 앞인 M4A(`options={"movflags": "+faststart"}`), 더한 녹음기 코덱(WAV 안 IMA·Microsoft
+    ADPCM, MP2, MP4 안 AC-3·E-AC-3 — 휠 19 에 인코더가 있다), 목록 밖 코덱(WAV 안 Yamaha ADPCM, MOV 안 QuickTime IMA4). 모두 위 R1·R2 의 관측으로 같은
+    해독기가 열리고 거절됨을 확인했다. AMR-NB 는 PyAV 17·18 에만 인코더(`libopencore_amrnb`)가 있어 Python 3.10·3.11 에서만 만들고, 3.12 에서는 이유를
+    적고 건너뛴다. 끝 자르기는 파일을 반으로 `truncate` 한다.
   - 「영상·그림 해독기가 열리지 않음」은 프로세스 안에서 `reader._open_container` 로 연 컨테이너의 비음성 흐름이 `pix_fmt is None` 이고
     `decode(video=0)` 이 `ArgumentError` 인 것으로 본다(R1). 진짜 감독·자식(흉내 소켓)으로 길이 재기·해독 결과가 음성만 든 녹음과 같은지 본다.
   - 감독의 SIGINT 는 대역 자식에 새 동작 `sigint-parent`(부모에게 SIGINT 를 보내고 정상 결과를 씀)를 더해 본다.
@@ -338,8 +383,10 @@ probe 와 decode 를 따로 열어(실제처럼 자식 둘) 각각 기록했다.
 
 - **바뀌지 않는 것**: 요청·응답·결과 스키마(`src/stt/server/schemas/*.json`), 실패 이유 11개, 응답의 고정 문장, 「다 지우기」, 재전사, 23:58 정리, 읽기
   프로토콜의 메시지·상수(새 상수 `AUDIO_DECODERS` 는 자식 안에서만 쓴다), 단위 설정(모듈은 단언 하나만 더한다).
-- **호출하는 쪽에 보이는 바뀜**: 목록 밖 음성 코덱의 녹음이 `unreadable_audio` 가 된다(R2). 실패 이유와 문장은 이미 있는 것이라 계약 위반은 아니다.
-  bhu-llm 에 알리는 한 단락의 회신을 낼지는 운영자 결정 항목이다(헌법 VI 은 호환되지 않는 변경만 요구한다).
+- **호출하는 쪽에 보이는 바뀜**: 목록 밖 음성 코덱의 녹음이 `unreadable_audio` 가 된다(R2). 실패 이유와 문장은 이미 있는 것이라 계약 위반은 아니다
+  (헌법 VI 은 호환되지 않는 변경만 핸드오프를 요구한다). 운영자 결정(2026-11-10): 003 배포 회신에 거절되는 코덱을 적은 한 단락을 싣는다 — Speex, GSM,
+  그 밖의 목록 밖 음성 코덱(R2 의 「여전히 거절되는 것」)과 그때의 응답(`unreadable_audio`, 받을 때 바로). 회신은
+  `specs/003-reader-hardening/handoff/reply.md` 에 쓰고 운영자가 bhu-llm 대장으로 옮긴다(quickstart C-003-6).
 - **고칠 내부 문서**(구현 때): `specs/002-decoder-isolation/contracts/reader.md` §4(상수 `AUDIO_DECODERS`), §5(SIGINT 무시, 손으로 띄운 줄),
   §6(자식이 두 목록으로 연다, 길이 재기의 해독기 이름 확인, `-I`), §7(`RecordingError`·`O_NONBLOCK`), §8(끝 코드 2 의 줄). 각 자리에 이 기능의
   [contracts/](contracts/) 를 가리키는 한 줄을 둔다.

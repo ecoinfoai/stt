@@ -10,7 +10,7 @@
 |---|---|
 | 이름 | `AUDIO_DECODERS` (`src/stt/server/reader.py`, `AUDIO_FORMATS` 옆) |
 | 모양 | FFmpeg 해독기 이름(`AVCodec.name`)의 쉼표 목록, 문자열 하나 — FFmpeg 의 `codec_whitelist` 옵션 값 그대로 |
-| 값 | 22개: `aac`, `alac`, `flac`, `mp3float`, `opus`, `vorbis`, `wmav1`, `wmav2`, `pcm_alaw`, `pcm_f32be`, `pcm_f32le`, `pcm_f64be`, `pcm_f64le`, `pcm_mulaw`, `pcm_s16be`, `pcm_s16le`, `pcm_s24be`, `pcm_s24le`, `pcm_s32be`, `pcm_s32le`, `pcm_s8`, `pcm_u8` (research R2) |
+| 값 | 32개: `aac`, `alac`, `flac`, `mp3float`, `mp2`, `opus`, `vorbis`, `wmav1`, `wmav2`, `wmapro`, `wmavoice`, `wmalossless`, `ac3`, `eac3`, `amrnb`, `amrwb`, `adpcm_ima_wav`, `adpcm_ms`, `pcm_alaw`, `pcm_f32be`, `pcm_f32le`, `pcm_f64be`, `pcm_f64le`, `pcm_mulaw`, `pcm_s16be`, `pcm_s16le`, `pcm_s24be`, `pcm_s24le`, `pcm_s32be`, `pcm_s32le`, `pcm_s8`, `pcm_u8` (research R2. 녹음기 코덱 10개 — `mp2`·`wmapro`·`wmavoice`·`wmalossless`·`ac3`·`eac3`·`amrnb`·`amrwb`·`adpcm_ima_wav`·`adpcm_ms` — 는 운영자 결정 2026-11-10) |
 | 쓰는 곳 | 읽기 자식만: (1) 형식 단계의 `codec_whitelist`(`avformat_find_stream_info` 의 해독기), (2) 흐름마다 코덱 문맥 옵션의 `codec_whitelist`(해독의 해독기), (3) 길이 재기의 첫 음성 흐름 해독기 이름 확인 |
 | 쓰지 않는 곳 | 받기·워커(녹음을 해석하지 않는다), 명령줄(`decode_samples`, FR-005) |
 | 같은 값의 사본 | `docs/server-security.md` §2 의 `<!-- stt:audio-decoders -->` 표. `tests/test_server_security_doc.py` 가 집합으로 맞춘다 |
@@ -21,7 +21,7 @@
 | 녹음의 트랙 | 길이 재기 | 해독 | 작업 |
 |---|---|---|---|
 | 목록 안 음성 하나 이상(첫 음성 트랙이 목록 안) + 영상·그림 트랙 있거나 없거나 | `ok`, 처음 잰 길이 = 컨테이너 길이(없으면 첫 음성 트랙의 묶음 길이 합) | `ok`, 첫 음성 트랙만 | 지금처럼 진행 |
-| 첫 음성 트랙의 코덱이 목록 밖 | `failed` | (오지 않음. 배포 전에 받아 둔 녹음의 재전사는 `failed`) | 받기 `unreadable_audio` |
+| 첫 음성 트랙의 코덱이 목록 밖(Speex, GSM, MPEG Layer I, IMA·Microsoft 밖의 ADPCM 등) | `failed` | (오지 않음. 배포 전에 받아 둔 녹음의 재전사는 `failed`) | 받기 `unreadable_audio` |
 | 음성 트랙 없음(영상만) | `failed` | — | 받기 `unreadable_audio` (지금과 같다) |
 
 ## 2. 잘림 판정 (spec 「잘림 기준」)
@@ -75,7 +75,7 @@
 | 읽기 준비 | 녹음 열기 권한·기술자 부족 | `engine_error`, 줄 원인 없음 | `engine_error` · 같은 문장 · `recording_unusable` |
 | 읽기 | 띄우지 못함(`unavailable`) | `engine_error`, 줄 원인 없음 | 같은 응답 · `reader_unavailable` |
 | 읽기 | 그 밖의 `OSError`·`ValueError` | `OSError` 는 `engine_error`, `ValueError` 는 워커 멈춤 | `engine_error` · 같은 문장 · `unexpected` |
-| 읽기 | 길이 재기에서 목록 밖 음성 코덱 | (받아들여 전사) | 받기 `unreadable_audio` · 「The recording could not be read as audio.」 |
+| 읽기 | 길이 재기에서 목록 밖 음성 코덱(Speex·GSM 등) | (받아들여 전사) | 받기 `unreadable_audio` · 「The recording could not be read as audio.」 |
 | 읽기 | 해독에서 목록 밖 음성 코덱(배포 전에 받은 녹음의 재전사) | (전사) | `unreadable_audio` · 같은 문장 |
 | 읽기 → GPU | `ok`, 해독된 길이가 1초 이상 짧음 | (아무 기록 없음) | 결과는 그대로 · 잘림 줄 |
 | GPU | 엔진의 `engine_error` 판정 | `engine_error`, 줄 원인 없음 | 같은 응답 · `engine_failed` |

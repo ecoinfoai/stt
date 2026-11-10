@@ -11,7 +11,8 @@
 고정 문장·지우기·재전사·23:58)과 단위 설정은 그대로다. 배포는 한 번이다.
 
 - **US1 해독기 목록**(P1): 읽기 자식이 FFmpeg 의 `codec_whitelist` 를 두 겹으로 건다 — 형식 단계(`avformat_find_stream_info` 의 해독기)와, 해독할 흐름의
-  코덱 문맥(PyAV 가 여는 해독기). 길이 재기는 첫 음성 흐름의 해독기 이름을 확인한다. 목록은 음성 해독기 22개다(R1·R2). 이 호스트에서 잰 결과,
+  코덱 문맥(PyAV 가 여는 해독기). 길이 재기는 첫 음성 흐름의 해독기 이름을 확인한다. 목록은 음성 해독기 32개다 — 형식 8가지·ALAC 의 22개에 운영자가
+  정한 녹음기 코덱 10개(ADPCM IMA·MS, WMA Pro·Voice·Lossless, MP2, AC-3·E-AC-3, AMR-NB·WB, 2026-11-10)를 더했다(R1·R2). 이 호스트에서 잰 결과,
   지금은 영상·표지 그림이 든 녹음을 읽을 때 `h264`·`mpeg4`·`mjpeg`·`png`·`wmv2` 해독기가 실제로 열리고, 결정한 방식에서는 하나도 열리지 않으며
   목록 안 녹음의 출력은 바이트까지 같다.
 - **US2 잘림 줄**(P2): 워커가 읽기 뒤 `처음 잰 길이 − 해독된 길이 ≥ 1초` 이면 고정된 영어 한 줄을 쓴다(R4·R5). 결과는 그대로 `done` 이다.
@@ -62,7 +63,7 @@
 | III. 삭제 보장 | 새 저장 자료가 없다. `audio.wav` 는 「다 지우기」와 겹쳐도 넓은 권한으로 다시 생기지 않는다(R11, FR-012) — 지금의 틈(0640 재생성)을 닫는다. 삭제 경로는 그대로다 | 통과 |
 | IV. 원문 무결성 | 목록 안 코덱의 녹음은 길이 재기 값과 해독 바이트가 같다(형식 8가지·기준 녹음 둘 실측, R1). 목록 밖 코덱은 다른 해독으로 대신하지 않고 `unreadable_audio` 로 끝난다 | 통과 |
 | V. 말없는 실패 금지 | 말없이 지나가던 것 넷이 드러난다: 끝이 잘린 녹음(줄), 서버 오류의 원인(이름), 낮은 systemd 의 무시된 격리 설정(빌드 거부), 일반 파일이 아닌 녹음에서 워커가 멈추거나 막히던 것(그 작업만 `engine_error`). 잘린 녹음을 `done` 으로 두는 것은 002 경계 사례 10·FR-007 의 운영자 결정이고, 결과의 `audio_duration_s` 가 해독된 길이를 알려 준다. 대체 해독 길은 없다 | 통과 |
-| VI. 계약으로만 | 스키마 바이트·실패 이유·고정 문장·경로·지우기·23:58 이 그대로다. 호출하는 쪽에 보이는 바뀜은 「목록 밖 음성 코덱의 녹음이 `unreadable_audio`」 하나이고 이미 있는 이유다 — 회신을 낼지는 운영자 결정 항목(R14). 고칠 내부 문서는 002 contracts/reader.md 의 가리킴 줄뿐이다 | 통과 |
+| VI. 계약으로만 | 스키마 바이트·실패 이유·고정 문장·경로·지우기·23:58 이 그대로다. 호출하는 쪽에 보이는 바뀜은 「목록 밖 음성 코덱의 녹음이 `unreadable_audio`」 하나이고 이미 있는 이유다 — 운영자 결정(2026-11-10)대로 배포 회신에 거절되는 코덱을 적은 한 단락을 싣는다(R14, C-003-6). 고칠 내부 문서는 002 contracts/reader.md 의 가리킴 줄뿐이다 | 통과 |
 | VII. 테스트 우선 | 과제마다 RED → GREEN 과 닫는 시나리오를 적는다. 해독기 목록은 「영상 흐름의 `pix_fmt is None`·`decode(video=0)` 의 `ArgumentError`」(A)와 VM 감시 라이브러리의 `killed by signal 6`(B)를 먼저 보고 넣는다. systemd 단언은 평가 검사를 먼저 넣어 실패를 본다. 기본 시험은 GPU·망·모델·systemd 없이 돈다. 시험 이름은 `test_hardening_us<N>_<n>_…` 다 | 통과 |
 | 저작권·단어장·개인정보 | 단어장 흐름은 그대로다. 새 줄에는 요청자·힌트·녹음 내용이 없다. 잘림 줄은 작업 ID 도 없다. 셸 보간 없음(인자 목록) | 통과 |
 | 개발 환경·언어 | Nix + uv, 새 의존성 없음, 무거운 실행은 `captest`, 최종 `project-audit`. 새 코드·로그·시험 이름은 영어다. 문서 대조 시험은 영어 표식만 읽는다. VM 의 C 감시 라이브러리는 시험 전용이다(운영 모듈에 없음) | 통과 |
@@ -86,6 +87,7 @@ specs/003-reader-hardening/
 │   └── module.md        #   systemd 단언, module-eval 검사, VM 노드의 감시 라이브러리·시험 녹음
 ├── checklists/requirements.md
 ├── audit/               # T-Verify-Final(project-audit) 결과
+├── handoff/             # 배포 뒤: reply.md (C-003-6)
 └── tasks.md             # /speckit-tasks 가 만든다
 ```
 
@@ -101,7 +103,7 @@ src/stt/
 
 tests/
 ├── server/
-│   ├── conftest.py              # 바뀜: PyAV 로 사인파 + 단색 영상, MP3 + 단색 PNG 표지, 색인이 앞인 M4A, MP4 안 AC-3 를 만드는 도우미와 끝 자르기
+│   ├── conftest.py              # 바뀜: PyAV 로 사인파 + 단색 영상, MP3 + 단색 PNG 표지, 색인이 앞인 M4A, 더한 녹음기 코덱(ADPCM·MP2·AC-3·E-AC-3, 인코더가 있으면 AMR-NB), 목록 밖 코덱(Yamaha ADPCM·QuickTime IMA4)을 만드는 도우미와 끝 자르기
 │   ├── fake_decode_child.py     # 바뀜: 동작 sigint-parent
 │   ├── test_hardening_us1.py    # 새: US1 — 목록, 영상·표지 그림, 영상만, 목록 밖, 명령줄 그대로
 │   ├── test_hardening_us2.py    # 새: US2 — 잘림 줄, 정상 녹음, 묶음 없음, 재전사, 비교 함수의 경계
@@ -115,7 +117,7 @@ tests/
 nix/
 ├── module.nix           # 바뀜: assertions(systemd 257, contracts/module.md §1)
 ├── module-eval.nix      # 새: 단언의 평가 시험(contracts/module.md §2) — flake.nix 의 checks.x86_64-linux.module-eval
-└── vm-test.nix          # 바뀜: 해독기 감시 라이브러리(LD_PRELOAD, VM 노드만), 시험 녹음 10개, 부분 시험 B-003-1~4
+└── vm-test.nix          # 바뀜: 해독기 감시 라이브러리(LD_PRELOAD, VM 노드만), 시험 녹음 15개(더한 녹음기 코덱 다섯 포함), 부분 시험 B-003-1~4
 
 flake.nix                # 바뀜: checks.x86_64-linux.module-eval
 docs/server-security.md  # 바뀜: §2 해독기 목록, §3 워커의 두 줄·원인 표·손 실행 줄, §4 후속 후보 줄과 4.2 한 항목(contracts/operator-log.md §5)
@@ -130,9 +132,9 @@ specs/002-decoder-isolation/contracts/reader.md   # 바뀜: §4~§8 에 이 기�
 
 | # | 결정 | 근거의 요점 |
 |---|---|---|
-| R1 | 형식 단계 `codec_whitelist` + 흐름마다 코덱 문맥 `codec_whitelist` + 길이 재기의 해독기 이름 확인. 읽기 자식만 | 🟢 지금은 영상·그림 해독기가 열린다. 형식 단계만으로는 해독 단계(`ac3`·`mp2`)가 열려 있다. 두 겹이면 46개 파일에서 비음성 해독기 0, 목록 안 출력 바이트 같음. PyAV 17·18·19 같음 |
-| R2 | 음성 해독기 22개(AAC·ALAC·MP3·FLAC·Vorbis·Opus·WMA 1·2·선형 PCM 12·G.711 2) | 🟢 FFmpeg 이 고르는 해독기 이름을 형식마다 잼(`mp3float`, 내장 `opus`). AC-3·MP2·ADPCM·WMA Pro 등은 이제 거절 |
-| R3 | 분석기·형식은 범위 밖, 문서에 남는 범위로 | 🟢 H.264 분석기는 길이 재기에서 2번, 해독 중 21번(버리면 3번). 길이 재기 쪽은 끌 수 없다 |
+| R1 | 형식 단계 `codec_whitelist` + 흐름마다 코덱 문맥 `codec_whitelist` + 길이 재기의 해독기 이름 확인. 읽기 자식만 | 🟢 지금은 영상·그림 해독기가 열린다. 형식 단계만으로는 해독 단계가 열려 있다(그때 목록 밖이던 `ac3`·`mp2`·`adpcm_ima_qt` 가 해독됨). 두 겹이면 46개 파일에서 비음성 해독기 0, 목록 안 출력 바이트 같음. PyAV 17·18·19 같음 |
+| R2 | 음성 해독기 32개: AAC·ALAC·MP3·MP2·FLAC·Vorbis·Opus·WMA 1·2·Pro·Voice·Lossless·AC-3·E-AC-3·AMR-NB·WB·ADPCM IMA·MS·선형 PCM 12·G.711 2(녹음기 코덱 10개는 운영자 결정 2026-11-10) | 🟢 FFmpeg 이 코덱마다 고르는 해독기 이름을 잼(`mp3float`·`mp2`·`ac3`·내장 `opus`·내장 `amrnb`). 더한 코덱 가운데 인코더가 있는 것은 끝까지 읽어 봄. Speex·GSM·그 밖의 목록 밖 음성 코덱은 거절 |
+| R3 | 분석기·형식은 범위 밖, 문서에 남는 위험으로. 해독 단계의 영상 묶음 버리기는 운영자가 미룸(2026-11-10) | 🟢 H.264 분석기는 길이 재기에서 2번, 해독 중 21번(버리면 3번). 길이 재기 쪽은 끌 수 없다 |
 | R4 | 잘림 기준 1.0초, `job.duration_s` 와 해독된 바이트로 | 🟢 정상 녹음의 최대 양의 차이 0.046초(WMA). 머리가 길이를 적는 형식에서만 잘림이 보인다. 경계 사례 5 의 전제는 생기지 않는다(spec `**Revised**` 2026-11-10) |
 | R5 | 고정 줄 `decoded audio is shorter than the probed length`, 읽기 뒤·GPU 전, 작업 ID 없음 | 앞의 `<id> running` 줄로 작업을 안다. VM(GPU 없음)에서도 보인다 |
 | R6 | `<id> failed engine_error <cause>`, 다섯 이름. `RecordingError`, `O_NONBLOCK`, 결정적 녹음 경로 | 🟢 녹음 없음은 지금 `StopIteration` 으로 워커가 멈추고, FIFO 는 열기에서 막힌다 |
@@ -143,9 +145,11 @@ specs/002-decoder-isolation/contracts/reader.md   # 바뀜: §4~§8 에 이 기�
 | R11 | `audio.wav` 를 만든 기술자로 끝까지 | 🟢 지금은 지운 뒤 다시 열면 0640 으로 생긴다. 기술자로 쓰면 다시 생기지 않는다 |
 | R12 | A: PyAV 로 만든 시험 녹음과 `pix_fmt`·`ArgumentError`. B: VM 읽기 단위에 `abort()` 감시 라이브러리 | 🟢 시제품: 지금 코드에서 SIGABRT, 결정한 코드에서 없음 |
 | R13 | 문서 §2·§3·§4 와 영어 표식, 시험이 상수와 맞춤 | FR-004·FR-016 |
-| R14 | 계약 그대로, 002 내부 계약에 가리킴 줄 | 헌법 VI |
+| R14 | 계약 그대로, 002 내부 계약에 가리킴 줄. 배포 회신에 거절되는 코덱 한 단락(운영자 결정 2026-11-10) | 헌법 VI |
 
-**남은 `[VERIFY]`**(모두 quickstart 단계에 들어 있다):
+**남은 `[VERIFY]`**(모두 quickstart 단계나 운영에 들어 있다):
+- R2: WMA Pro·Voice·Lossless 와 AMR-WB 를 실제로 끝까지 읽는 것 — nixpkgs `ffmpeg` 8.1.2 와 PyAV 17·18·19 어디에도 인코더가 없고 시험 파일을 내려받지 않는다
+  (운영자 규칙). 해독기 이름은 휠의 목록에서 확인했다. 그런 녹음이 처음 들어올 때 응답과 `reader child` 줄로 본다.
 - B-003-1: VM 의 해독기 감시 라이브러리가 읽기 단위의 제한(동적 사용자·`MemoryDenyWriteExecute`·호출 필터·`TemporaryFileSystem`) 안에서 실려 일한다 —
   지금 코드에서 먼저 `killed by signal 6`(RED)를 본다.
 - B-003-2: VM 빌드 안에서 `head -c` 로 자른 녹음이 이 세션의 측정처럼 읽힌다.
@@ -155,7 +159,7 @@ specs/002-decoder-isolation/contracts/reader.md   # 바뀜: §4~§8 에 이 기�
 
 | 이야기 | A (pytest) | B (Nix·VM) | C (호스트) |
 |---|---|---|---|
-| US1 해독기 목록 | `test_hardening_us1.py` 1~5·경계 1·2·FR-005, 문서 대조(US1-6) | B-003-1(감시 아래 영상·표지 그림·영상만·AC-3), B-P2-8(형식 8가지, 감시 아래) | C-003-3, C-003-2(기준 녹음 같음) |
+| US1 해독기 목록 | `test_hardening_us1.py` 1~5·경계 1·2·FR-005·더한 녹음기 코덱, 문서 대조(US1-6) | B-003-1(감시 아래 영상·표지 그림·영상만·Speex), B-P2-8(형식 8가지 + 더한 녹음기 코덱 다섯, 감시 아래) | C-003-3, C-003-2(기준 녹음 같음) |
 | US2 잘림 줄 | `test_hardening_us2.py` 1~5·비교 경계·FR-006, 문서 대조 | B-003-2(문서의 확인 명령으로 넷 + 대조 하나) | C-003-2(기준 녹음에 줄 없음), C-003-4(선택) |
 | US3 원인 종류 | `test_hardening_us3.py` 1~4·경계 6, 바뀐 `test_decoder_us3.py`·`test_reader_client.py`, 문서 대조 | B-003-3(`reader-not-started` 의 줄, FIFO 녹음) | — |
 | US4 작은 손질 | `test_hardening_us4.py`(1·3·5), `test_server_cli.py`(4) | B-003-6 `module-eval`(2), B-003-4(4) | 배포가 단언을 통과(2), C-003-5(4) |
@@ -167,25 +171,25 @@ SC-005 → A US4 + B-003-6. SC-006 → A 전부(3.12·3.11 로컬, 3.10·3.12 CI
 
 | 단계 | 내용(과제마다 RED → GREEN) | 닫는 이야기·요구 |
 |---|---|---|
-| 1. 시험 도구 | conftest 의 PyAV 시험 녹음 도우미(사인파 + 단색 영상, MP3 + PNG 표지, 색인이 앞인 M4A, AC-3, 끝 자르기), 대역 자식 `sigint-parent` | 아래 단계의 준비 |
-| 2. US1 | RED: 영상 흐름 `pix_fmt is None`·`ArgumentError`, AC-3 의 받기 거절, 형식별 같음 → GREEN: `open_container` 의 `codec_whitelist`, `AUDIO_DECODERS`, 길이 재기 이름 확인. 문서 §2 표와 대조 시험(RED → GREEN). VM: 감시 라이브러리와 시험 녹음을 먼저 넣어 B-003-1 의 `killed by signal 6` 을 본 뒤(RED) 코드와 함께 GREEN | US1-1~6, FR-001~005, SC-001·002 |
+| 1. 시험 도구 | conftest 의 PyAV 시험 녹음 도우미(사인파 + 단색 영상, MP3 + PNG 표지, 색인이 앞인 M4A, 더한 녹음기 코덱, 목록 밖 코덱, 끝 자르기), 대역 자식 `sigint-parent` | 아래 단계의 준비 |
+| 2. US1 | RED: 영상 흐름 `pix_fmt is None`·`ArgumentError`, 목록 밖 코덱(Yamaha ADPCM·QuickTime IMA4)의 받기 거절, 형식별·더한 녹음기 코덱의 읽기 → GREEN: `open_container` 의 `codec_whitelist`, `AUDIO_DECODERS`, 길이 재기 이름 확인. 문서 §2 표와 대조 시험(RED → GREEN). VM: 감시 라이브러리와 시험 녹음을 먼저 넣어 B-003-1 의 `killed by signal 6` 을 본 뒤(RED) 코드와 함께 GREEN | US1-1~6, FR-001~005, SC-001·002 |
 | 3. US3 | RED: 다섯 원인의 줄, 녹음 없음·디렉터리·FIFO·권한, 다음 작업 → GREEN: `RecordingError`·`O_NONBLOCK`, `_prepare` 의 녹음 경로, 읽기 단계의 예외 나누기, `_settle` 의 원인 낱말. 기존 시험 셋 고침(research R6). 문서 §3 원인 표. VM B-003-3 | US3-1~4, FR-008·009, SC-004 |
 | 4. US2 | RED: 잘린 셋·묶음 없음·재전사의 줄, 정상 녹음 0줄, 비교 경계 → GREEN: 비교 함수와 줄. 문서 §3 잘림 절과 대조 시험. VM B-003-2 | US2-1~5, FR-006·007, SC-003 |
 | 5. US4 | (a) SIGINT: 하위 프로세스 감독 + `sigint-parent`(RED: 판정 없음·트레이스백) → `SIG_IGN`. (b) `module-eval` 검사(RED) → 모듈 단언. (c) 0600 경주(RED: 다시 생김) → fdopen. (d) 끝 코드 2 의 안내(RED: 빈 표준 오류) → 한 줄, VM B-003-4. (e) 심은 모듈(RED: 읽힘) → `-I`. 문서 §2·§3 의 줄 | US4-1~5, FR-010~014, SC-005 |
 | 6. 확인 | §4 후속 후보 줄과 4.2 한 항목, 002 contracts/reader.md 의 가리킴 줄, A 전부(3.12·3.11)·CI(3.10·3.12)·B 전부(`module-eval`, `server-vm`), 스키마 바뀐 줄 0, `T-Verify-Final`(project-audit: qa-engineer + adversary) | FR-015·016·017, SC-006 |
-| 7. 배포 | `T-Verify-Final` 통과 뒤 master 합치기·push(운영자 승인) → nixos-config 의 `stt` 입력 갱신 → `nxr`. C-003-1~5. §4 의 배포 커밋·날짜 채우기. 회신은 운영자 결정 | SC-001~003 의 호스트 몫 |
+| 7. 배포 | `T-Verify-Final` 통과 뒤 master 합치기·push(운영자 승인) → nixos-config 의 `stt` 입력 갱신 → `nxr`. C-003-1~5. §4 의 배포 커밋·날짜 채우기. 회신 `handoff/reply.md`(C-003-6): 계약 그대로, 거절되는 코덱(Speex·GSM·그 밖의 목록 밖 음성 코덱)을 적은 한 단락, C-003-2·3 결과 | SC-001~003 의 호스트 몫 |
 
 - 단계 2~5 는 서로 기다리지 않지만 같은 파일(`worker.py`·`reader.py`·문서 §3·`vm-test.nix`)을 고치므로 한 줄로 차례대로 한다. 3(US3)을 4(US2)보다 먼저
   하는 까닭: 잘림 줄이 놓일 읽기 단계의 예외 구조를 US3 이 먼저 정한다.
 - VM 시험은 무거우므로(60분) 단계마다 돌리지 않고, 2·3·4·5 의 VM 단언을 모은 뒤 한 번 RED, 구현 뒤 한 번 GREEN 을 본다(RED 를 본 기록은 과제에 남긴다).
 - 배포는 stt 서비스를 잠깐 다시 띄운다(spec Assumptions). 운영자가 시각을 맞춘다.
 
-## 운영자 결정 항목
+## 운영자 결정 (2026-11-10)
 
-1. 해독기 목록(R2) — 이번에 거절되기 시작하는 코덱(AC-3·E-AC-3, `.mp3` 이름의 MP2, ADPCM WAV, WMA Pro·Voice·Lossless, AMR, Speex, GSM) 가운데 받아야 할
-   것이 있는가. 권장: 목록 그대로 배포하고, `reader child probe exited with status 1` 이 늘면 그때 이름을 더하는 별도 변경.
-2. 해독 단계에서 비음성 흐름을 버리는 것(R3, 두 줄) — 영상 분석기의 호출을 해독 중에서 없앤다. 길이 재기 쪽은 남는다. 권장: 이번에는 넣지 않고 후속 후보.
-3. 호출하는 쪽에 한 단락 회신을 낼지(R14) — 실패 이유·문장은 그대로이고 바뀌는 것은 목록 밖 음성 코덱의 녹음이 `unreadable_audio` 가 되는 것뿐이다.
+1. 해독기 목록(R2): 녹음기 코덱을 더한다 — ADPCM(WAV 의 IMA·Microsoft), WMA Pro·Voice·Lossless, MP2, AC-3·E-AC-3, AMR-NB·AMR-WB. Speex·GSM 은 넣지 않는다.
+   영상·이미지·자막 해독기는 넣지 않는다. 다른 ADPCM 은 실제 녹음기 형식이 허용 상자에서 필요할 때만 — 이번에는 넣지 않았다(이유는 R2).
+2. 해독 단계에서 비음성 흐름을 버리는 것(R3): 미룬다. 길이 재기의 분석기와 함께 남는 위험으로 보안 문서 §2 에 적는다.
+3. 회신(R14): 003 배포 회신에 거절되는 코덱을 적은 한 단락을 싣는다(C-003-6).
 
 ## Complexity Tracking
 
