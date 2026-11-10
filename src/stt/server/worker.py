@@ -51,6 +51,9 @@ _READ_FAILURES: dict[str, Failure] = {
     "timeout": _TIMEOUT,
     "storage_error": _UNREADABLE,
 }
+ENGINE_ERROR_CAUSES: frozenset[str] = frozenset(
+    {"reader_unavailable", "recording_unusable", "unexpected", "engine_failed", "engine_no_verdict"}
+)
 _Ending = Literal["ended", "stopped", "timeout"]
 _ReadOutcome = Literal["ok", "failed", "unavailable", "stopped", "timeout", "storage_error"]
 
@@ -66,7 +69,7 @@ def _prepare(layout: Layout, job: Job) -> tuple[Path, Path]:
         The work folder and the path of the job's recording.
     """
     audio = load_audio(layout, job.audio_id)
-    recording = next((layout.audio / job.audio_id).glob("audio.*"))
+    recording = layout.audio / job.audio_id / f"audio.{audio.original_name.rsplit('.', 1)[1]}"
     spec = {
         "request_id": job.request_id,
         "original_name": audio.original_name,
@@ -104,8 +107,10 @@ def _read(
         The reader's outcome, or ``storage_error`` if ``audio.wav`` could not be written.
 
     Raises:
-        OSError: If the reader client could not open the recording or its pipe, or an OS error reached it
-            after the reader had started (reading the result, or the ``job_running`` callback).
+        reader_client.RecordingError: If the recording could not be opened as a regular file.
+        OSError: If the reader client could not make its pipe or socket, or an OS error reached it after the
+            reader had started (reading the result, or the ``job_running`` callback).
+        ValueError: If the ``job_running`` callback met a job record it could not read.
     """
     result = reader_client.decode(
         reader, recording, job_running=lambda: _is_running(layout, request_id), job_limit_s=limit_s
@@ -216,8 +221,25 @@ def _publish(layout: Layout, work_dir: Path, request_id: str) -> None:
         raise
 
 
-def _settle(layout: Layout, job: Job, work_dir: Path, failure: Failure | None, now: Callable[[], datetime]) -> None:
-    """Publishes and finishes `job`, unless it is no longer ``running`` or its record was purged."""
+def _settle(
+    layout: Layout,
+    job: Job,
+    work_dir: Path,
+    failure: Failure | None,
+    now: Callable[[], datetime],
+    cause: str | None = None,
+) -> None:
+    """Publishes and finishes `job`, unless it is no longer ``running`` or its record was purged.
+
+    Args:
+        layout: The state root.
+        job: The running job.
+        work_dir: The job's work folder, holding the result files when `failure` is None.
+        failure: Why the job failed, or None if it is done.
+        now: Clock returning the current UTC time.
+        cause: A name of ``ENGINE_ERROR_CAUSES``; the log line of an ``engine_error`` failure ends with it, and
+            no other line carries it.
+    """
     with hold(layout.state_lock):
         if not (layout.jobs / job.request_id / "job.json").exists():
             _log(job.request_id, "stopped")
@@ -232,7 +254,8 @@ def _settle(layout: Layout, job: Job, work_dir: Path, failure: Failure | None, n
             _log(job.request_id, "done")
         else:
             lifecycle.finish(layout, current, "failed", now(), failure)
-            _log(job.request_id, f"failed {failure.reason}")
+            suffix = f" {cause}" if failure.reason == "engine_error" else ""
+            _log(job.request_id, f"failed {failure.reason}{suffix}")
 
 
 def _pick(layout: Layout, at: datetime) -> Job | None:
@@ -294,11 +317,16 @@ def _run_job(
     try:
         limit_s = processing_limit(job.duration_s)
         began = time.monotonic()
+        cause: str | None = None
         try:
             outcome: str = _read(layout, job.request_id, recording, work_dir, reader, limit_s)
-        except OSError:
-            # The reader client failed on an OS error, before or after the reader started; either way no decoded audio exists.
-            outcome = "unavailable"
+            if outcome == "unavailable":
+                cause = "reader_unavailable"
+        except reader_client.RecordingError:
+            outcome, cause = "unavailable", "recording_unusable"
+        except (OSError, ValueError):
+            # Any other failure of the reader client, before or after the reader started; no decoded audio exists.
+            outcome, cause = "unavailable", "unexpected"
         if outcome not in ("ok", "stopped") and not _is_running(layout, job.request_id):
             # A delete or the daily purge took the job (and removed its files) while the read was in flight.
             outcome = "stopped"
@@ -306,7 +334,7 @@ def _run_job(
             _log(job.request_id, "stopped")
             return
         if outcome != "ok":
-            _settle(layout, job, work_dir, _READ_FAILURES[outcome], now)
+            _settle(layout, job, work_dir, _READ_FAILURES[outcome], now, cause)
             return
         remaining_s = limit_s - (time.monotonic() - began)
         if remaining_s <= 0:
@@ -314,7 +342,9 @@ def _run_job(
             return
         ending = _run_engine(layout, job.request_id, engine_cmd, work_dir, models_dir, poll_s, remaining_s)
         if ending == "ended":
-            _settle(layout, job, work_dir, _verdict(work_dir), now)
+            failure = _verdict(work_dir)
+            cause = "engine_no_verdict" if failure is _NO_VERDICT else "engine_failed"
+            _settle(layout, job, work_dir, failure, now, cause)
         elif ending == "timeout":
             _settle(layout, job, work_dir, _TIMEOUT, now)
         else:
