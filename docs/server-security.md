@@ -128,10 +128,18 @@ stt server read only serves a connection that systemd passes from stt-reader.soc
 | `pcm_u8` | PCM 8-bit unsigned | wav, m4a |
 
 인코더가 없어 끝까지 읽어 보지 못한 이름은 `wmapro`·`wmavoice`·`wmalossless`·`amrwb` 넷이다(시험 파일을 밖에서 받지 않는다). 그런 녹음이 처음 올 때 운영 확인으로
-본다: 응답이 `unreadable_audio` 가 아니고 `journalctl -u 'stt-reader@*' -g 'reader child'` 에 그 시각의 실패 줄(`exited with status`·`killed by signal`·`timed out`·`returned an invalid result`)이 없으면 읽힌 것이다. `reader child decode stopped early at invalid data` 는 판정이 `ok` 라 실패 줄이 아니다.
+본다. 통과 기준은 셋이 모두 맞는 것이다: 그 작업의 전사록이 비어 있지 않고, `journalctl -u 'stt-reader@*' -g 'reader child'` 에 그 시각의 실패 줄(`exited with status`·`killed by signal`·`timed out`·`returned an invalid result`)과 일찍 멈춤 줄(`decode stopped early at invalid data`)이 없고, `journalctl -u stt-worker -g 'shorter than the probed length'` 에 그 시각의 잘림 줄(§3)이 없다. 해독기가 첫 조각에서 멈추면 작업은 빈 전사록으로 `done` 이고 일찍 멈춤 줄과 잘림 줄이 함께 남으므로, 응답이 `unreadable_audio` 가 아니라는 것만으로는 읽힌 것이 아니다. 운영자가 그런 녹음이 온 것을 아는 길은 호출하는 쪽의 알림(그 녹음이 `.wma`·`.m4a` 작업이었다는 보고)뿐이다. 로그와 응답에는 해독기 이름이 없고, 서버 녹음을 직접 열지도 않는다(아래 규칙). 그 알림이 오기 전까지 네 이름은 「알려질 때까지 확인 안 됨」이다.
 
 **남는 범위.** 분석기(parser)와 형식(demuxer)은 목록이 막지 않는다. 길이 재기의 분석 중 영상 분석기가 영상 묶음 몇 개를 읽을 수 있고, 해독 중에도 영상 묶음이
-형식·분석기를 지난다(research R3 — 해독 단계에서 영상 묶음을 버리는 안은 운영자가 미뤘다, 2026-11-10). 공지가 분석기·형식에 관한 것이면 지금처럼 판정한다.
+형식·분석기를 지난다(research R3 — 해독 단계에서 영상 묶음을 버리는 안은 운영자가 미뤘다, 2026-11-10). 영상 분석기는 해독기와 코드를 나눠 쓴다. 예를 들어 H.264
+분석기는 해독기의 매개변수 집합(SPS·PPS)·SEI·머리 해석 코드를 부른다. 그래서 해독기가 열리지 않아도 그 코드의 결함은 분석기를 거쳐 닿을 수 있다.
+서버 경로에서 분석기가 도는 것을 잰 코덱은 H.264 하나다(research R3). MPEG-4 Part 2·VC-1·AV1·HEVC·VP8/VP9·MPEG-1/2 는 같은 모양이라고 보는 후보이고 재지 않았다.
+이 코드 공유는 FFmpeg 소스 배치에서 안 것이고 9.0.2 에서 다시 읽지 않았다. 공지가 분석기·형식에 관한 것이면 지금처럼 판정하고, 해독기와 나눠 쓰는 코드의 공지도 같다(§4.2).
+
+목록이 막지 않는 길이 둘 더 있다. 둘 다 FFmpeg 9.0.2 에서 재지 않았다(조사에 쓴 감시 도구는 해독기 열기와 분석기 호출만 걸었다).
+- 비트스트림 필터: `find_stream_info` 가 머리 정보(extradata)가 없는 영상 흐름(H.264·HEVC·AV1 등)에 `extract_extradata` 를 돌려 NAL·OBU 를 나눈다.
+- 허용한 형식이 부르는 다른 형식·태그 코드: WAV 의 S/PDIF, MP3·AAC·WAV 의 ID3v2·APE 태그, Ogg 의 코덱별 머리(Theora·VP8·Kate 등).
+공지가 이 이름들을 대면 목록 밖이라는 이유로 건너뛰지 않는다.
 
 **바꾸는 규칙.** 목록에 이름을 더하거나 빼면 상수(`reader.AUDIO_DECODERS`)·이 표·형식별 시험을 함께 바꾼다. 표와 상수가 어긋나면 `tests/test_server_security_doc.py` 가 실패한다.
 
@@ -155,12 +163,12 @@ stt server read only serves a connection that systemd passes from stt-reader.soc
 | cause | stage | 뜻 | 볼 것 |
 |---|---|---|---|
 | `reader_unavailable` | read | 읽기 단위를 쓸 수 없었다: 소켓 없음, 접속 거부, 「시작」 전 끊김, 「시작」 기다림 넘김. 녹음 탓이 아니다. | `systemctl status stt-reader.socket`, `journalctl -u 'stt-reader@*'` |
-| `recording_unusable` | read | 워커가 그 작업의 녹음을 일반 파일로 열지 못했다(없음, 심볼릭 링크, 디렉터리·FIFO, 권한, 기술자 부족). 읽기 단위에는 아무것도 보내지 않았다. | 그 작업의 녹음 폴더(`/var/lib/stt/audio/<audio_id>/`)가 있는지, 일반 파일·`stt` 소유·0600 인지. 녹음을 열지는 않는다 |
-| `unexpected` | read | 읽기 단계의 그 밖의 입출력·값 오류(파이프·소켓 만들기, 「시작」 뒤의 입출력 오류, 작업 기록 읽기). | 같은 시각의 워커 저널(기술자·메모리), `/var/lib/stt` 의 기록 |
-| `engine_failed` | gpu | 엔진이 예상 못 한 오류(`engine_error`)로 멈췄다고 판정을 썼다. | 같은 시각의 GPU·모델 상태. 같은 녹음을 재전사해 되풀이되는지 |
+| `recording_unusable` | read | 워커가 그 작업의 녹음을 일반 파일로 열지 못했다(없음, 심볼릭 링크, 디렉터리·FIFO, 권한, 기술자 부족). 읽기 단위에는 아무것도 보내지 않았다. 기술자가 계속 모자라 다시 확인에서도 같은 오류가 나면 이 줄은 남지 않는다(아래 한계). | 그 작업의 녹음 폴더(`/var/lib/stt/audio/<audio_id>/`, 2차 작업은 `jobs/<request_id>/job.json` 의 `audio_id`)가 있는지, 일반 파일·`stt` 소유·0600 인지. 녹음을 열지는 않는다 |
+| `unexpected` | read | 읽기 단계의 그 밖의 입출력·값 오류(파이프·소켓 만들기, 「시작」 뒤의 입출력 오류, 일시적인 작업 기록 읽기 오류. 작업 기록을 계속 읽을 수 없으면 이 줄이 아니라 아래 한계). | 같은 시각의 워커 저널(기술자·메모리), `/var/lib/stt` 의 기록 |
+| `engine_failed` | gpu | 엔진이 예상 못 한 오류(`engine_error`)로 멈췄다고 판정을 썼다. | 같은 시각의 GPU·모델 상태. 되풀이되는지는 호출하는 쪽에 다시 맡기게 하거나, GPU·모델 상태를 보고 운영자가 만든 알려진 정상 파일만 §3 「안전한 재확인」으로 본다(이용자의 녹음을 재전사하지 않는다) |
 | `engine_no_verdict` | gpu | 엔진이 쓸 만한 판정 없이 끝났다(판정 파일 없음·깨짐, 결과 파일 빠짐, 목록 밖 이유). | `systemctl status stt-worker`, `journalctl -k`(엔진 프로세스가 죽었는지) |
 
-읽기 단계의 어떤 실패도 워커를 멈추지 않는다. 그 작업만 위 표대로 끝나고 워커는 다음 작업으로 간다.
+녹음 열기 오류와 읽기 단계의 일시적인 `OSError`·`ValueError` 는 그 작업만 위 표대로 끝내고 워커는 다음 작업으로 간다. 그 밖의 예외는 잡지 않는다. 작업 기록을 읽을 수 없거나 기술자가 계속 모자라는 등 「작업이 아직 도는가」 를 다시 확인하거나 마무리하는 단계에서도 같은 오류가 나면 워커가 멈추고(002 와 같다) 그 작업은 다음 시작 때 `failed interrupted` 가 된다. 이때 위 표의 줄은 남지 않는다.
 
 **끝이 잘린 녹음.** 받을 때 잰 길이보다 해독된 길이가 1초 이상 짧으면 워커가 표준 출력에 아래 고정된 영어 한 줄을 쓴다. 읽기가 `ok` 이고 GPU 단계 전이다. 작업은 앞부분 전사로
 `done` 이 되고 응답·결과는 같다. 줄에는 작업 ID·경로·파일 이름·길이 값이 없다.
@@ -338,7 +346,7 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
 - `nixpkgs ffmpeg`: P2 뒤 서버의 GPU 단계는 `ffmpeg` 를 부르지 않는다. 운영자의 명령줄이 쓴다. 마지막 갱신일은 nixpkgs 커밋이 바뀐 날이다
   (`5afc555` 는 이 커밋을 바꾸지 않았다).
 - `uv.lock` 은 2026-10-22(`eea5374`)에 바뀌었으나 위 판은 하나도 바뀌지 않았다.
-- 코덱 허용목록: 003(배포 커밋·날짜: `pending`)부터 서버 경로는 §2 「해독기 목록」의 음성 해독기만 연다. 영상·이미지·자막 해독기는 분석에서도 해독에서도 열리지 않는다. 분석기·형식은 남는다(§2).
+- 코덱 허용목록: 003(배포 커밋·날짜: `pending`)부터 서버 경로는 §2 「해독기 목록」의 음성 해독기만 연다. 영상·이미지·자막 해독기는 분석에서도 해독에서도 열리지 않는다. 분석기·형식, 그리고 분석기가 해독기와 나눠 쓰는 코드는 남는다(§2.1, §4.2).
 
 ### 4.2 갱신 정책
 
@@ -352,13 +360,15 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
   - `nixpkgs-ffmpeg` — nixpkgs 의 `ffmpeg` 갱신, 예: `nix eval --raw github:NixOS/nixpkgs/nixos-unstable#ffmpeg.version`
 - **보안 공지**: 서버의 판에 해당하는 공지가 나오면 7일 안에 올리거나, 올리지 않는 이유(이 서버의 판에 해당하지 않음 등)를 4.3 표의 `reason` 에
   적는다. 올렸으면 `updated` 에 날짜를 적는다.
-- **영상·이미지·자막 해독기만의 공지**: 서버 경로에서 열리지 않으므로(§2 해독기 목록) 4.3 의 `reason` 에 「서버 경로에서 열리지 않음(§2)」을 적을 수 있다. 분석기·형식·목록 안 음성
-  해독기의 공지는 지금처럼 7일 안에 올리거나 이유를 적는다.
+- **영상·이미지·자막 해독기만의 공지**: 취약한 코드를 해독기**만** 쓸 때에 한해, 서버 경로에서 열리지 않으므로(§2 해독기 목록) 4.3 의 `reason` 에 「서버 경로에서 열리지 않음(§2)」을
+  적을 수 있다. 서버 경로에서 분석기가 도는 코덱(잰 것: H.264. 후보: MPEG-4 Part 2, VC-1, AV1, HEVC, VP8/VP9, MPEG-1/2)의 매개변수 집합·SEI·머리·CBS 코드에 관한 공지는
+  해독기가 아니라 분석기 공지로 본다(§2.1 「남는 범위」). 코드가 해독기만 쓰는지 분석기와 나눠 쓰는지 가려지지 않으면 분석기 공지로 본다. 분석기·형식·목록 안 음성 해독기의 공지와 함께
+  지금처럼 7일 안에 올리거나 이유를 적는다.
 - **휠이 아직 없을 때**: FFmpeg 보안 수정이 나왔는데 고친 판을 담은 새 PyAV 휠이 아직 없으면, `reason` 에 「배포된 휠 없음 + 읽기 격리(P2)가
   범위를 막음」을 적고 다음 달 확인에서 다시 본다.
 - **올리는 순서**: (1) 잠금 파일 갱신(PyAV 는 `uv lock --upgrade-package av`, nixpkgs 는 `nix flake update nixpkgs`) → (2) 빌드·시험 →
   (3) 배포 → (4) 기준 녹음 비교(`cmp` 로 s16 비교, 전사록·문단 목록 비교) → (5) 4.1 표 고치기(`version`·`last_updated`·`comparison`).
-  (2) 에서 PyAV·FFmpeg 를 올릴 때는 받아들이는 형식의 기본 해독기 이름이 `AUDIO_DECODERS` 에 아직 있는지 확인한다 — FFmpeg 이 기본 해독기 이름을 바꾸면 그 형식 전체가 `unreadable_audio` 가 된다. 형식별 시험이 이를 잡는다.
+  (2) 에서 PyAV·FFmpeg 를 올릴 때는 받아들이는 형식의 기본 해독기 이름이 `AUDIO_DECODERS` 에 아직 있는지 확인한다 — FFmpeg 이 기본 해독기 이름을 바꾸면 그 형식 전체가 `unreadable_audio` 가 된다. 형식별 시험이 이를 잡는다. 단 인코더가 없어 시험 파일이 없는 `wmapro`·`wmavoice`·`wmalossless`·`amrwb` 넷은 예외다(research R2 — 이름은 §2.1 의 첫 실제 녹음 확인으로만 본다).
   CI 시험이 지키는 것은 `av` 세 줄의 `version`(`uv.lock` 과 대조)과 `nixpkgs ffmpeg` 줄의 `version`(`flake.lock` 과 대조)뿐이다.
   `last_updated`·`comparison` 과 나머지 줄은 CI 가 아니라 운영자가 직접 고친다.
 - 서버 경로의 해독기는 PyAV 휠의 FFmpeg 하나이므로 매달의 갱신은 보통 `av` 하나로 끝나고 nixpkgs 전체를 올릴 필요가 없다. `nixpkgs ffmpeg`
