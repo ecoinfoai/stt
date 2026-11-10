@@ -911,6 +911,21 @@ in
                 problems.append((name, result))
         return problems
 
+    # The watch library must really be loaded in a reader process of this run, or B-003-1 would pass without watching.
+    def check_watch_loaded():
+        holder = "import socket, time; s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET); s.connect('/run/stt-reader.sock'); time.sleep(60)"
+        server.execute(as_user("stt", f"nohup {PYTHON} -c {shlex.quote(holder)} >/dev/null 2>&1 &"))
+        try:
+            instance = wait_reader_instance()
+            pid = server.succeed(f"systemctl show -P MainPID {instance}").strip()
+            assert pid != "0", instance
+            server.succeed(f"grep -q stt-decoder-watch.so /proc/{pid}/maps")
+        finally:
+            server.execute("pkill -u stt -f '[S]OCK_SEQPACKET'")
+            no_reader_instance()
+
+    b003("B-003-1(0) the decoder watch library is loaded in a running reader", check_watch_loaded)
+
     # B-003-1: the real reader unit, under the decoder watch, opens audio decoders only.
     def check_recorder_codecs():
         cursor = journal_cursor()
