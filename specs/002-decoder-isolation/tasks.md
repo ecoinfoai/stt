@@ -343,7 +343,7 @@ VM 시험은 `subtest` 제목에 quickstart 단계 이름(B-P1·B-P2-n)을 넣�
   §3(읽기 단위 줄, 공통 세 설정), `contracts/README.md` §2(그림에 `/run/stt-reader.sock`), `contracts/cli.md` §1(`stt server read`, `--reader-socket`).
   스키마 파일은 건드리지 않는다. RED 해당 없음 — 내부 문서. supports FR-020, US4-1
 - [X] T039 [P] `README.md` 의 Server 절에 읽기 단위 한 줄과 `docs/server-security.md` 링크를 더한다(영어). RED 해당 없음 — 문서. supports FR-023
-- [ ] T040 T-Verify-Final: `project-audit` 스킬로 최종 감사 — 범위 qa-engineer(7-Layer 모듈·통합·E2E) + adversary(20+ 페르소나 + silent-skip).
+- [X] T040 T-Verify-Final: `project-audit` 스킬로 최종 감사 — 범위 qa-engineer(7-Layer 모듈·통합·E2E) + adversary(20+ 페르소나 + silent-skip).
   adversary 는 코드와 설정만 읽고, 입력 파일을 만들거나 돌리지 않는다(FR-028, 001 T078 의 교훈). BOUNDARY_MISMATCH / INTEGRATION_MISSING /
   SILENT_SKIP_NEW / PERSONA_ATTACK_SUCCESS 가 나오면 고칠 때까지 T041 로 가지 않는다. 결과를 `specs/002-decoder-isolation/audit/` 에 남긴다.
   RED 해당 없음 — 감사(지적마다 RED → GREEN 과제를 이 파일 끝에 더한다). supports SC-001~010
@@ -470,7 +470,7 @@ T024 src/stt/transcribe.py   T025 src/stt/server/worker.py + tests/server/confte
   명령줄·`ffprobe`·`ffmpeg` 로 직접 열지 않는다」 규칙, T048 의 기록 줄과 그때 볼 것(`type=1326` 과 시각으로 받기·워커 기록을 맞춰 보기), 한 형식이
   늘 `unreadable_audio` 일 때 볼 것을 더한다. §4 의 `av (Python 3.12)` 를 「3.12 이상」으로, T021 의 「그대로」 표현을 고친다. RED 해당 없음 — 문서.
   supports FR-023, FR-027
-- [ ] T051 T-Verify-Fix: `project-audit` 로 T045~T050 의 바뀜만 다시 감사(qa-engineer + adversary, adversary 는 코드·설정만 읽음). High 이상이
+- [X] T051 T-Verify-Fix: `project-audit` 로 T045~T050 의 바뀜만 다시 감사(qa-engineer + adversary, adversary 는 코드·설정만 읽음). High 이상이
   없어야 T041 로 간다. 결과를 `audit/` 에 더한다. RED 해당 없음 — 감사.
 
 ### 재감사(T051) 뒤 마무리 (운영자 결정 2026-11-10)
