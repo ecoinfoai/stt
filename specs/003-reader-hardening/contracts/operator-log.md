@@ -38,7 +38,8 @@
   다시 확인(`_is_running`)·마무리(`_settle`)에서도 같은 오류(작업 기록 읽기 불가, 기술자 부족 지속)가 나면 워커가 멈추고(002 와 같다) 이때 위 표의 줄은 남지 않는다.
   기술자 부족이면 그 작업은 다음 워커 시작이나 청소에서 `failed interrupted` 가 된다. 작업 기록이 계속 읽히지 않으면 `interrupted` 에 이르지 못한다:
   워커는 시작마다 `lifecycle.clear_dead_worker` → `records.load_jobs`(`worker.py:482-484`, `records.py:173-178`)에서 모든 기록을 읽다가 같은 기록에서 실패해
-  대기열 전체가 멈추고, 청소는 `dead worker cleanup failed …` 를 남기고 그 작업을 `running` 으로 둔다. 운영자가 그 기록을 고치거나 옮겨야 풀린다(001·002 부터의 동작,
+  대기열 전체가 멈추고, 청소는 `dead worker cleanup failed …` 를 남기고 그 작업을 `running` 으로 둔다. 같은 기록은 받기(작업 번호 정하기, 새 요청마다
+  `<request_id> intake error …`·응답 없음·버려짐)·삭제 요청(녹음만 지우고 멈춤)·만료 정리(`expiry cleanup failed …`)도 막는다. 운영자가 그 기록을 고치거나 옮겨야 풀린다(001·002 부터의 동작,
   003 이 바꾸지 않음. `docs/server-security.md` §3).
 - 줄에는 경로·파일 이름·녹음 내용·오류 문구·errno 가 없다. 분류 이름만 있다(US3-4).
 - 「다 지우기」·23:58 정리로 작업을 빼앗긴 경우는 지금처럼 `<request_id> stopped` 다(원인 이름 없음).
