@@ -25,6 +25,40 @@ let
     ffmpeg -hide_banner -loglevel error -f lavfi -i "anullsrc=r=8000:cl=mono" -t 10830 \
       -c:a libopus -b:a 6k $out/over-three-hours.ogg
     printf 'this is not audio\n' > $out/corrupt.mp3
+    # One sine wave per format of the reader's list (reader.AUDIO_FORMATS); nothing but tones is made.
+    tone() { ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=2" -ac 1 "$@"; }
+    tone -ar 44100 -c:a aac -f ipod $out/tone.m4a
+    tone -ar 44100 -c:a libmp3lame $out/tone.mp3
+    tone -ar 44100 -c:a flac $out/tone.flac
+    tone -ar 44100 -c:a libvorbis -f ogg $out/tone-vorbis.ogg
+    tone -ar 48000 -c:a libopus -f ogg $out/tone-opus.opus
+    tone -ar 44100 -c:a aac -f adts $out/tone.aac
+    tone -ar 44100 -c:a wmav2 -f asf $out/tone.wma
+  '';
+
+  # Sends each recording given on the command line through the real reader socket, as `stt` does,
+  # and prints what came back: the outcomes, the length and the loudest sample of the decoded audio.
+  readFormats = pkgs.writeText "stt-vm-read-formats.py" ''
+    import array
+    import json
+    import sys
+
+    from stt.server.reader_client import ReaderConfig, decode, probe
+
+    config = ReaderConfig()
+    report = {}
+    for path in sys.argv[1:]:
+        probed = probe(config, path)
+        decoded = decode(config, path, job_running=lambda: True, job_limit_s=240)
+        samples = array.array("h", bytes(decoded.audio))
+        report[path.rsplit("/", 1)[1]] = {
+            "probe": probed.outcome,
+            "duration_s": probed.duration_s,
+            "decode": decoded.outcome,
+            "seconds": len(samples) / 16000,
+            "peak": max(map(abs, samples), default=0) / 32768,
+        }
+    print(json.dumps(report))
   '';
 
   # Stands in for the NVIDIA driver library at /run/opengl-driver/lib: loading it never
@@ -140,6 +174,8 @@ pkgs.testers.runNixOSTest {
     GPU_LOCK = "/run/stt/gpu.lock"
     AUDIO = "${audio}"
     HANGING_CUDA = "${hangingCuda}/lib"
+    PYTHON = "${package}/bin/python"
+    READ_FORMATS = "${readFormats}"
     SLEEP = "/run/current-system/sw/bin/sleep"
     FLOCK = "/run/current-system/sw/bin/flock"
     REQUESTER = "owui-marker-5821"
@@ -395,6 +431,23 @@ pkgs.testers.runNixOSTest {
             assert socket_unit not in prop(unit, "Requires").split(), (unit, prop(unit, "Requires"))
             assert socket_unit in prop(unit, "After").split(), (unit, prop(unit, "After"))
             assert server.succeed(f"grep '^ExecStart=' /etc/systemd/system/{unit}").strip().endswith(f"/bin/stt {command}"), unit
+
+    with subtest("every format of the reader's list is read through the real reader without a blocked call (US2-8, SC-007)"):
+        formats = (
+            "two-seconds.wav", "tone.m4a", "tone.mp3", "tone.flac", "tone-vorbis.ogg", "tone-opus.opus", "tone.aac", "tone.wma",
+        )
+        listing = " ".join(f"{AUDIO}/{name}" for name in formats)
+        report = json.loads(server.succeed(as_user("stt", f"{PYTHON} {READ_FORMATS} {listing}")).strip().splitlines()[-1])
+        assert set(report) == set(formats), report
+        for name, result in report.items():
+            assert result["probe"] == "ok" and result["decode"] == "ok", (name, result)
+            assert abs(result["duration_s"] - 2.0) < 0.35, (name, result)
+            assert abs(result["seconds"] - 2.0) < 0.35, (name, result)
+            # A sine of amplitude 1/8 (lavfi's default); a silent or garbled decode would be far off.
+            assert 0.08 < result["peak"] < 0.2, (name, result)
+        # A call the filter denies kills the decode child with SIGSYS; the kernel logs it and the supervisor says so.
+        assert "type=1326" not in server.succeed("journalctl -k --no-pager -o cat")
+        server.fail("journalctl -u 'stt-reader@*' --no-pager -o cat | grep -F 'reader child'")
 
     with subtest("a request is queued within seconds and waits behind the operator's GPU lock (B-1, B-7)"):
         hold_gpu("gpu-hold-1", 20)
