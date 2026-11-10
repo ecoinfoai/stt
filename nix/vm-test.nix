@@ -447,7 +447,7 @@ pkgs.testers.runNixOSTest {
             assert 0.08 < result["peak"] < 0.2, (name, result)
         # A call the filter denies kills the decode child with SIGSYS; the kernel logs it and the supervisor says so.
         assert "type=1326" not in server.succeed("journalctl -k --no-pager -o cat")
-        server.fail("journalctl -u 'stt-reader@*' --no-pager -o cat | grep -F 'reader child'")
+        assert "reader child" not in server.succeed("journalctl -u 'stt-reader@*' --no-pager -o cat")
 
     with subtest("a request is queued within seconds and waits behind the operator's GPU lock (B-1, B-7)"):
         hold_gpu("gpu-hold-1", 20)
@@ -665,6 +665,8 @@ pkgs.testers.runNixOSTest {
     HOST_LOCK = "/run/nixos/switch-to-configuration.lock"
     NIX_DB = "/nix/var/nix/db"
     NIX_DB_LOCK = f"{NIX_DB}/vm-double-lock"
+    # A readable file of the host under /var that belongs to no stt path (US2-10).
+    VAR_HOST_FILE = "/var/lib/vm-double-host-file"
 
     def switch_to(specialisation=None):
         """Activates the base system or one of its specialisations without touching the boot entry."""
@@ -751,6 +753,10 @@ pkgs.testers.runNixOSTest {
         server.succeed("systemctl start stt-intake.service")
         assert prop("stt-intake.service", "Result") == "success"
         assert failed_with("unreadable_audio")(response(bad["request_id"])), response(bad["request_id"])
+        # The supervisor's fixed line reaches the journal through the real unit, with /run covered and no path in it.
+        server.wait_until_succeeds(
+            "journalctl -u 'stt-reader@*' --no-pager -o cat | grep -Fx 'reader child probe exited with status 1'", timeout=30
+        )
         assert response(good["request_id"])["state"] == "queued"
         assert response(good["request_id"])["queue_position"] == 1
         server.succeed("systemctl start stt-intake.path")
@@ -777,9 +783,9 @@ pkgs.testers.runNixOSTest {
         # The host's own 0644 root lock files, as they are on a real host; made here when the VM lacks them.
         server.succeed(
             "mkdir -p -m 0755 /run/nixos /nix/var/nix/db"
-            f" && touch {HOST_LOCK} {NIX_DB_LOCK} && chmod 0644 {HOST_LOCK} {NIX_DB_LOCK}"
+            f" && touch {HOST_LOCK} {NIX_DB_LOCK} {VAR_HOST_FILE} && chmod 0644 {HOST_LOCK} {NIX_DB_LOCK} {VAR_HOST_FILE}"
         )
-        assert server.succeed(f"stat -c '%a %U' {HOST_LOCK} {NIX_DB_LOCK}").split("\n")[:2] == ["644 root", "644 root"]
+        assert server.succeed(f"stat -c '%a %U' {HOST_LOCK} {NIX_DB_LOCK} {VAR_HOST_FILE}").split("\n")[:3] == ["644 root"] * 3
         a, b, c, a2, p = (str(uuid.uuid4()) for _ in range(5))
 
         def audio_paths(i):
@@ -801,7 +807,7 @@ pkgs.testers.runNixOSTest {
             ("state-root", [STATE, f"{STATE}/state.lock", f"{STATE}/worker.lock", f"{STATE}/queue"]),
             ("gpu-lock", ["/run/stt", GPU_LOCK, "/var/lib/stt-models"]),
             ("devices", ["/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm"]),
-            ("host-files", [SHM_MARKER, HOST_LOCK, NIX_DB, NIX_DB_LOCK]),
+            ("host-files", [SHM_MARKER, HOST_LOCK, NIX_DB, NIX_DB_LOCK, VAR_HOST_FILE]),
         ]
         GROUP_NAMES = [name for name, _ in TARGET_GROUPS] + list(FIXED_GROUPS)
         document = {"groups": [{"name": name, "paths": paths} for name, paths in TARGET_GROUPS]}
@@ -878,7 +884,7 @@ pkgs.testers.runNixOSTest {
             f"{STATE}/audio/{a}/audio.wav", f"{STATE}/audio/{b}/audio.wav", f"{STATE}/jobs/{a}/job.json",
             f"{STATE}/jobs/{b}/job.json", f"{OUTBOX}/{a}.json", f"{OUTBOX}/{b}.json", INBOX, f"{INBOX}/{p}.json.tmp", GPU_LOCK,
             f"{STATE}/state.lock", "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-uvm", SHM_MARKER,
-            HOST_LOCK, NIX_DB_LOCK,
+            HOST_LOCK, NIX_DB_LOCK, VAR_HOST_FILE,
         ]
 
         # A: job A (requester one, with hints) and job B (requester two) wait behind the operator's lock.
@@ -935,7 +941,7 @@ pkgs.testers.runNixOSTest {
         assert not failed_stt_units(), failed_stt_units()
 
         release_cuda()
-        server.succeed(f"rm {INBOX}/{p}.json.tmp {SHM_MARKER} {NIX_DB_LOCK}")
+        server.succeed(f"rm {INBOX}/{p}.json.tmp {SHM_MARKER} {NIX_DB_LOCK} {VAR_HOST_FILE}")
         for node_name in ("nvidia0", "nvidiactl", "nvidia-uvm"):
             server.succeed(f"rm /dev/{node_name}")
         server.succeed("systemctl start stt-worker.path stt-sweep.timer")

@@ -22,6 +22,7 @@ Behaviours:
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import select
@@ -96,8 +97,6 @@ def locked(path: str) -> int:
     ``flock`` needs only a descriptor opened for reading, also on a read-only mount, which is how a
     readable lock file of the host could be held against its owner.
     """
-    import fcntl
-
     try:
         fd = os.open(path, os.O_RDONLY)
     except OSError:
