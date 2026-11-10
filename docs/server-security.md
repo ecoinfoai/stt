@@ -42,9 +42,17 @@
 - 쓰기: 이 단위에서 쓰기가 되는 자리는 인스턴스마다 따로인 사설 `/tmp`·`/var/tmp` 뿐이고, 거기에도 파일을 만들 수는 있어도 자료는 쓰지
   못한다(`LimitFSIZE=0`). 현재 폴더를 비롯한 그 밖은 `ProtectSystem=strict` 로 읽기 전용이다. `/dev/shm` 은 `PrivateDevices=yes` 에도 호스트의 것과 같아(같은 장치·아이노드, 1777,
   만든 파일이 호스트에 남음) 읽기 전용 빈 tmpfs 로 덮는다(`TemporaryFileSystem=/dev/shm:ro`).
-- 호스트의 다른 파일: 위에서 닫은 경로 밖에서 누구나 읽을 수 있는 파일은 읽기 단위도 읽을 수 있다(`/var/lib/stt*`·`/run/stt` 는 `InaccessiblePaths` 로,
-  홈은 `ProtectHome=true` 로 닫혔지만 그 밖의 경로는 열려 있다). 이 호스트에서는 다른 서비스의 상태가 `/var/lib/private`(0700)에 있어 일회용 UID 로는 들어가지 못한다.
-  운영자 결정(2026-11-09): 지금은 이 잔여 노출을 받아들이고 모듈은 바꾸지 않으며, 나중에 다시 검토한다.
+- 호스트의 잠금 파일: `/run` 과 `/var` 는 빈 읽기 전용 tmpfs 로 덮고(`TemporaryFileSystem=/dev/shm:ro /run:ro /var:ro`) `/nix/var` 는 가린다
+  (`InaccessiblePaths` 의 `-/nix/var`). `flock` 은 읽을 수 있는 기술자만 있으면 읽기 전용 마운트에서도 걸리므로, 누구나 읽을 수 있는 호스트의 잠금 파일
+  (`/run/nixos/switch-to-configuration.lock`, `/nix/var/nix/db` 아래의 파일)을 장악된 읽기가 붙잡아 배포를 막는 길을 닫았다(최종 감사 H1, research R12).
+  읽기는 `/run` 아래의 것을 쓰지 않는다. 가리는 경로는 모두 `-` 를 붙여, 없는 경로가 단위를 실패시키지 않는다. VM 시험의 권한 점검이 이 파일들을 열지도
+  잠그지도 못함을 본다.
+- 호스트의 다른 파일(남는 위험): 위에서 닫은 경로 밖에서 누구나 읽을 수 있는 파일(`/etc`, `/nix/store`, `/usr` 등)은 읽기 단위도 읽을 수 있다. 장악된 읽기는
+  그 내용을 자기 작업의 전사록으로 내보낼 수 있다 — 읽은 내용을 녹음 속 음성으로 합성해 두면 Whisper 가 받아 적고 전사록이 그 작업의 호출자에게 돌아간다
+  (느리다. 다른 이용자의 녹음·전사록은 닿지 않는다). 망으로 나가는 길은 없다(`PrivateNetwork`). 홈은 `ProtectHome=true` 로 닫혔다. 이 호스트에서는 다른
+  서비스의 상태가 `/var/lib/private`(0700)에 있어 일회용 UID 로는 들어가지 못하고, `/var` 는 위에서 덮었다.
+  운영자 결정(2026-11-09): 이 잔여 노출을 받아들이고 모듈은 바꾸지 않으며 나중에 다시 검토한다. 운영자가 읽은 내용이 전사록으로 나갈 수 있다는 것까지 알고
+  다시 받아들였다(2026-11-10).
 - 장치·망: `PrivateDevices`(GPU 장치 노드 없음), `PrivateNetwork`, `RestrictAddressFamilies=none`(소켓을 만들 수 없음. 받은 연결은 그대로 쓴다).
 - 다른 프로세스: `PrivatePIDs`·`ProtectProc=invisible`·`ProcSubset=pid`·`PrivateIPC`·`PrivateTmp`. 겹쳐 도는 인스턴스끼리도 서로를 보지 못한다.
   템플릿의 모든 인스턴스는 같은 동적 UID 를 받으므로(인스턴스별 `User=` 는 이름 길이 한도로 쓸 수 없다. contracts/module.md §2.2) UID 가 아니라 이
@@ -57,7 +65,8 @@
 cgroup 은 영향이 없고 그 작업 하나만 실패한다.
 
 **끊김에 바로 멈춤.** 호출하는 쪽이 연결을 끊으면(다 지우기, 매일 23:58 정리, 워커 정지) 감독이 해독 자식을 SIGKILL 로 죽이고 인스턴스가 끝난다.
-`KillSignal=SIGKILL` 이라 단위 정지도 기다리지 않는다. 읽기 단위의 감독과 자식은 로그를 쓰지 않아 저널에 작업 ID·경로가 남지 않는다.
+`KillSignal=SIGKILL` 이라 단위 정지도 기다리지 않는다. 읽기 단위의 자식은 로그를 쓰지 않고, 감독은 아래 §3 의 고정된 영어 한 줄만 쓴다. 저널에 작업 ID·경로·
+파일 이름·해독기 문구가 남지 않는다.
 
 ## 3. 작업 실패와 단위 비정상 종료 구별
 
@@ -101,6 +110,33 @@ cgroup 은 영향이 없고 그 작업 하나만 실패한다.
     `systemctl restart stt-reader.socket` 을 따로 한다. 그동안 들어온 요청과 작업은 위와 같이 끝난다(워커 `engine_error`, 받기는 001 FR-032a 대로
     응답 없음. 운영자 결정 2026-11-08).
 
+- **읽기 인스턴스의 비정상 종료와 일찍 멈춘 해독**: 읽기 단위의 감독은 해독 자식이 비정상으로 끝나면 단위 로그에 아래 고정된 영어 한 줄을 쓴다. 작업 ID·경로·
+  파일 이름·해독기 문구는 없다. 정상 판정에는 아무것도 쓰지 않는다. 장악된 자식은 이 줄을 속일 수 있으므로 운영자에게 알리는 신호일 뿐 보안 통제가 아니다.
+
+  ```text
+  reader child <probe|decode> exited with status <n>
+  reader child <probe|decode> killed by signal <n>
+  reader child decode stopped early at invalid data
+  ```
+
+  ```sh
+  journalctl -u 'stt-reader@*' -g 'reader child'
+  ```
+
+  - `killed by signal 31` 은 시스템 호출 필터(SIGSYS), `killed by signal 9` 는 메모리 상한(OOM)이나 시간 상한의 SIGKILL 일 수 있다. 읽기 인스턴스는
+    `CollectMode` 로 치워져 `systemctl --failed` 에 쌓이지 않으므로, 이 줄이 단위 수준의 유일한 흔적이다.
+  - `stopped early at invalid data` 는 오류가 아니다: 녹음 가운데의 깨진 조각에서 해독이 멈췄고, 그 앞까지 전사해 작업은 `done` 으로 끝난다(faster-whisper 와
+    같은 동작, 운영자 결정 2026-11-10). 첫 조각부터 깨졌으면 전사록이 빈 채 `done` 이다. 명령줄은 같은 일에 표준 오류로 경고 한 줄을 낸다.
+  - 이 줄에는 작업 ID 가 없다. 어느 작업인지는 줄의 시각을 받기·워커 기록(`journalctl -u stt-intake -u stt-worker`)의 시각과 맞춰 찾는다. 커널 기록
+    `journalctl -k -g 'type=1326'` 의 시각도 같은 방법으로 맞춘다.
+- **한 형식이 늘 `unreadable_audio` 일 때**: 같은 확장자의 정상 녹음이 모두 `unreadable_audio` 로 끝나면 녹음 탓이 아니라 그 형식의 해독 경로가 시스템 호출 필터나
+  메모리 상한에 막힌 것일 수 있다. 위의 `journalctl -k -g 'type=1326'` 에 읽기 UID 의 줄이 있는지, `reader child decode killed by signal 31` 이 같은 시각에 있는지 본다.
+  VM 시험이 `AUDIO_FORMATS` 의 형식마다 사인파 녹음 하나를 실제 읽기 단위로 해독해 이 기록이 비어 있음을 확인하지만(FR-028), 실제 코덱 경로는 FFmpeg 판에
+  따라 달라질 수 있다.
+- **서버 녹음을 직접 열지 않는다**: `/var/lib/stt/audio/` 의 녹음을 `stt transcribe`·`ffprobe`·`ffmpeg` 로 직접 열지 않는다. 명령줄은 격리되지 않아(FR-022) 모든
+  FFmpeg 형식을 열고, 해독기를 노리는 파일이면 운영자(root) 또는 `stt` 권한으로 모든 이용자의 녹음·GPU·망이 닿는 곳에서 돈다. 읽히지 않는 녹음을 다시 확인하려면
+  읽기 단위를 거친다(요청을 다시 맡기는 것 등).
+
 호출 번호는 `scmp_sys_resolver <번호>` 로 이름을 찾는다. 서버 전체의 `OnFailure` 알림은 nixos-config 의 별도 과제다.
 
 ## 4. 판 기록과 갱신 정책
@@ -114,7 +150,7 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
 `role`: `decodes-recordings` 는 서버 경로에서 녹음 바이트를 해석, `cli-only` 는 운영자 명령줄만, `decoded-audio-only` 는 해독된 음성만 다룬다.
 `since` 는 그 판을 넣은 커밋(`git log -S` 로 찾음)의 날짜와 짧은 해시, `last_updated` 는 판을 바꾼 마지막 날이다. `comparison` 은
 `decodes-recordings` 줄에서 이 판으로 기준 녹음을 비교한 날이고, 다른 줄은 `-` 다. `nixpkgs ffmpeg` 의 `version` 은 `flake.lock` 의 nixpkgs 커밋
-(ffmpeg 8.1.2)이다. `uv.lock` 의 `av` 세 항목은 `resolution-markers` 로 구별한다(17.1.0 은 `python_full_version < '3.11'`, 18.1.0 은 `== '3.11.*'`, 19.0.2 는 `== '3.12.*'`).
+(ffmpeg 8.1.2)이다. `uv.lock` 의 `av` 세 항목은 `resolution-markers` 로 구별한다(17.1.0 은 `python_full_version < '3.11'`, 18.1.0 은 `== '3.11.*'`, 19.0.2 는 3.12 이상을 맡는다 — 항목의 `resolution-markers` 에 `== '3.12.*'`, `== '3.13.*'`, `>= '3.14'` 가 있다).
 
 <!-- stt:versions -->
 
@@ -129,7 +165,7 @@ nixpkgs 의 `ffmpeg` 명령은 운영자의 명령줄만 쓴다. 이 절의 표�
 | torch | decoded-audio-only | 2.13.0 | uv.lock | 2026-08-03 (47d6d56) | 2026-08-03 | - |
 | pyannote.audio | decoded-audio-only | 4.0.7 | uv.lock | 2026-08-03 (47d6d56) | 2026-08-03 | - |
 
-- `av (Python 3.12)`: 서버가 쓰는 휠. 안의 FFmpeg 는 9.0.2(`av.ffmpeg_version_info` 로 확인). 저장소의 잠금은 2026-11-10 에 18.0.0 에서
+- `av (Python 3.12)`: 서버가 쓰는 휠(3.12 이상의 해석기를 맡는다). 안의 FFmpeg 는 9.0.2(`av.ffmpeg_version_info` 로 확인). 저장소의 잠금은 2026-11-10 에 18.0.0 에서
   올렸고, 배포된 서버 환경은 서버 배포(P2, T041) 전까지 `av 18.0.0`, `ffmpeg_version_info 8.1.2` 다(2026-11-09 확인).
   기준 녹음 비교(2026-11-10, 읽기 단위와 같은 해독으로 av 18.0.0 대 19.0.2 의 s16 출력): `clip60.m4a` 는 960,171표본이 바이트까지 같다.
   `hour.m4a` 는 앞 57,600,890표본이 같고 끝의 10표본이 조금 다르며(최대 74) 19.0.2 쪽이 124표본(7.75 ms) 짧다(18.0.0 은 57,601,024표본).
