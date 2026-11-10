@@ -225,7 +225,7 @@ description: "Task list for 003-reader-hardening"
 
 ### Tests for User Story 2 (write first) ⚠️
 
-- [ ] T017 [US2] `tests/server/test_hardening_us2.py`(새), 흉내 읽기 소켓 + 진짜 감독 + 가짜 엔진으로: (a) `test_hardening_us2_1_*` — 사인파 10초
+- [X] T017 [US2] `tests/server/test_hardening_us2.py`(새), 흉내 읽기 소켓 + 진짜 감독 + 가짜 엔진으로: (a) `test_hardening_us2_1_*` — 사인파 10초
   MP3·FLAC·색인이 앞인 M4A 를 반으로 자른 셋: 받기 → 워커 → `done`, 표준 출력에 `<id> running`, 잘림 줄, `<id> done` 이 이 순서로 한 번씩(SC-003 의
   「3개 이상」). (b) `test_hardening_us2_2_*` — 형식 8가지 정상 녹음은 잘림 줄 0개. (c) `test_hardening_us2_3_*` — 비교 순수 함수 `worker.is_truncated(probed_s, decoded_bytes)`(contracts/operator-log.md §1): 차이 정확히 1.0 →
   참, 0.999… → 거짓, 해독이 더 김 → 거짓, 0.046(WMA 끝)·0.0065(Opus)·0.00775(002 의 끝 차이)·−0.056(기준 1시간) → 거짓. (d) `test_hardening_us2_4_*` —
@@ -237,18 +237,18 @@ description: "Task list for 003-reader-hardening"
   감독과 002 T055 의 「일찍 멈춤」 대역(끝 코드 3, 그 앞까지의 표본)으로, 처음 잰 길이가 해독된 길이보다 1초 이상 길면 `done` 이고 잘림 줄이 남는다.
   (i) 읽기가 `failed`·`stopped`·`timeout` 이면 잘림 줄이 없다. verify RED: `worker.TRUNCATION_LINE`·`worker.is_truncated` 없음(ImportError), 잘린 녹음에서 줄 0개.
   closes US2-1, US2-2, US2-3, US2-4, US2-5, 경계 사례 4·5, SC-003(pytest), supports FR-006, FR-007
-- [ ] T018 [P] [US2] `tests/test_server_security_doc.py` 에 더한다: `<!-- stt:truncation threshold_s=… -->` 의 값 == `worker.TRUNCATION_THRESHOLD_S`,
+- [X] T018 [P] [US2] `tests/test_server_security_doc.py` 에 더한다: `<!-- stt:truncation threshold_s=… -->` 의 값 == `worker.TRUNCATION_THRESHOLD_S`,
   문서에 `worker.TRUNCATION_LINE` 이 한 줄 그대로 있다. verify RED: 표식·상수 없음. supports FR-016
 
 ### Implementation for User Story 2 (turn T017–T018 GREEN)
 
-- [ ] T019 [US2] `src/stt/server/worker.py`: `TRUNCATION_THRESHOLD_S = 1.0`, `TRUNCATION_LINE`, 비교 순수 함수 `is_truncated(probed_s: float, decoded_bytes: int) -> bool`,
+- [X] T019 [US2] `src/stt/server/worker.py`: `TRUNCATION_THRESHOLD_S = 1.0`, `TRUNCATION_LINE`, 비교 순수 함수 `is_truncated(probed_s: float, decoded_bytes: int) -> bool`,
   읽기 단계가 `ok` 이고 `audio.wav` 를 쓴 직후·GPU 단계 전에 참이면 표준 출력에 그 줄 하나(작업 ID 없음). 작업 상태·응답·결과·`spec.json` 은 그대로.
   같은 커밋에서 `tests/server/test_decoder_us3.py:514`(`test_decoder_edge_10_a_recording_damaged_from_its_first_frame_…` — 2초로 잰 녹음이 0바이트로
   해독됨)의 표준 출력 기대를 `[running, TRUNCATION_LINE, done]` 으로 고친다(경계 사례 4, research R6). 이 시험은 T019 를 넣으면 RED 가 되고 기대를
   고쳐 GREEN 이 된다. `:492` 시험은 그대로다.
   RED → GREEN: turns T017 GREEN. closes US2-1, US2-2, US2-3, US2-4, US2-5, 경계 사례 4·5, supports FR-006, FR-007
-- [ ] T020 [US2] `docs/server-security.md` §3 「끝이 잘린 녹음」(contracts/operator-log.md §5.2): 표식, 줄, 확인 명령, 바로 앞 `<request_id> running`
+- [X] T020 [US2] `docs/server-security.md` §3 「끝이 잘린 녹음」(contracts/operator-log.md §5.2): 표식, 줄, 확인 명령, 바로 앞 `<request_id> running`
   이 그 작업이라는 것, 알아보는 형식·알아보지 못하는 형식(WAV·Ogg·ADTS, 색인이 뒤인 M4A 는 받을 때부터 `unreadable_audio`), 잘리지 않았는데 줄이 남는
   경우(경계 사례 3 — 머리 없는 가변 비트율 MP3, ADTS AAC, 영상이 더 긴 녹음; 줄은 「더 짧다」는 사실만 말한다), 일찍 멈춘 해독과 함께 남는 경우
   (경계 사례 4). RED → GREEN: turns T018 GREEN. closes 경계 사례 3(문서 — 줄의 뜻을 운영자가 읽는 자리), supports FR-016

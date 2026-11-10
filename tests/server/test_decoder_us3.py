@@ -514,7 +514,11 @@ def test_decoder_edge_10_a_recording_damaged_from_its_first_frame_ends_the_job_d
 
     assert read_response(layout, request_id)["state"] == "done"
     assert (layout.outbox / request_id / "result.json").is_file()
-    assert capfd.readouterr().out.splitlines() == [f"{request_id} running", f"{request_id} done"]
+    assert capfd.readouterr().out.splitlines() == [
+        f"{request_id} running",
+        worker.TRUNCATION_LINE,
+        f"{request_id} done",
+    ]
     (line,) = record.read_text(encoding="utf-8").splitlines()
     assert json.loads(line)["wav_frames"] == 0
 

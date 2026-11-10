@@ -51,6 +51,8 @@ _READ_FAILURES: dict[str, Failure] = {
     "timeout": _TIMEOUT,
     "storage_error": _UNREADABLE,
 }
+TRUNCATION_THRESHOLD_S = 1.0
+TRUNCATION_LINE = "decoded audio is shorter than the probed length"
 ENGINE_ERROR_CAUSES: frozenset[str] = frozenset(
     {"reader_unavailable", "recording_unusable", "unexpected", "engine_failed", "engine_no_verdict"}
 )
@@ -60,6 +62,20 @@ _ReadOutcome = Literal["ok", "failed", "unavailable", "stopped", "timeout", "sto
 
 def _log(request_id: str, state: str) -> None:
     print(f"{request_id} {state}", flush=True)
+
+
+def is_truncated(probed_s: float, decoded_bytes: int) -> bool:
+    """Tells whether decoded audio is at least ``TRUNCATION_THRESHOLD_S`` shorter than the probed length.
+
+    Args:
+        probed_s: The recording's length in seconds, measured when it was received.
+        decoded_bytes: The size of the decoded 16 kHz mono s16le audio.
+
+    Returns:
+        True when the decoded length falls short of `probed_s` by the threshold or more.
+    """
+    decoded_s = decoded_bytes / (_SAMPLE_WIDTH_BYTES * _SAMPLE_RATE_HZ)
+    return probed_s - decoded_s >= TRUNCATION_THRESHOLD_S
 
 
 def _prepare(layout: Layout, job: Job) -> tuple[Path, Path]:
@@ -122,6 +138,12 @@ def _read(
             # Never store the exception: its traceback holds this frame and the decoded buffer.
             return "storage_error"
     return result.outcome
+
+
+def _decoded_bytes(work_dir: Path) -> int:
+    """Returns the size of the samples stored in ``audio.wav`` of `work_dir`."""
+    with wave.open(str(work_dir / _AUDIO_FILE), "rb") as handle:
+        return handle.getnframes() * _SAMPLE_WIDTH_BYTES
 
 
 def _is_running(layout: Layout, request_id: str) -> bool:
@@ -336,6 +358,8 @@ def _run_job(
         if outcome != "ok":
             _settle(layout, job, work_dir, _READ_FAILURES[outcome], now, cause)
             return
+        if is_truncated(job.duration_s, _decoded_bytes(work_dir)):
+            print(TRUNCATION_LINE, flush=True)
         remaining_s = limit_s - (time.monotonic() - began)
         if remaining_s <= 0:
             _settle(layout, job, work_dir, _TIMEOUT, now)
