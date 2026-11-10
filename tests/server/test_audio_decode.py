@@ -179,3 +179,85 @@ def test_the_command_line_prints_nothing_for_an_undamaged_recording(
 
     captured = capsys.readouterr()
     assert captured.err == "" and captured.out == ""
+
+
+# ------------------------------------------------ the codec whitelist of open_container
+
+LISTED_DECODERS = "aac,pcm_s16le"
+
+
+def _spy_on_av_open(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Wraps ``av.open`` so that each call's keyword arguments are kept; the real container is returned."""
+    import av
+
+    real_open = av.open
+    calls: list[dict[str, Any]] = []
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(av, "open", spy)
+    return calls
+
+
+def test_open_container_hands_the_codec_whitelist_to_the_container_and_to_every_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _spy_on_av_open(monkeypatch)
+    recording = make_wav(tmp_path / "tone.wav", 1.0, silent=False)
+
+    with audio_decode.open_container(
+        str(recording), format_whitelist="wav", codec_whitelist=LISTED_DECODERS
+    ) as container:
+        assert len(container.streams) >= 1
+        assert [stream.codec_context.options["codec_whitelist"] for stream in container.streams] == [
+            LISTED_DECODERS
+        ] * len(container.streams)
+
+    (call,) = calls
+    assert call["container_options"] == {"format_whitelist": "wav", "codec_whitelist": LISTED_DECODERS}
+
+
+def test_open_container_hands_the_codec_whitelist_on_without_a_format_whitelist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _spy_on_av_open(monkeypatch)
+    recording = make_wav(tmp_path / "tone.wav", 1.0, silent=False)
+
+    with audio_decode.open_container(str(recording), codec_whitelist=LISTED_DECODERS):
+        pass
+
+    assert calls[0]["container_options"] == {"codec_whitelist": LISTED_DECODERS}
+
+
+@pytest.mark.parametrize("format_whitelist", [None, "wav"])
+def test_open_container_without_a_codec_whitelist_sets_it_nowhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, format_whitelist: str | None
+) -> None:
+    calls = _spy_on_av_open(monkeypatch)
+    recording = make_wav(tmp_path / "tone.wav", 1.0, silent=False)
+
+    with audio_decode.open_container(str(recording), format_whitelist=format_whitelist) as container:
+        assert all("codec_whitelist" not in stream.codec_context.options for stream in container.streams)
+
+    assert "codec_whitelist" not in calls[0].get("container_options", {})
+
+
+def test_open_container_leaves_a_stream_without_a_codec_context_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    import av
+
+    with_context = SimpleNamespace(codec_context=SimpleNamespace(options={}))
+    without_context = SimpleNamespace(codec_context=None)
+    calls: list[dict[str, Any]] = []
+
+    def fake_open(*args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return SimpleNamespace(streams=[with_context, without_context])
+
+    monkeypatch.setattr(av, "open", fake_open)
+
+    audio_decode.open_container("unused", codec_whitelist=LISTED_DECODERS)
+
+    assert with_context.codec_context.options == {"codec_whitelist": LISTED_DECODERS}
+    assert without_context.codec_context is None

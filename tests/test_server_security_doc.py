@@ -417,3 +417,12 @@ def test_advisory_dates_must_be_iso_even_when_a_reason_is_given():
         _advisory_gaps([{**base, "published": "13 April 2026", "updated": "-"}])
     with pytest.raises(AssertionError):
         _advisory_gaps([{**base, "published": "2026-04-13", "updated": "next week"}])
+
+
+def test_audio_decoder_table_matches_the_reader_constant():
+    from stt.server import reader
+
+    decoders = [row["decoder"] for row in _table("stt:audio-decoders")]
+
+    assert len(decoders) == len(set(decoders))
+    assert set(decoders) == set(reader.AUDIO_DECODERS.split(","))
