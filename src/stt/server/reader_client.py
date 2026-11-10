@@ -109,17 +109,27 @@ class _Reply(NamedTuple):
     audio: bytes | bytearray = b""
 
 
+class RecordingError(OSError):
+    """The recording could not be opened as a regular file; nothing was sent to the reader.
+
+    The errno is that of the failed open (a symbolic link is ``ELOOP``); it is None when the file opened but is
+    not a regular file.
+    """
+
+
 def _open_recording(path: str | os.PathLike[str]) -> int:
-    """Opens the recording without following a symbolic link.
+    """Opens the recording without following a symbolic link and without blocking on a FIFO.
 
     Raises:
-        OSError: If the file cannot be opened, in particular when `path` is a symbolic link.
-        ValueError: If the file is not a regular file.
+        RecordingError: If the file cannot be opened (with the errno of the failure) or is not a regular file.
     """
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    except OSError as error:
+        raise RecordingError(error.errno, error.strerror) from error
     if not stat.S_ISREG(os.fstat(fd).st_mode):
         os.close(fd)
-        raise ValueError("the recording is not a regular file")
+        raise RecordingError("the recording is not a regular file")
     return fd
 
 
@@ -296,8 +306,9 @@ def probe(config: ReaderConfig, recording: str | os.PathLike[str]) -> ProbeResul
         ``ok`` with the duration, ``failed`` or ``unavailable``.
 
     Raises:
-        OSError: If the recording cannot be opened (a symbolic link included); nothing was sent.
-        ValueError: If the recording is not a regular file; nothing was sent.
+        RecordingError: If the recording cannot be opened as a regular file (a symbolic link included); nothing
+            was sent.
+        OSError: If a pipe or the socket cannot be made, or an I/O error occurs after the reader started.
     """
     reply = _exchange(config, "probe", recording, config.probe_limit_s, None, math.inf)
     return ProbeResult(reply.outcome, reply.duration_s)
@@ -324,9 +335,10 @@ def decode(
         The outcome with the decoded samples when it is ``ok``.
 
     Raises:
-        OSError: If the recording cannot be opened (a symbolic link included); nothing was sent.
-        ValueError: If `job_limit_s` is not finite and above 0, or the recording is not a regular file; nothing
+        RecordingError: If the recording cannot be opened as a regular file (a symbolic link included); nothing
             was sent.
+        ValueError: If `job_limit_s` is not finite and above 0; nothing was sent.
+        OSError: If a pipe or the socket cannot be made, or an I/O error occurs after the reader started.
     """
     _require_finite_positive("job_limit_s", job_limit_s)
     reply = _exchange(config, "decode", recording, config.decode_limit_s, job_running, job_limit_s)
