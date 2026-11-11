@@ -374,13 +374,14 @@ description: "Task list for 003-reader-hardening"
 
 ## Phase 8: 배포·호스트 확인·회신 (운영자 승인 뒤)
 
-- [ ] T033 배포: T032 가 통과한 뒤 운영자 승인을 받아 `003-reader-hardening` 을 master 에 합치고 push 한다. PR 이나 그 전 push 는 하지 않는다(push 는 운영자 승인 뒤만 — 3.10·3.11 은 T031 이 로컬에서 봤다). push 뒤 CI(Python 3.10·3.12 pytest,
+- [X] T033 배포: T032 가 통과한 뒤 운영자 승인을 받아 `003-reader-hardening` 을 master 에 합치고 push 한다. PR 이나 그 전 push 는 하지 않는다(push 는 운영자 승인 뒤만 — 3.10·3.11 은 T031 이 로컬에서 봤다). push 뒤 CI(Python 3.10·3.12 pytest,
   `nix flake check --no-build`)가 GREEN 인지 보고 **`[VERIFY]` B-003-6 의 CI 몫**(그 평가의 시간·메모리, 실패하면 원인)을 적는다. 운영자가 nixos-config 에서
   `nix flake update stt --option tarball-ttl 0` 과 `nxr` 을 한다(stt 서비스가 잠깐 다시 뜨므로 운영자가 시각을 맞춘다). 스위치가 systemd 판 단언을
   통과한다(호스트 262 — US4-2 의 호스트 몫). 배포한 커밋과 날을 `specs/003-reader-hardening/handoff/reply.md` 초안과 `docs/server-security.md` §4 의
   `pending` 자리(T029)에 채우는 문서 커밋을 만들고, 그 push 도 운영자 승인 뒤에 한다. RED 해당 없음 — 배포. closes `[VERIFY]` B-003-6, US4-2(호스트),
   supports US1~US4
-- [ ] T034 호스트 확인(운영자와, quickstart C): **C-003-1** `systemctl show -p MainPID stt-worker.service` 가 스위치 전과 다르거나 0, 읽기 단위 설정이
+  → 2026-11-11 `0cfae45`→`f02120a` push, CI 통과(run 42930683429 — `nix flake check --no-build` 30 초, pytest 3.10·3.12), 운영자 `nxr`(systemd 262, 단언 통과). `pending` 은 `f02120a`, 2026-11-11 로 채움.
+- [X] T034 호스트 확인(운영자와, quickstart C): **C-003-1** `systemctl show -p MainPID stt-worker.service` 가 스위치 전과 다르거나 0, 읽기 단위 설정이
   002 와 같음(002 contracts/module.md §4 의 명령). **C-003-2** `clip60.m4a`·`hour.m4a` 를 1차·2차로 전사해 `transcript.txt` 와 `result.json` 의
   `paragraphs` 를 2026-11-10 배포 뒤 보관본과 비교(같아야 함 — 다르면 운영자가 받아들인 뒤에만 완료), 그 시각의 `journalctl -u stt-worker -g 'shorter
   than the probed length'` 와 `journalctl -k -g 'type=1326'` 이 빔. **C-003-3** 운영자가 호스트 `ffmpeg` 로 만든 사인파 + 단색 영상 `m4a` 와 사인파
@@ -393,7 +394,8 @@ description: "Task list for 003-reader-hardening"
   매달 확인 기록의 다음 확인 항목에 적고, 그 표를 고친 뒤 `captest 4G 10m uv run --locked python -m pytest -q tests/test_server_security_doc.py` 가
   GREEN 인지 본다. 결과를 `handoff/reply.md` 에. RED 해당 없음 — 호스트 확인. closes SC-001(호스트), SC-002, SC-003(호스트),
   US4-4(호스트), supports US1-1~3, US2-2, `[VERIFY]` R2(이름 몫)
-- [ ] T035 회신 `specs/003-reader-hardening/handoff/reply.md`(C-003-6, 운영자 결정 2026-11-10): (1) 계약(스키마·실패 이유·고정 문장·지우기·재전사·
+  → 2026-11-11 11:12–11:27 모두 통과. 기준 녹음은 2026-11-10 결과와 같음(1시간 1차의 받아들인 낱말 하나 그대로), Speex `failed`·`failed` 와 거절 줄 하나씩, 잘림 줄은 잘린 녹음에 하나. 결과는 `handoff/reply.md` §3.
+- [X] T035 회신 `specs/003-reader-hardening/handoff/reply.md`(C-003-6, 운영자 결정 2026-11-10): (1) 계약(스키마·실패 이유·고정 문장·지우기·재전사·
   23:58)은 바뀌지 않았다. (2) **거절되는 코덱 한 단락**: 서버가 여는 해독기는 이제 음성 해독기 목록(보안 문서 §2, 32개)뿐이다. 받는 녹음 형식은
   그대로이고 영상 트랙이 든 녹음은 음성만 읽는다. 첫 음성 트랙이 Speex, GSM, 그 밖의 목록 밖 음성 코덱(예: MPEG Layer I, TrueSpeech, IMA·Microsoft
   밖의 ADPCM — G.726·G.722·Yamaha·QuickTime IMA4)이면 받을 때 바로 — MP3 라고 적힌 상자(예: `.mp3` 안 MPEG Layer I)는 길이 재기를 지나므로 처리 때 —
